@@ -7,12 +7,16 @@ use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
-    /**
-     * A basic test example.
-     */
-    public function test_the_application_returns_a_successful_response(): void
+    public function test_the_root_url_redirects_to_the_filament_login_page(): void
     {
         $response = $this->get('/');
+
+        $response->assertRedirect('/admin/login');
+    }
+
+    public function test_the_filament_login_page_returns_a_successful_response(): void
+    {
+        $response = $this->get('/admin/login');
 
         $response->assertStatus(200);
     }
