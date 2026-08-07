@@ -84,20 +84,25 @@
                 outline-offset: -1px;
             }
 
-            .pp-heatmap-cell[data-level='1'] { background-color: var(--primary-200); }
-            .pp-heatmap-cell[data-level='2'] { background-color: var(--primary-400); }
-            .pp-heatmap-cell[data-level='3'] { background-color: var(--primary-500); }
-            .pp-heatmap-cell[data-level='4'] { background-color: var(--primary-700); }
+            /* The ramp skips shades either side of the panel's primary colour so
+               that the quietest day still reads as activity against an empty
+               cell, and the busiest still reads as a step up from the one below. */
+            .pp-heatmap-cell[data-level='1'] { background-color: var(--primary-300); }
+            .pp-heatmap-cell[data-level='2'] { background-color: var(--primary-500); }
+            .pp-heatmap-cell[data-level='3'] { background-color: var(--primary-600); }
+            .pp-heatmap-cell[data-level='4'] { background-color: var(--primary-800); }
 
             .dark .pp-heatmap-cell {
                 background-color: var(--gray-800);
                 outline-color: rgb(255 255 255 / 0.04);
             }
 
-            .dark .pp-heatmap-cell[data-level='1'] { background-color: var(--primary-950); }
-            .dark .pp-heatmap-cell[data-level='2'] { background-color: var(--primary-800); }
-            .dark .pp-heatmap-cell[data-level='3'] { background-color: var(--primary-600); }
-            .dark .pp-heatmap-cell[data-level='4'] { background-color: var(--primary-400); }
+            /* Dark mode runs the ramp the other way, from a shade barely above the
+               empty cell up to the brightest the palette offers. */
+            .dark .pp-heatmap-cell[data-level='1'] { background-color: var(--primary-900); }
+            .dark .pp-heatmap-cell[data-level='2'] { background-color: var(--primary-700); }
+            .dark .pp-heatmap-cell[data-level='3'] { background-color: var(--primary-500); }
+            .dark .pp-heatmap-cell[data-level='4'] { background-color: var(--primary-300); }
 
             .pp-heatmap-cell--blank {
                 visibility: hidden;
