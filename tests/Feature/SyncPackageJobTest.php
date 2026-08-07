@@ -11,6 +11,7 @@ use Filament\Actions\Testing\TestAction;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
@@ -29,7 +30,11 @@ class SyncPackageJobTest extends TestCase
         ]);
     }
 
-    public function test_the_job_syncs_the_package(): void
+    /**
+     * A repository with one tag and no branches, which is enough for a sync to
+     * have visibly happened.
+     */
+    private function fakeGitHub(): void
     {
         Http::fake([
             'api.github.com/repos/acme/widgets/tags*' => Http::response([
@@ -44,6 +49,11 @@ class SyncPackageJobTest extends TestCase
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
         ]);
+    }
+
+    public function test_the_job_syncs_the_package(): void
+    {
+        $this->fakeGitHub();
 
         $package = $this->makePackage();
 
@@ -159,6 +169,62 @@ class SyncPackageJobTest extends TestCase
         );
 
         Http::assertNothingSent();
+    }
+
+    /**
+     * The end-to-end path, with no Queue::fake() anywhere: the command writes a
+     * real row to the `jobs` table and a real worker picks it up and syncs.
+     * Everything above this proves only that dispatch() was called.
+     */
+    public function test_a_queued_sync_is_picked_up_and_run_by_a_worker(): void
+    {
+        // The suite runs on the sync driver, which would defeat the point.
+        config(['queue.default' => 'database']);
+
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        $this->artisan('packages:sync', ['--queue' => true])->assertSuccessful();
+
+        // Nothing has run yet: the work is parked in the database.
+        $this->assertDatabaseCount('jobs', 1);
+
+        $payload = json_decode((string) DB::table('jobs')->value('payload'), true);
+
+        $this->assertSame(SyncPackageJob::class, $payload['displayName']);
+        $this->assertSame(3, $payload['maxTries']);
+        $this->assertSame(600, $payload['timeout']);
+        $this->assertNull($package->refresh()->last_synced_at);
+
+        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+
+        $this->assertDatabaseCount('jobs', 0);
+        $this->assertDatabaseCount('failed_jobs', 0);
+        $this->assertSame('acme/widgets', $package->refresh()->name);
+        $this->assertSame('v1.0.0', $package->latest_version);
+        $this->assertNotNull($package->last_synced_at);
+        $this->assertNull($package->sync_error);
+    }
+
+    public function test_a_worker_records_a_failed_sync_rather_than_losing_it(): void
+    {
+        config(['queue.default' => 'database']);
+
+        Http::fake(['api.github.com/*' => Http::response(['message' => 'Bad credentials'], 401)]);
+
+        $package = $this->makePackage();
+
+        $this->artisan('packages:sync', ['--queue' => true])->assertSuccessful();
+
+        // The worker exits 0 whether or not the job it ran threw; the outcome
+        // is recorded on the job, so that is where to look.
+        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+
+        // One attempt of three: the job goes back to the queue, not to the floor.
+        $this->assertDatabaseCount('failed_jobs', 0);
+        $this->assertSame(1, DB::table('jobs')->value('attempts'));
+        $this->assertStringContainsString('Bad credentials', (string) $package->refresh()->sync_error);
     }
 
     public function test_the_command_still_syncs_inline_without_the_queue_flag(): void

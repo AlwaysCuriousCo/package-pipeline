@@ -28,6 +28,20 @@ return new class extends Migration
             $table->text('token')->nullable();
             $table->timestamp('last_synced_at')->nullable();
             $table->text('sync_error')->nullable();
+
+            // The repository webhook created for this package, which only
+            // exists as the fallback for repositories the GitHub App's own
+            // webhook does not deliver for. Packages under an installed app
+            // leave all three null and are covered account-wide.
+            $table->unsignedBigInteger('webhook_id')->nullable();
+            $table->text('webhook_secret')->nullable();
+            $table->text('webhook_error')->nullable();
+
+            // When a delivery was last accepted for this package, whichever
+            // webhook carried it — the one honest answer to "is auto-sync
+            // actually working?".
+            $table->timestamp('webhook_received_at')->nullable();
+
             $table->timestamps();
         });
     }

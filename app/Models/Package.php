@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Enums\SourceProvider;
+use App\Enums\WebhookCoverage;
+use App\Services\GitHub\WebhookRegistrar;
 use Database\Factories\PackageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -24,13 +26,20 @@ class Package extends Model
     {
         return [
             'token' => 'encrypted',
+            'webhook_secret' => 'encrypted',
             'last_synced_at' => 'datetime',
+            'webhook_received_at' => 'datetime',
         ];
     }
 
     protected static function booted(): void
     {
         static::saving(fn (self $package) => $package->linkSource());
+
+        // A repository hook left behind on GitHub would keep posting to a URL
+        // that resolves to nothing. Removing it is best effort: the package is
+        // gone here either way.
+        static::deleted(fn (self $package) => app(WebhookRegistrar::class)->deregister($package));
     }
 
     /**
@@ -116,6 +125,68 @@ class Package extends Model
         }
 
         throw new InvalidArgumentException("Unable to determine the GitHub repository from [{$repository}].");
+    }
+
+    /**
+     * The package published from a given "owner/repo" path, or null when no
+     * package tracks that repository.
+     *
+     * The column holds whatever URL was typed — a browser URL, an SSH remote,
+     * a bare path — so candidates are narrowed in SQL and then confirmed
+     * against the parsed path, which is the only form the two agree on.
+     * "acme/widgets" must not answer for "acme/widgets-pro".
+     */
+    public static function forRepositoryPath(string $repositoryPath): ?self
+    {
+        $path = mb_strtolower(trim($repositoryPath, '/'));
+
+        if ($path === '') {
+            return null;
+        }
+
+        return static::query()
+            ->whereLike('repository', "%{$path}%", caseSensitive: false)
+            ->get()
+            ->first(function (self $package) use ($path): bool {
+                try {
+                    return mb_strtolower($package->repositoryPath()) === $path;
+                } catch (InvalidArgumentException) {
+                    return false;
+                }
+            });
+    }
+
+    /**
+     * How events for this package's repository reach the app.
+     *
+     * An installed GitHub App delivers for every repository it can see through
+     * one webhook on the app itself, so those packages need nothing created
+     * and nothing stored. Everything else — a token-based source, a package
+     * with only its own token — has to carry a hook on the repository.
+     */
+    public function webhookCoverage(): WebhookCoverage
+    {
+        if ($this->source?->usesInstallation()) {
+            return filled(config('services.github.app.webhook_secret'))
+                ? WebhookCoverage::Application
+                : WebhookCoverage::Unconfigured;
+        }
+
+        if ($this->webhook_id !== null) {
+            return WebhookCoverage::Repository;
+        }
+
+        return filled($this->webhook_error) ? WebhookCoverage::Failed : WebhookCoverage::None;
+    }
+
+    /**
+     * Where GitHub posts this package's own deliveries. Only meaningful for a
+     * package carrying a repository hook — an app-covered one is delivered to
+     * the account-wide URL instead.
+     */
+    public function webhookUrl(): string
+    {
+        return route('webhooks.github.package', $this);
     }
 
     /**
