@@ -10,7 +10,8 @@ independently in package-pipeline (Laravel 13 + Filament v5). Prompts assume the
   in `app/Http/Controllers/ComposerRepositoryController.php` + `routes/web.php`
 - `Package` / `PackageVersion` models, `app/Services/PackageSynchronizer.php`, `app/Services/GitHub/GitHubClient.php`
 - Admin is Filament (`app/Filament/Resources`), no public SPA
-- Migration `2026_08_06_000000_add_sync_columns_and_package_versions.php` adds sync columns + versions table
+- Migrations `2026_08_03_193140_create_sources_table.php`, `..._193145_create_packages_table.php`,
+  `..._193150_create_package_versions_table.php` define the whole schema (pre-v1: folded in, never altered)
 
 Legend: ✅ already have · 🟡 partial · ❌ missing
 
