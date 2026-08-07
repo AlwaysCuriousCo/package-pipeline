@@ -1,6 +1,20 @@
 # Release Notes
 
-## [Unreleased](https://github.com/laravel/laravel/compare/v13.8.0...13.x)
+## [Unreleased](https://github.com/laravel/laravel/compare/v0.4.0...main)
+
+## [v0.4.0](https://github.com/laravel/laravel/compare/v13.8.0...v0.4.0) - 2026-08-07
+
+### What's Changed
+
+* Install Filament v5 admin panel and add user management features by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/1
+* Add Sources with GitHub App authentication by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/2
+* Enhance package version tracking and dashboard features by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/3
+
+### New Contributors
+
+* [@codearachnid](https://github.com/codearachnid) made their first contribution in https://github.com/AlwaysCuriousCo/package-pipeline/pull/1
+
+**Full Changelog**: https://github.com/AlwaysCuriousCo/package-pipeline/commits/v0.4.0
 
 ## [v13.8.0](https://github.com/laravel/laravel/compare/v13.7.0...v13.8.0) - 2026-05-25
 
