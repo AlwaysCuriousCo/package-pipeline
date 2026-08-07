@@ -14,6 +14,12 @@ return [
     |
     */
 
+    'github' => [
+        // Fallback token for packages that don't carry their own; used when
+        // syncing and when proxying zipballs from private repositories.
+        'token' => env('GITHUB_TOKEN'),
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],
