@@ -14,6 +14,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
+use RuntimeException;
 use Tests\TestCase;
 
 class PackageWebhookRegistrationTest extends TestCase
@@ -134,6 +135,42 @@ class PackageWebhookRegistrationTest extends TestCase
         $this->assertNull($package->webhook_id);
         $this->assertNotNull($package->webhook_error);
         $this->assertNotNull(app(WebhookRegistrar::class)->unmetRequirement($package));
+    }
+
+    /**
+     * The hook is created on GitHub before the id and secret are saved here.
+     * If that save fails, the package still looks uncovered and a retry would
+     * stack a second hook on the repository — so the one GitHub made has to
+     * come back down.
+     */
+    public function test_a_hook_that_cannot_be_persisted_is_removed_from_github(): void
+    {
+        Http::fake([
+            'api.github.com/repos/*/hooks' => Http::response(['id' => 8675309], 201),
+            'api.github.com/repos/*/hooks/8675309' => Http::response(status: 204),
+        ]);
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->tokenSource()->id,
+        ]);
+
+        Package::saving(function (Package $saving): void {
+            if ($saving->webhook_id !== null) {
+                throw new RuntimeException('The database went away.');
+            }
+        });
+
+        $this->assertSame(WebhookCoverage::Failed, app(WebhookRegistrar::class)->register($package));
+
+        Http::assertSent(fn ($request): bool => $request->method() === 'DELETE'
+            && $request->url() === 'https://api.github.com/repos/acme/widgets/hooks/8675309');
+
+        $package->refresh();
+
+        $this->assertNull($package->webhook_id);
+        $this->assertNull($package->webhook_secret);
+        $this->assertStringContainsString('database went away', (string) $package->webhook_error);
     }
 
     public function test_an_app_covered_package_is_flagged_when_no_secret_is_configured_here(): void

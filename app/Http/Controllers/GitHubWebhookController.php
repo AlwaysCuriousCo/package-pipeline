@@ -99,32 +99,42 @@ class GitHubWebhookController extends Controller
             return $this->reject('The payload named no repository.', ResponseCode::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $package ??= Package::forRepositoryPath($repository);
-
-        // An app-level webhook hears from every repository shared with the
-        // installation, most of which are not packages here. That is the
-        // normal case, not an error.
-        if (! $package instanceof Package) {
-            return $this->ignore("No package is published from {$repository}.");
-        }
-
         // A hook posting for a repository other than the one it was created
         // for is a misconfiguration worth seeing rather than absorbing.
-        if (! $this->matches($package, $repository)) {
+        if ($package instanceof Package && ! $this->matches($package, $repository)) {
             return $this->reject(
                 "This webhook belongs to {$package->name}, but the delivery was for {$repository}.",
                 ResponseCode::HTTP_UNPROCESSABLE_ENTITY,
             );
         }
 
-        $package->forceFill(['webhook_received_at' => now()])->save();
+        // The repository column is unique as the URL was typed, not as it
+        // parses, so one repository stored two ways is two packages. An app
+        // delivery names only the path, and every package on that path is
+        // owed the sync — not whichever happened to come back first.
+        $packages = $package instanceof Package
+            ? $package->newCollection([$package])
+            : Package::allForRepositoryPath($repository);
 
-        SyncPackageJob::debounced($package);
+        // An app-level webhook hears from every repository shared with the
+        // installation, most of which are not packages here. That is the
+        // normal case, not an error.
+        if ($packages->isEmpty()) {
+            return $this->ignore("No package is published from {$repository}.");
+        }
+
+        foreach ($packages as $target) {
+            $target->forceFill(['webhook_received_at' => now()])->save();
+
+            SyncPackageJob::debounced($target);
+        }
+
+        $names = $packages->pluck('name')->implode(', ');
 
         return response()->json([
             'status' => 'accepted',
-            'package' => $package->name,
-            'detail' => "Syncing {$package->name} from {$repository}.",
+            'package' => $names,
+            'detail' => "Syncing {$names} from {$repository}.",
         ], ResponseCode::HTTP_ACCEPTED);
     }
 

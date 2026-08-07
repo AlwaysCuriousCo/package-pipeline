@@ -7,6 +7,7 @@ use App\Enums\WebhookCoverage;
 use App\Services\GitHub\WebhookRegistrar;
 use Database\Factories\PackageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -129,32 +130,39 @@ class Package extends Model
     }
 
     /**
-     * The package published from a given "owner/repo" path, or null when no
-     * package tracks that repository.
+     * Every package published from a given "owner/repo" path.
      *
      * The column holds whatever URL was typed — a browser URL, an SSH remote,
      * a bare path — so candidates are narrowed in SQL and then confirmed
      * against the parsed path, which is the only form the two agree on.
      * "acme/widgets" must not answer for "acme/widgets-pro".
+     *
+     * The column is unique as typed, not as parsed, so the same repository
+     * stored two ways is two packages. A caller resolving a delivery has to
+     * reach them all — picking one would sync an arbitrary package and
+     * silently starve the rest.
+     *
+     * @return Collection<int, self>
      */
-    public static function forRepositoryPath(string $repositoryPath): ?self
+    public static function allForRepositoryPath(string $repositoryPath): Collection
     {
         $path = mb_strtolower(trim($repositoryPath, '/'));
 
         if ($path === '') {
-            return null;
+            return new Collection;
         }
 
         return static::query()
             ->whereLike('repository', "%{$path}%", caseSensitive: false)
             ->get()
-            ->first(function (self $package) use ($path): bool {
+            ->filter(function (self $package) use ($path): bool {
                 try {
                     return mb_strtolower($package->repositoryPath()) === $path;
                 } catch (InvalidArgumentException) {
                     return false;
                 }
-            });
+            })
+            ->values();
     }
 
     /**

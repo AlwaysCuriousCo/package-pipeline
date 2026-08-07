@@ -268,6 +268,35 @@ class GitHubWebhookTest extends TestCase
         );
     }
 
+    /**
+     * The repository column is unique as typed, not as parsed, so the same
+     * repository stored as a browser URL and as an SSH remote is two packages.
+     * A push must reach both — first-match would sync one arbitrarily and
+     * silently starve the other.
+     */
+    public function test_every_package_storing_the_pushed_repository_is_synced(): void
+    {
+        $https = $this->package();
+
+        $ssh = Package::factory()->create([
+            'name' => 'acme/widgets-mirror',
+            'repository' => 'git@github.com:Acme/Widgets.git',
+        ]);
+
+        $this->deliver('push', $this->push())->assertAccepted();
+
+        Queue::assertPushed(SyncPackageJob::class, 2);
+
+        foreach ([$https, $ssh] as $package) {
+            Queue::assertPushed(
+                SyncPackageJob::class,
+                fn (SyncPackageJob $job): bool => $job->package->is($package),
+            );
+
+            $this->assertNotNull($package->refresh()->webhook_received_at);
+        }
+    }
+
     public function test_the_repository_being_created_publishes_nothing(): void
     {
         $this->package();

@@ -49,11 +49,37 @@ class WebhookRegistrar
             return WebhookCoverage::Failed;
         }
 
-        $package->forceFill([
-            'webhook_id' => $id,
-            'webhook_secret' => $secret,
-            'webhook_error' => null,
-        ])->save();
+        try {
+            $package->forceFill([
+                'webhook_id' => $id,
+                'webhook_secret' => $secret,
+                'webhook_error' => null,
+            ])->save();
+        } catch (Throwable $exception) {
+            // The hook now exists on GitHub but this record will not remember
+            // it, so a retry would stack a second hook on the repository —
+            // and the secret for this one is lost with the save. Take it back
+            // down before reporting the failure.
+            try {
+                GitHubClient::for($package)->deleteWebhook($id);
+            } catch (Throwable $cleanup) {
+                Log::warning('Could not remove a GitHub webhook that failed to persist locally.', [
+                    'package' => $package->name,
+                    'webhook_id' => $id,
+                    'reason' => $this->reason($cleanup),
+                ]);
+            }
+
+            // Whatever refused the first save may refuse this one too; the
+            // contract is to never throw, and the hook is already gone.
+            rescue(fn () => $package->forceFill([
+                'webhook_id' => null,
+                'webhook_secret' => null,
+                'webhook_error' => $this->reason($exception),
+            ])->save(), report: false);
+
+            return WebhookCoverage::Failed;
+        }
 
         return WebhookCoverage::Repository;
     }

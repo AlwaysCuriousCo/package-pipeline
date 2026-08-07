@@ -151,6 +151,43 @@ class SyncPackageJobTest extends TestCase
         Http::assertNothingSent();
     }
 
+    /**
+     * The job is unique per package until it starts, and a push webhook holds
+     * that lock for at least the debounce delay. A manual sync landing in the
+     * window is dropped — which is fine, as long as nobody is told otherwise.
+     */
+    public function test_the_panel_says_so_when_a_sync_is_already_pending(): void
+    {
+        Queue::fake();
+        Http::fake();
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = $this->makePackage();
+
+        // A webhook got there first: the uniqueness lock is now held.
+        SyncPackageJob::debounced($package);
+
+        Livewire::test(ListPackages::class)
+            ->callAction(TestAction::make('sync')->table($package))
+            ->assertNotified('Sync already queued');
+
+        // The debounced sync is the only one on the queue.
+        Queue::assertPushed(SyncPackageJob::class, 1);
+    }
+
+    public function test_dispatch_unless_pending_reports_the_dropped_duplicate(): void
+    {
+        Queue::fake();
+
+        $package = $this->makePackage();
+
+        $this->assertTrue(SyncPackageJob::dispatchUnlessPending($package));
+        $this->assertFalse(SyncPackageJob::dispatchUnlessPending($package));
+
+        Queue::assertPushed(SyncPackageJob::class, 1);
+    }
+
     public function test_the_command_dispatches_instead_of_syncing_when_queued(): void
     {
         Queue::fake();

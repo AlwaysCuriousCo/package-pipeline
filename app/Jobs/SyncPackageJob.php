@@ -7,6 +7,9 @@ use App\Notifications\PackageSyncFailed;
 use App\Notifications\PackageVersionsPublished;
 use App\Services\AdminNotifier;
 use App\Services\PackageSynchronizer;
+use Illuminate\Bus\UniqueLock;
+use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -106,6 +109,29 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
     public static function debounced(Package $package): void
     {
         self::dispatch($package)->delay(now()->addSeconds(self::DEBOUNCE_SECONDS));
+    }
+
+    /**
+     * Queue a sync now, reporting whether one was actually queued.
+     *
+     * dispatch() drops a duplicate of a unique job silently, which is exactly
+     * right for a webhook burst but lets the panel claim "queued" while a
+     * debounced sync is already holding the lock. Taking the lock here first
+     * — the same lock dispatch() would take — makes the drop observable; the
+     * job then goes straight to the dispatcher, which performs no second
+     * uniqueness check.
+     */
+    public static function dispatchUnlessPending(Package $package): bool
+    {
+        $job = new self($package);
+
+        if (! (new UniqueLock(app(Cache::class)))->acquire($job)) {
+            return false;
+        }
+
+        app(Dispatcher::class)->dispatch($job);
+
+        return true;
     }
 
     public function handle(PackageSynchronizer $synchronizer, AdminNotifier $notifier): void

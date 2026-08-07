@@ -24,7 +24,18 @@ class SyncPackageAction
             ->label('Sync')
             ->icon(Heroicon::OutlinedArrowPath)
             ->action(function (Package $record): void {
-                SyncPackageJob::dispatch($record);
+                // The job is unique per package until it starts, so a sync a
+                // webhook already queued swallows this one — say so instead
+                // of reporting work that will never run.
+                if (! SyncPackageJob::dispatchUnlessPending($record)) {
+                    Notification::make()
+                        ->info()
+                        ->title('Sync already queued')
+                        ->body("{$record->name} already has a sync waiting to run.")
+                        ->send();
+
+                    return;
+                }
 
                 Notification::make()
                     ->success()
