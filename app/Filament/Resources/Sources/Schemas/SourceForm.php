@@ -5,8 +5,10 @@ namespace App\Filament\Resources\Sources\Schemas;
 use App\Enums\SourceProvider;
 use App\Models\Source;
 use App\Services\GitHub\GitHubApp;
+use Closure;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 class SourceForm
@@ -34,6 +36,20 @@ class SourceForm
                     // installation to read the account off. Connecting fills
                     // it in instead.
                     ->required(fn (?Source $record): bool => ! $record?->usesInstallation())
+                    // Packages are matched to a source by owner, so a provider
+                    // may only hold each account once — a database constraint
+                    // that has to surface here rather than as a query error.
+                    ->rule(static fn (?Source $record, Get $get): Closure => static function (string $attribute, mixed $value, Closure $fail) use ($record, $get): void {
+                        if (blank($value)) {
+                            return;
+                        }
+
+                        $holder = Source::accountHolder((string) $value, $get('provider'), $record);
+
+                        if ($holder instanceof Source) {
+                            $fail("This account is already connected as \"{$holder->name}\".");
+                        }
+                    })
                     ->helperText('Packages whose repository sits under this owner authenticate through this source.'),
                 TextInput::make('base_url')
                     ->label('API base URL')

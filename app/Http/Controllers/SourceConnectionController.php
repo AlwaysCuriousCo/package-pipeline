@@ -101,6 +101,13 @@ class SourceConnectionController extends Controller
 
         $login = $installation['account']['login'] ?? null;
 
+        // A reconnect has to land on the owner the source already points at.
+        // Installing onto a different account would re-credential this source
+        // and silently move it away from the packages matched to its owner.
+        if ($source?->account && $login && strcasecmp($source->account, $login) !== 0) {
+            return $this->back($source, 'danger', 'Wrong account installed', "This source is for \"{$source->account}\", but the app was installed on \"{$login}\". Install it on {$source->account} instead, or connect {$login} from the sources list as its own source.");
+        }
+
         // Installing onto an account another source already holds would break
         // the unique indexes; say so rather than surfacing a database error.
         if ($source && $conflict = Source::conflicting($source, $installationId, $login)) {

@@ -63,8 +63,24 @@ class Source extends Model
 
         return static::query()
             ->where('provider', SourceProvider::Github)
-            // GitHub logins are case insensitive, so the match must be too.
-            ->whereRaw('lower(account) = ?', [mb_strtolower($owner)])
+            ->forAccount($owner)
+            ->first();
+    }
+
+    /**
+     * The source already holding an account for a provider, ignoring the given
+     * one so that editing a source does not collide with itself.
+     *
+     * A provider may only reach an owner through a single source — the unique
+     * index says so — and both the form and the install callback ask this
+     * before writing, so a duplicate reads as an error rather than a crash.
+     */
+    public static function accountHolder(string $account, SourceProvider|string|null $provider, ?self $except = null): ?self
+    {
+        return static::query()
+            ->where('provider', $provider)
+            ->when($except?->exists, fn (Builder $query): Builder => $query->whereKeyNot($except->getKey()))
+            ->forAccount($account)
             ->first();
     }
 
@@ -85,9 +101,8 @@ class Source extends Model
             ->where('provider', SourceProvider::Github)
             ->where(fn (Builder $query): Builder => $query
                 ->where('installation_id', $installationId)
-                ->when($login, fn (Builder $query): Builder => $query->orWhereRaw(
-                    'lower(account) = ?',
-                    [mb_strtolower($login)],
+                ->when($login, fn (Builder $query): Builder => $query->orWhere(
+                    fn (Builder $query): Builder => $query->forAccount($login),
                 )))
             ->first();
 
@@ -110,11 +125,24 @@ class Source extends Model
             ->whereKeyNot($except->getKey())
             ->where(fn (Builder $query): Builder => $query
                 ->where('installation_id', $installationId)
-                ->when($login, fn (Builder $query): Builder => $query->orWhereRaw(
-                    'lower(account) = ?',
-                    [mb_strtolower($login)],
+                ->when($login, fn (Builder $query): Builder => $query->orWhere(
+                    fn (Builder $query): Builder => $query->forAccount($login),
                 )))
             ->first();
+    }
+
+    /**
+     * Narrow to the sources owned by an account.
+     *
+     * GitHub logins are case insensitive, so the match must be too — otherwise
+     * "Acme" and "acme" would look like two different owners.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeForAccount(Builder $query, string $account): Builder
+    {
+        return $query->whereRaw('lower(account) = ?', [mb_strtolower($account)]);
     }
 
     /**

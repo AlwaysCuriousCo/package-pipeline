@@ -99,7 +99,49 @@ class SourceResourceTest extends TestCase
                 'account' => 'acme',
             ])
             ->call('create')
-            ->assertHasFormErrors(['name']);
+            ->assertHasFormErrors(['name', 'account']);
+    }
+
+    public function test_an_account_already_held_by_another_source_is_refused(): void
+    {
+        Source::factory()->create(['name' => 'Acme', 'account' => 'acme']);
+
+        Livewire::test(CreateSource::class)
+            ->fillForm([
+                'name' => 'Acme spare',
+                'provider' => SourceProvider::Github->value,
+                // GitHub logins are case insensitive, so this is the same owner.
+                'account' => 'ACME',
+            ])
+            ->call('create')
+            ->assertHasFormErrors(['account']);
+
+        $this->assertDatabaseCount('sources', 1);
+    }
+
+    public function test_a_source_can_be_saved_without_colliding_with_its_own_account(): void
+    {
+        $source = Source::factory()->create(['name' => 'Acme', 'account' => 'acme']);
+
+        Livewire::test(EditSource::class, ['record' => $source->getKey()])
+            ->fillForm(['name' => 'Acme engineering'])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('Acme engineering', $source->fresh()->name);
+    }
+
+    public function test_editing_a_source_onto_another_sources_account_is_refused(): void
+    {
+        Source::factory()->create(['name' => 'Acme', 'account' => 'acme']);
+        $other = Source::factory()->create(['name' => 'Spare', 'account' => 'spare']);
+
+        Livewire::test(EditSource::class, ['record' => $other->getKey()])
+            ->fillForm(['account' => 'acme'])
+            ->call('save')
+            ->assertHasFormErrors(['account']);
+
+        $this->assertSame('spare', $other->fresh()->account);
     }
 
     public function test_the_stored_token_is_never_sent_to_the_browser(): void

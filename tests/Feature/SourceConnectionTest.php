@@ -170,6 +170,54 @@ class SourceConnectionTest extends TestCase
         $this->assertSame(99, $held->fresh()->installation_id);
     }
 
+    public function test_reconnecting_onto_a_different_account_than_the_source_holds_is_refused(): void
+    {
+        // The admin picked the wrong organisation on the GitHub install screen.
+        $this->fakeInstallation('someone-else');
+
+        $source = Source::factory()->disconnected()->create(['name' => 'Acme', 'account' => 'acme']);
+        $package = Package::factory()->create([
+            'source_id' => $source->id,
+            'repository' => 'https://github.com/acme/widgets',
+        ]);
+
+        $this->get(route('sources.connect', $source));
+
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect();
+
+        $source->refresh();
+
+        // Nothing was re-credentialled, so the linked packages still resolve.
+        $this->assertNull($source->installation_id);
+        $this->assertSame('acme', $source->account);
+        $this->assertFalse($source->isConnected());
+        $this->assertSame($source->id, $package->fresh()->source_id);
+        $this->assertDatabaseCount('sources', 1);
+    }
+
+    public function test_reconnecting_the_same_account_in_a_different_case_is_allowed(): void
+    {
+        $this->fakeInstallation('ACME');
+
+        $source = Source::factory()->disconnected()->create(['account' => 'acme']);
+
+        $this->get(route('sources.connect', $source));
+
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect();
+
+        $source->refresh();
+
+        $this->assertSame(42, $source->installation_id);
+        $this->assertSame('ACME', $source->account);
+        $this->assertTrue($source->isConnected());
+    }
+
     public function test_both_legs_of_the_handshake_require_authentication(): void
     {
         $this->fakeInstallation();
