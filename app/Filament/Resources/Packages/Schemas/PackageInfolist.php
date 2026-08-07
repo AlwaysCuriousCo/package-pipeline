@@ -25,6 +25,22 @@ class PackageInfolist
                 TextEntry::make('type')
                     ->badge()
                     ->placeholder('-'),
+                TextEntry::make('token')
+                    ->label('GitHub token')
+                    // Never render the secret itself.
+                    ->formatStateUsing(fn (): string => 'Saved')
+                    ->badge()
+                    ->color('success')
+                    ->placeholder('Using GITHUB_TOKEN fallback'),
+                TextEntry::make('last_synced_at')
+                    ->label('Last synced')
+                    ->since()
+                    ->placeholder('Never'),
+                TextEntry::make('sync_error')
+                    ->label('Sync error')
+                    ->color('danger')
+                    ->placeholder('None')
+                    ->columnSpanFull(),
                 TextEntry::make('description')
                     ->placeholder('-')
                     ->columnSpanFull(),

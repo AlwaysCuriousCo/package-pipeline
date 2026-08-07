@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
+use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Models\Package;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
@@ -41,6 +42,18 @@ class PackagesTable
                     ->searchable()
                     ->sortable()
                     ->placeholder('-'),
+                TextColumn::make('versions_count')
+                    ->label('Versions')
+                    ->counts('versions')
+                    ->sortable(),
+                TextColumn::make('last_synced_at')
+                    ->label('Last synced')
+                    ->since()
+                    ->sortable()
+                    ->placeholder('Never')
+                    // A failed sync shows up here without opening the record.
+                    ->color(fn (Package $record): ?string => $record->sync_error ? 'danger' : null)
+                    ->tooltip(fn (Package $record): ?string => $record->sync_error),
                 TextColumn::make('description')
                     ->limit(60)
                     ->searchable()
@@ -63,6 +76,7 @@ class PackagesTable
                     ->query(fn (Builder $query): Builder => $query->whereNull('latest_version')),
             ])
             ->recordActions([
+                SyncPackageAction::make(),
                 ViewAction::make(),
                 EditAction::make(),
             ])

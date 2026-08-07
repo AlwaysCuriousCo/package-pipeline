@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Pages;
 
+use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Filament\Resources\Packages\PackageResource;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ViewAction;
@@ -14,6 +15,7 @@ class EditPackage extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            SyncPackageAction::make(),
             ViewAction::make(),
             DeleteAction::make(),
         ];
