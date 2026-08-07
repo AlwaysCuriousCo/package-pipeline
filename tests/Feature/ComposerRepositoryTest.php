@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Package;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Mockery;
 use Tests\TestCase;
 
 class ComposerRepositoryTest extends TestCase
@@ -128,6 +130,30 @@ class ComposerRepositoryTest extends TestCase
         $this->get("/dist/acme/widgets/{$reference}.zip")->assertServerError();
 
         Storage::disk('s3')->assertMissing("composer-dists/acme/widgets/{$reference}.zip");
+    }
+
+    public function test_a_failed_dist_write_is_removed_from_the_disk(): void
+    {
+        config(['filesystems.dists' => 's3']);
+        Http::fake([
+            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('zip-bytes'),
+        ]);
+
+        $reference = str_repeat('b', 40);
+        $path = "composer-dists/acme/widgets/{$reference}.zip";
+
+        // A write that fails after partially uploading must not leave the
+        // truncated object behind for the next request to serve.
+        $disk = Mockery::mock(Filesystem::class);
+        $disk->shouldReceive('exists')->with($path)->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->with($path, Mockery::any())->andReturnFalse();
+        $disk->shouldReceive('delete')->once()->with($path);
+
+        Storage::set('s3', $disk);
+
+        $this->makeServedPackage();
+
+        $this->get("/dist/acme/widgets/{$reference}.zip")->assertServerError();
     }
 
     public function test_the_dist_endpoint_rejects_unknown_references(): void

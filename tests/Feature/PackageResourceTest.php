@@ -147,6 +147,23 @@ class PackageResourceTest extends TestCase
         $this->get('/admin/packages/create')->assertOk();
     }
 
+    public function test_the_token_entry_reflects_whether_a_token_is_stored(): void
+    {
+        $without = Package::factory()->create(['token' => null]);
+        $with = Package::factory()->create(['token' => 'ghp_secret']);
+
+        $this->get("/admin/packages/{$without->getRouteKey()}")
+            ->assertOk()
+            ->assertSee('Using GITHUB_TOKEN fallback')
+            ->assertDontSee('Saved');
+
+        $this->get("/admin/packages/{$with->getRouteKey()}")
+            ->assertOk()
+            ->assertSee('Saved')
+            // The secret itself is never rendered.
+            ->assertDontSee('ghp_secret');
+    }
+
     public function test_guests_cannot_reach_the_package_index(): void
     {
         auth()->logout();

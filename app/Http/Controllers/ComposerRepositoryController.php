@@ -116,6 +116,13 @@ class ComposerRepositoryController extends Controller
                     $disk->writeStream($path, $stream) === false,
                     new \RuntimeException("Unable to write {$path} to the dist disk."),
                 );
+            } catch (\Throwable $exception) {
+                // A write that fails part way through can leave a truncated
+                // object behind, which the next request would serve as a
+                // cache hit.
+                $disk->delete($path);
+
+                throw $exception;
             } finally {
                 if (is_resource($stream)) {
                     fclose($stream);

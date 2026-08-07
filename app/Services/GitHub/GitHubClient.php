@@ -4,13 +4,20 @@ namespace App\Services\GitHub;
 
 use App\Models\Package;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 class GitHubClient
 {
     private const PER_PAGE = 100;
 
-    private const MAX_PAGES = 10;
+    /**
+     * Safety bound on pagination, not an expected limit: 100 pages is 10,000
+     * refs. Reaching it means GitHub was still advertising a next page, so
+     * stopping here would silently drop refs — we fail loudly instead.
+     */
+    private const MAX_PAGES = 100;
 
     public function __construct(
         private readonly string $repositoryPath,
@@ -87,22 +94,45 @@ class GitHubClient
         $page = 1;
 
         do {
-            $items = $this->request()
+            if ($page > self::MAX_PAGES) {
+                throw new RuntimeException(
+                    "{$this->repositoryPath} has more than ".self::MAX_PAGES * self::PER_PAGE
+                    ." {$endpoint}; refusing to sync from a partial list."
+                );
+            }
+
+            $response = $this->request()
                 ->get("/repos/{$this->repositoryPath}/{$endpoint}", [
                     'per_page' => self::PER_PAGE,
                     'page' => $page,
                 ])
-                ->throw()
-                ->json();
+                ->throw();
+
+            $items = $response->json();
 
             foreach ($items as $item) {
                 $refs[$item['name']] = $item['commit']['sha'];
             }
 
             $page++;
-        } while (count($items) === self::PER_PAGE && $page <= self::MAX_PAGES);
+        } while ($this->hasNextPage($response, count($items)));
 
         return $refs;
+    }
+
+    /**
+     * Whether GitHub has another page of results for the current request.
+     */
+    private function hasNextPage(Response $response, int $itemsOnPage): bool
+    {
+        // GitHub advertises further pages through the Link header. Falling back
+        // to "the page came back full" keeps pagination working if that header
+        // is ever missing.
+        if (filled($link = $response->header('Link'))) {
+            return str_contains($link, 'rel="next"');
+        }
+
+        return $itemsOnPage === self::PER_PAGE;
     }
 
     private function request(): PendingRequest

@@ -7,6 +7,7 @@ use App\Services\PackageSynchronizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 use Tests\TestCase;
 
 class PackageSyncTest extends TestCase
@@ -127,5 +128,149 @@ class PackageSyncTest extends TestCase
             ->assertSuccessful();
 
         $this->assertSame(4, $package->versions()->count());
+    }
+
+    public function test_the_sync_command_finds_an_unsynced_package_by_its_composer_name(): void
+    {
+        $this->fakeGitHub();
+
+        // Before the first sync the stored name is still a placeholder, so the
+        // composer name only matches via the repository.
+        $package = $this->makePackage();
+
+        $this->artisan('packages:sync', ['name' => 'acme/widgets'])
+            ->assertSuccessful();
+
+        $this->assertSame('acme/widgets', $package->refresh()->name);
+        $this->assertSame(4, $package->versions()->count());
+    }
+
+    public function test_the_sync_command_does_not_sync_unrelated_packages(): void
+    {
+        $this->fakeGitHub();
+
+        $this->makePackage();
+        $other = Package::factory()->create([
+            'name' => 'acme/other',
+            'repository' => 'https://github.com/acme/other',
+        ]);
+
+        $this->artisan('packages:sync', ['name' => 'acme/widgets'])
+            ->assertSuccessful();
+
+        $this->assertSame(0, $other->versions()->count());
+    }
+
+    public function test_the_sync_command_reports_a_name_that_matches_nothing(): void
+    {
+        $this->fakeGitHub();
+
+        $this->makePackage();
+
+        $this->artisan('packages:sync', ['name' => 'nobody/nothing'])
+            ->expectsOutputToContain('No matching packages found.')
+            ->assertFailed();
+    }
+
+    public function test_sync_reads_every_page_of_tags(): void
+    {
+        // Two full pages plus a partial third: the old ten-page ceiling is not
+        // the thing being tested, only that pagination runs to exhaustion.
+        $pages = [
+            $this->tagPage(1, 100),
+            $this->tagPage(101, 100),
+            $this->tagPage(201, 5),
+        ];
+
+        $page = 0;
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/tags*' => function () use ($pages, &$page) {
+                return Http::response($pages[$page++] ?? []);
+            },
+            'api.github.com/repos/acme/widgets/branches*' => Http::response([]),
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
+                'name' => 'acme/widgets',
+                'type' => 'library',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame(205, $package->versions()->count());
+        $this->assertNotNull($package->versions()->where('version', 'v1.0.205')->first());
+    }
+
+    public function test_sync_stops_at_a_full_page_that_advertises_no_successor(): void
+    {
+        // A full page is normally the signal to keep going; the Link header
+        // overrides that so a repository with exactly 100 tags isn't re-fetched.
+        Http::fake([
+            'api.github.com/repos/acme/widgets/tags*' => Http::response(
+                $this->tagPage(1, 100),
+                headers: ['Link' => '<https://api.github.com/repositories/1/tags?page=1>; rel="prev"'],
+            ),
+            'api.github.com/repos/acme/widgets/branches*' => Http::response([]),
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
+                'name' => 'acme/widgets',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame(100, $package->versions()->count());
+
+        $tagRequests = collect(Http::recorded())
+            ->filter(fn (array $pair): bool => str_contains($pair[0]->url(), '/tags'))
+            ->count();
+
+        $this->assertSame(1, $tagRequests);
+    }
+
+    public function test_sync_fails_loudly_rather_than_truncating_an_endless_repository(): void
+    {
+        // Every page comes back full and advertises a next page, so pagination
+        // would never terminate on its own.
+        Http::fake([
+            'api.github.com/repos/acme/widgets/tags*' => Http::response(
+                $this->tagPage(1, 100),
+                headers: ['Link' => '<https://api.github.com/repositories/1/tags?page=99999>; rel="next"'],
+            ),
+            'api.github.com/repos/acme/widgets/branches*' => Http::response([]),
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
+                'name' => 'acme/widgets',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('Expected the sync to throw rather than silently truncate.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('refusing to sync from a partial list', $exception->getMessage());
+        }
+
+        // The failure is recorded on the package instead of passing as a
+        // successful but incomplete sync.
+        $this->assertStringContainsString('partial list', (string) $package->refresh()->sync_error);
+        $this->assertNull($package->last_synced_at);
+    }
+
+    /**
+     * A page of sequential version tags starting at the given number.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function tagPage(int $start, int $count): array
+    {
+        return array_map(fn (int $i): array => [
+            'name' => "v1.0.{$i}",
+            'commit' => ['sha' => str_pad((string) $i, 40, '0', STR_PAD_LEFT)],
+        ], range($start, $start + $count - 1));
     }
 }
