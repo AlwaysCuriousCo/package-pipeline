@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Pages;
 
+use App\Filament\Resources\Packages\Actions\CreateWebhookAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Filament\Resources\Packages\PackageResource;
 use Filament\Actions\EditAction;
@@ -15,6 +16,7 @@ class ViewPackage extends ViewRecord
     {
         return [
             SyncPackageAction::make(),
+            CreateWebhookAction::make(),
             EditAction::make(),
         ];
     }

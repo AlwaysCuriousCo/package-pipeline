@@ -183,6 +183,30 @@ class Source extends Model
     }
 
     /**
+     * Why this source reaches no repositories, or null when it reaches some.
+     *
+     * An installation comes back empty for two very different reasons and the
+     * fix is not the same. An app registered without repository permissions
+     * never offers a repository picker, so reinstalling it can only ever
+     * produce another empty installation; that has to be corrected on the
+     * app's own settings before any install can grant access.
+     */
+    public function emptyAccessReason(int $repositoryCount): ?string
+    {
+        if ($repositoryCount > 0 || ! $this->usesInstallation()) {
+            return null;
+        }
+
+        if (blank($this->metadata['permissions'] ?? [])) {
+            return 'The GitHub App itself requests no repository permissions, so GitHub does not offer any repositories to share. '
+                .'Add Contents (read-only) under Permissions & events on the app\'s settings, then accept the permission request on the installation.';
+        }
+
+        return 'The app is installed on this account but no repositories were shared with it. '
+            .'Choose them under Repository access on the installation, or connect again and pick them.';
+    }
+
+    /**
      * @param  Builder<self>  $query
      * @return Builder<self>
      */

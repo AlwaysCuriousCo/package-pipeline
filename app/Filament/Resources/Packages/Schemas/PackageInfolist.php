@@ -2,10 +2,15 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\WebhookCoverage;
 use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
+use App\Services\GitHub\WebhookRegistrar;
 use Filament\Infolists\Components\TextEntry;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\FontFamily;
+use Filament\Support\Icons\Heroicon;
 
 class PackageInfolist
 {
@@ -52,9 +57,41 @@ class PackageInfolist
                     ->color('danger')
                     ->placeholder('None')
                     ->columnSpanFull(),
+                TextEntry::make('webhook_coverage')
+                    ->label('Auto-sync')
+                    ->badge()
+                    // Coverage is worked out from the source and the stored
+                    // hook rather than held in a column, so the entry is given
+                    // its state instead of reading one.
+                    ->state(fn (Package $record): WebhookCoverage => $record->webhookCoverage())
+                    ->helperText(fn (Package $record): ?string => app(WebhookRegistrar::class)->unmetRequirement($record)),
+                TextEntry::make('webhook_received_at')
+                    ->label('Last delivery')
+                    ->since()
+                    ->placeholder(fn (Package $record): string => $record->webhookCoverage()->isActive()
+                        ? 'Nothing pushed yet'
+                        : 'Never'),
                 TextEntry::make('description')
                     ->placeholder('-')
                     ->columnSpanFull(),
+                Section::make('Install')
+                    ->description('Run these in the consuming project. Click a command to copy it.')
+                    ->icon(Heroicon::OutlinedCommandLine)
+                    ->columnSpanFull()
+                    ->schema([
+                        TextEntry::make('install_repository')
+                            ->label('1. Register this Composer repository (once per project)')
+                            ->state(fn (Package $record): string => $record->installCommands()['repository'])
+                            ->fontFamily(FontFamily::Mono)
+                            ->copyable()
+                            ->copyMessage('Command copied'),
+                        TextEntry::make('install_require')
+                            ->label('2. Require the package')
+                            ->state(fn (Package $record): string => $record->installCommands()['require'])
+                            ->fontFamily(FontFamily::Mono)
+                            ->copyable()
+                            ->copyMessage('Command copied'),
+                    ]),
                 TextEntry::make('created_at')
                     ->dateTime()
                     ->placeholder('-'),

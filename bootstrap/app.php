@@ -17,6 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // login route of its own to fall back on. Keep this in sync with the
         // panel's path() in App\Providers\Filament\AdminPanelProvider.
         $middleware->redirectGuestsTo('/admin/login');
+
+        // GitHub posts deliveries with no session and no token; they carry a
+        // signature instead, which the webhook controller checks before doing
+        // anything with the payload.
+        $middleware->validateCsrfTokens(except: ['incoming/*']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

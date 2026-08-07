@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\Package;
+use App\Models\PackageVersion;
 use App\Services\GitHub\GitHubClient;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -14,10 +16,10 @@ class PackageSynchronizer
      * versions. The failure reason is recorded on the package before the
      * exception bubbles up to the caller.
      */
-    public function sync(Package $package): void
+    public function sync(Package $package): SyncOutcome
     {
         try {
-            $this->refresh($package, GitHubClient::for($package));
+            return $this->refresh($package, GitHubClient::for($package));
         } catch (Throwable $exception) {
             $package->forceFill(['sync_error' => $exception->getMessage()])->save();
 
@@ -25,7 +27,7 @@ class PackageSynchronizer
         }
     }
 
-    private function refresh(Package $package, GitHubClient $github): void
+    private function refresh(Package $package, GitHubClient $github): SyncOutcome
     {
         $versions = [];
 
@@ -41,9 +43,18 @@ class PackageSynchronizer
             $versions[$this->branchVersion($branch)] = ['reference' => $sha, 'is_dev' => true];
         }
 
+        $known = $package->versions()->get()->keyBy('version');
         $synced = [];
 
         foreach ($versions as $version => $ref) {
+            $version = (string) $version;
+
+            if (($unchanged = $this->unchanged($known->get($version), $ref)) !== null) {
+                $synced[$version] = $unchanged;
+
+                continue;
+            }
+
             $composerJson = $github->composerJson($ref['reference']);
 
             // A ref without a composer.json (or without a package name) is not
@@ -54,7 +65,8 @@ class PackageSynchronizer
 
             $synced[$version] = [
                 ...$ref,
-                'metadata' => [...$composerJson, 'version' => (string) $version],
+                'released_at' => $github->commitDate($ref['reference']),
+                'metadata' => [...$composerJson, 'version' => $version],
             ];
         }
 
@@ -84,6 +96,71 @@ class PackageSynchronizer
                 'sync_error' => null,
             ])->save();
         });
+
+        return $this->outcome($known->keys()->all(), $synced);
+    }
+
+    /**
+     * What changed, read off the versions that were known before the sync and
+     * the ones it settled on.
+     *
+     * Tagged and dev versions are reported apart because they mean different
+     * things to whoever is watching: a tag is a release, a branch moving is
+     * Tuesday.
+     *
+     * @param  list<string>  $known  the versions the package had before
+     * @param  array<string, array{is_dev: bool, ...}>  $synced
+     */
+    private function outcome(array $known, array $synced): SyncOutcome
+    {
+        // A version like "1" is an integer once it is an array key, and every
+        // comparison below reads better with the strings they started as.
+        $current = array_map(strval(...), array_keys($synced));
+        $known = array_map(strval(...), $known);
+
+        $added = array_diff($current, $known);
+
+        $releases = array_values(array_filter($added, fn (string $v): bool => ! $synced[$v]['is_dev']));
+
+        usort($releases, fn (string $a, string $b): int => version_compare(ltrim($a, 'vV'), ltrim($b, 'vV')));
+
+        return new SyncOutcome(
+            releases: $releases,
+            devVersions: array_values(array_filter($added, fn (string $v): bool => $synced[$v]['is_dev'])),
+            removed: array_values(array_diff($known, $current)),
+            initialImport: $known === [],
+            total: count($synced),
+        );
+    }
+
+    /**
+     * The stored row for a ref that has not moved since the last sync, in the
+     * shape the sync writes back — or null when the ref has to be re-read.
+     *
+     * A commit sha names an immutable tree, so a version still pointing at the
+     * same sha cannot have a different composer.json or commit date than the
+     * one already stored. Reusing it saves two API calls per version, which
+     * for a repository of any age is nearly the whole sync. A row missing
+     * either piece is treated as changed so it is backfilled.
+     *
+     * @param  array{reference: string, is_dev: bool}  $ref
+     * @return array{reference: string, is_dev: bool, released_at: CarbonImmutable, metadata: array<string, mixed>}|null
+     */
+    private function unchanged(?PackageVersion $known, array $ref): ?array
+    {
+        if (! $known instanceof PackageVersion
+            || $known->reference !== $ref['reference']
+            || $known->is_dev !== $ref['is_dev']
+            || $known->released_at === null
+            || ! isset($known->metadata['name'])) {
+            return null;
+        }
+
+        return [
+            ...$ref,
+            'released_at' => $known->released_at,
+            'metadata' => $known->metadata,
+        ];
     }
 
     /**

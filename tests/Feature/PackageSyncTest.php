@@ -14,7 +14,13 @@ class PackageSyncTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function fakeGitHub(): void
+    /**
+     * Fake the endpoints a sync reads. Overrides are registered ahead of the
+     * defaults because the first matching stub wins.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    private function fakeGitHub(array $overrides = []): void
     {
         $composerJson = [
             'name' => 'acme/widgets',
@@ -23,7 +29,7 @@ class PackageSyncTest extends TestCase
             'require' => ['php' => '^8.3'],
         ];
 
-        Http::fake([
+        Http::fake($overrides + [
             'api.github.com/repos/acme/widgets/tags*' => Http::response([
                 ['name' => 'v1.0.0', 'commit' => ['sha' => str_repeat('a', 40)]],
                 ['name' => 'v1.1.0', 'commit' => ['sha' => str_repeat('b', 40)]],
@@ -34,6 +40,9 @@ class PackageSyncTest extends TestCase
                 ['name' => '2.x', 'commit' => ['sha' => str_repeat('e', 40)]],
             ]),
             'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response($composerJson),
+            'api.github.com/repos/acme/widgets/commits/*' => Http::response([
+                'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
+            ]),
         ]);
     }
 
@@ -74,6 +83,95 @@ class PackageSyncTest extends TestCase
 
         // The malformed tag is ignored rather than served.
         $this->assertNull($package->versions()->where('version', 'not-a-version')->first());
+    }
+
+    public function test_sync_records_the_commit_date_of_each_version(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $released = $package->versions()->where('version', 'v1.1.0')->sole()->released_at;
+
+        $this->assertNotNull($released);
+        $this->assertSame('2026-02-01 12:00:00', $released->utc()->toDateTimeString());
+
+        // Every version carries a date, dev branches included.
+        $this->assertSame(0, $package->versions()->whereNull('released_at')->count());
+    }
+
+    public function test_a_version_without_a_commit_date_is_stored_anyway(): void
+    {
+        // GitHub answering without a date must not cost the version its row.
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/commits/*' => Http::response([], 404),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame(4, $package->versions()->count());
+        $this->assertNull($package->versions()->where('version', 'v1.1.0')->sole()->released_at);
+    }
+
+    public function test_a_second_sync_does_not_refetch_refs_that_have_not_moved(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $requestsAfterFirstSync = count(Http::recorded());
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // The second sync still lists tags and branches — it cannot know what
+        // moved otherwise — but reads no composer.json or commit for the four
+        // unchanged refs.
+        $refListings = 2;
+
+        $this->assertSame($requestsAfterFirstSync + $refListings, count(Http::recorded()));
+        $this->assertSame(4, $package->versions()->count());
+    }
+
+    public function test_a_moved_branch_is_refetched_on_the_next_sync(): void
+    {
+        $head = str_repeat('d', 40);
+        $moved = str_repeat('1', 40);
+
+        $this->fakeGitHub([
+            // A closure over the current head, so the second sync sees the
+            // branch pointing somewhere new.
+            'api.github.com/repos/acme/widgets/branches*' => function () use (&$head) {
+                return Http::response([['name' => 'main', 'commit' => ['sha' => $head]]]);
+            },
+            'api.github.com/repos/acme/widgets/commits/*' => function ($request) use ($moved) {
+                return Http::response(['commit' => ['committer' => [
+                    'date' => str_contains($request->url(), $moved)
+                        ? '2026-03-09T09:30:00Z'
+                        : '2026-02-01T12:00:00Z',
+                ]]]);
+            },
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // The branch head advances, so its version has to be read again even
+        // though the ref name is unchanged.
+        $head = $moved;
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $main = $package->versions()->where('version', 'dev-main')->sole();
+
+        $this->assertSame($moved, $main->reference);
+        $this->assertSame('2026-03-09 09:30:00', $main->released_at->utc()->toDateTimeString());
     }
 
     public function test_sync_removes_versions_that_no_longer_exist(): void
@@ -184,15 +282,11 @@ class PackageSyncTest extends TestCase
 
         $page = 0;
 
-        Http::fake([
+        $this->fakeGitHub([
             'api.github.com/repos/acme/widgets/tags*' => function () use ($pages, &$page) {
                 return Http::response($pages[$page++] ?? []);
             },
             'api.github.com/repos/acme/widgets/branches*' => Http::response([]),
-            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
-                'name' => 'acme/widgets',
-                'type' => 'library',
-            ]),
         ]);
 
         $package = $this->makePackage();
@@ -207,15 +301,12 @@ class PackageSyncTest extends TestCase
     {
         // A full page is normally the signal to keep going; the Link header
         // overrides that so a repository with exactly 100 tags isn't re-fetched.
-        Http::fake([
+        $this->fakeGitHub([
             'api.github.com/repos/acme/widgets/tags*' => Http::response(
                 $this->tagPage(1, 100),
                 headers: ['Link' => '<https://api.github.com/repositories/1/tags?page=1>; rel="prev"'],
             ),
             'api.github.com/repos/acme/widgets/branches*' => Http::response([]),
-            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
-                'name' => 'acme/widgets',
-            ]),
         ]);
 
         $package = $this->makePackage();
@@ -235,15 +326,12 @@ class PackageSyncTest extends TestCase
     {
         // Every page comes back full and advertises a next page, so pagination
         // would never terminate on its own.
-        Http::fake([
+        $this->fakeGitHub([
             'api.github.com/repos/acme/widgets/tags*' => Http::response(
                 $this->tagPage(1, 100),
                 headers: ['Link' => '<https://api.github.com/repositories/1/tags?page=99999>; rel="next"'],
             ),
             'api.github.com/repos/acme/widgets/branches*' => Http::response([]),
-            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
-                'name' => 'acme/widgets',
-            ]),
         ]);
 
         $package = $this->makePackage();

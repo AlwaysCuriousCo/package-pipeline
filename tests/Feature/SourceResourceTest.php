@@ -25,7 +25,7 @@ class SourceResourceTest extends TestCase
     {
         parent::setUp();
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->superAdmin()->create());
     }
 
     private function configureGitHubApp(): void

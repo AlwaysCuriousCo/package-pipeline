@@ -11,9 +11,14 @@ class DatabaseSeeder extends Seeder
 
     /**
      * Seed the application's database.
+     *
+     * The admin account is deliberately absent: it is created by
+     * `php artisan admin:create`, which keeps the password out of the
+     * environment and out of version control. What is seeded here is the
+     * permission set that account's role is granted.
      */
     public function run(): void
     {
-        $this->call(UserSeeder::class);
+        $this->call(ShieldPermissionSeeder::class);
     }
 }

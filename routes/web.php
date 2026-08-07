@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ComposerRepositoryController;
+use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\SourceConnectionController;
 use Illuminate\Support\Facades\Route;
 
@@ -19,6 +20,19 @@ Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 
     ->name('composer.metadata');
 Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
     ->name('composer.dist');
+
+// Incoming provider deliveries, which sync a package as soon as a tag or
+// branch moves. Both are unauthenticated by design and verify GitHub's
+// signature instead; see docs/webhooks.md.
+//
+// The first is the GitHub App's own webhook, configured once on the app and
+// carrying events for every repository in every installation. The second is
+// the per-repository fallback, for packages whose source is not an installed
+// app — its signature is checked against that package's own secret.
+Route::post('/incoming/github', [GitHubWebhookController::class, 'app'])
+    ->name('webhooks.github');
+Route::post('/incoming/github/{package}', [GitHubWebhookController::class, 'repository'])
+    ->name('webhooks.github.package');
 
 // The GitHub App install handshake for connecting a source. Both legs are
 // admin-only: the callback attaches an installation to a source, so it must

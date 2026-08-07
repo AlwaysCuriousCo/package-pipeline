@@ -23,10 +23,21 @@ class TestSourceAction
             ->action(function (Source $record): void {
                 try {
                     $count = $record->verify();
+                    $account = $record->refresh()->account;
+
+                    if ($reason = $record->emptyAccessReason($count)) {
+                        Notification::make()
+                            ->warning()
+                            ->title("{$account} is reachable, but shares no repositories")
+                            ->body($reason)
+                            ->send();
+
+                        return;
+                    }
 
                     Notification::make()
                         ->success()
-                        ->title("{$record->refresh()->account} is reachable")
+                        ->title("{$account} is reachable")
                         ->body("{$count} repositories are available to this source.")
                         ->send();
                 } catch (Throwable $exception) {

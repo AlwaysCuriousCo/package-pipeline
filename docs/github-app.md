@@ -11,8 +11,11 @@ than to a person, so access does not disappear when someone leaves.
 
 ## 1. Register the app
 
-Once per deployment, at **Settings → Developer settings → GitHub Apps → New
-GitHub App** (on the organisation that will own it):
+Once per deployment — a local or staging site needs its own app, for the reason
+in [Connecting the same account from a second
+environment](#connecting-the-same-account-from-a-second-environment) — at
+**Settings → Developer settings → GitHub Apps → New GitHub App** (on the
+organisation that will own it):
 
 | Field | Value |
 | --- | --- |
@@ -20,12 +23,27 @@ GitHub App** (on the organisation that will own it):
 | Homepage URL | your `APP_URL` |
 | Setup URL | `<APP_URL>/sources/github/callback` |
 | Redirect on update | ✅ checked |
-| Webhook | uncheck **Active** (not used yet) |
+| Webhook → Active | ✅ checked |
+| Webhook URL | `<APP_URL>/incoming/github` |
+| Webhook secret | a long random string, also set as `GITHUB_APP_WEBHOOK_SECRET` |
+
+Subscribe the app to **Push**, **Branch or tag creation** and **Branch or tag
+deletion** under **Permissions & events**. That one webhook covers every
+repository in every installation, so packages sync themselves the moment
+something is pushed — see [webhooks.md](webhooks.md) for the whole picture.
 
 Repository permissions — read-only is enough for syncing and serving dists:
 
 - **Contents**: Read-only
 - **Metadata**: Read-only (mandatory)
+
+These are not optional polish. GitHub only offers a repository picker for apps
+that ask for at least one repository permission, so an app registered without
+them installs onto an account sharing nothing, and every source connected
+through it reads zero repositories. If that has already happened, add the
+permissions under **Permissions & events** on the app's settings, then accept
+the permission request on each installation — GitHub does not apply new
+permissions to an existing install until its owner approves them.
 
 Then **Generate a private key** and download the `.pem`.
 
@@ -36,6 +54,7 @@ Two values, both on the app's settings page:
 ```dotenv
 GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY=/secure/path/acme-package-pipeline.private-key.pem
+GITHUB_APP_WEBHOOK_SECRET=the-same-secret-set-on-the-app-s-webhook
 ```
 
 These identify *this registry* to GitHub — the equivalent of an OAuth
@@ -72,6 +91,51 @@ can be added after the packages they cover.
 repository count. **Disconnect** drops the stored credentials but keeps the
 source and its package links intact — revoking access on GitHub's side is a
 separate uninstall from the organisation's settings.
+
+## Connecting the same account from a second environment
+
+A GitHub App has exactly one Setup URL, so an app registered against the
+deployed site can only ever hand its callback back to the deployed site. Point
+a local install at the same `GITHUB_APP_ID` and **Connect GitHub account**
+appears to work but never finishes: the account already has the app, so GitHub
+skips the install screen and redirects to the Setup URL, which is production.
+The deployed app receives the callback; the local one waits forever.
+
+### Register a second app (preferred)
+
+Treat each environment as its own deployment and repeat steps 1 and 2 for it —
+e.g. an `Acme Package Pipeline (Local)` app whose Setup URL is
+`http://localhost:8000/sources/github/callback` — then install it on the same
+account and set that app's id and `.pem` in the environment's `.env`. This is
+the usual way to run a GitHub App in more than one place, and it keeps the two
+installations independent: revoking the local one does not touch production.
+
+A development host that GitHub cannot reach is fine. The Setup URL is followed
+by the admin's own browser, not by GitHub, so `.test` and `localhost` work.
+
+### Or complete the callback by hand
+
+To attach an existing installation without registering anything, visit the
+callback directly. It accepts a request with no `state` — GitHub itself sends
+one whenever an installation is merely updated rather than created — so it
+connects whichever installation is named:
+
+1. Find the installation id. On GitHub open the account's installed apps —
+   `https://github.com/settings/installations` for a user, or
+   `https://github.com/organizations/<org>/settings/installations` for an
+   organisation — and click **Configure**. The URL ends in the id.
+2. Sign in to the admin on the environment being connected; the callback is
+   admin-only.
+3. Visit `<APP_URL>/sources/github/callback?installation_id=<id>`.
+
+That is the same code path the redirect takes, so the source is verified and
+matching packages adopted exactly as a normal connect would do. An existing
+source for that installation or account is updated rather than duplicated, and
+the app credentials are not tied to a hostname, so this works from a laptop.
+
+Only the install handshake is host-bound in this way. Once `installation_id` is
+stored, syncing, token minting and **Test connection** work from anywhere the
+app's id and private key are configured.
 
 ## Without a GitHub App
 

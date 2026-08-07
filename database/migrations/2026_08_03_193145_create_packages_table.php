@@ -13,11 +13,35 @@ return new class extends Migration
     {
         Schema::create('packages', function (Blueprint $table) {
             $table->id();
+
+            // Deleting a source leaves its packages in place; they fall back
+            // to their own token or GITHUB_TOKEN until relinked.
+            $table->foreignId('source_id')->nullable()->constrained()->nullOnDelete();
+
             $table->string('repository')->unique();
             $table->string('latest_version')->nullable();
-            $table->string('name');
+
+            // Composer resolves packages by name, so it must be unique.
+            $table->string('name')->unique();
             $table->text('description')->nullable();
             $table->string('type')->nullable()->index();
+            $table->text('token')->nullable();
+            $table->timestamp('last_synced_at')->nullable();
+            $table->text('sync_error')->nullable();
+
+            // The repository webhook created for this package, which only
+            // exists as the fallback for repositories the GitHub App's own
+            // webhook does not deliver for. Packages under an installed app
+            // leave all three null and are covered account-wide.
+            $table->unsignedBigInteger('webhook_id')->nullable();
+            $table->text('webhook_secret')->nullable();
+            $table->text('webhook_error')->nullable();
+
+            // When a delivery was last accepted for this package, whichever
+            // webhook carried it — the one honest answer to "is auto-sync
+            // actually working?".
+            $table->timestamp('webhook_received_at')->nullable();
+
             $table->timestamps();
         });
     }

@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -10,8 +11,6 @@ use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
-use Filament\Widgets\AccountWidget;
-use Filament\Widgets\FilamentInfoWidget;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -28,6 +27,9 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+            // Also the target of the link `php artisan admin:create` prints,
+            // which is how the first account gets a password.
+            ->passwordReset()
             ->colors([
                 'primary' => Color::Amber,
             ])
@@ -36,11 +38,18 @@ class AdminPanelProvider extends PanelProvider
             ->pages([
                 Dashboard::class,
             ])
+            // Filament's stock account and info widgets are deliberately absent;
+            // the dashboard carries only the app's own widgets, which discovery
+            // registers for us.
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
-            ->widgets([
-                AccountWidget::class,
-                FilamentInfoWidget::class,
-            ])
+            // Roles and permissions, plus the Roles resource for managing them.
+            // Permissions are generated from the panel's own entities by
+            // `php artisan shield:generate --all`.
+            ->plugin(FilamentShieldPlugin::make())
+            // The bell, where a package's own releases and failed syncs land.
+            // Syncing happens on a queue in response to a push, so there is
+            // often nobody watching the page it happened on.
+            ->databaseNotifications()
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,

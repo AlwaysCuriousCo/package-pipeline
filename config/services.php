@@ -31,6 +31,11 @@ return [
             'slug' => env('GITHUB_APP_SLUG'),
             // Overridden only on GitHub Enterprise.
             'api_url' => env('GITHUB_APP_API_URL', 'https://api.github.com'),
+
+            // The secret set on the app's own webhook, which delivers events
+            // for every repository in every installation. Setting it is what
+            // turns auto-sync on for App-connected sources; see docs/webhooks.md.
+            'webhook_secret' => env('GITHUB_APP_WEBHOOK_SECRET'),
         ],
     ],
 

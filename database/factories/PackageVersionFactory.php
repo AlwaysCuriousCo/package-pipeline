@@ -23,6 +23,7 @@ class PackageVersionFactory extends Factory
             'version' => $version,
             'reference' => fake()->sha1(),
             'is_dev' => false,
+            'released_at' => fake()->dateTimeBetween('-2 years'),
             'metadata' => fn (array $attributes): array => [
                 'name' => Package::query()->find($attributes['package_id'])?->name ?? 'acme/widgets',
                 'version' => $attributes['version'],

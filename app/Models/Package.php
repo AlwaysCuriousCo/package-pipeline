@@ -3,12 +3,16 @@
 namespace App\Models;
 
 use App\Enums\SourceProvider;
+use App\Enums\WebhookCoverage;
+use App\Services\GitHub\WebhookRegistrar;
 use Database\Factories\PackageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 #[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error'])]
@@ -24,13 +28,20 @@ class Package extends Model
     {
         return [
             'token' => 'encrypted',
+            'webhook_secret' => 'encrypted',
             'last_synced_at' => 'datetime',
+            'webhook_received_at' => 'datetime',
         ];
     }
 
     protected static function booted(): void
     {
         static::saving(fn (self $package) => $package->linkSource());
+
+        // A repository hook left behind on GitHub would keep posting to a URL
+        // that resolves to nothing. Removing it is best effort: the package is
+        // gone here either way.
+        static::deleted(fn (self $package) => app(WebhookRegistrar::class)->deregister($package));
     }
 
     /**
@@ -116,6 +127,137 @@ class Package extends Model
         }
 
         throw new InvalidArgumentException("Unable to determine the GitHub repository from [{$repository}].");
+    }
+
+    /**
+     * Every package published from a given "owner/repo" path.
+     *
+     * The column holds whatever URL was typed — a browser URL, an SSH remote,
+     * a bare path — so candidates are narrowed in SQL and then confirmed
+     * against the parsed path, which is the only form the two agree on.
+     * "acme/widgets" must not answer for "acme/widgets-pro".
+     *
+     * The column is unique as typed, not as parsed, so the same repository
+     * stored two ways is two packages. A caller resolving a delivery has to
+     * reach them all — picking one would sync an arbitrary package and
+     * silently starve the rest.
+     *
+     * @return Collection<int, self>
+     */
+    public static function allForRepositoryPath(string $repositoryPath): Collection
+    {
+        $path = mb_strtolower(trim($repositoryPath, '/'));
+
+        if ($path === '') {
+            return new Collection;
+        }
+
+        return static::query()
+            ->whereLike('repository', "%{$path}%", caseSensitive: false)
+            ->get()
+            ->filter(function (self $package) use ($path): bool {
+                try {
+                    return mb_strtolower($package->repositoryPath()) === $path;
+                } catch (InvalidArgumentException) {
+                    return false;
+                }
+            })
+            ->values();
+    }
+
+    /**
+     * How events for this package's repository reach the app.
+     *
+     * An installed GitHub App delivers for every repository it can see through
+     * one webhook on the app itself, so those packages need nothing created
+     * and nothing stored. Everything else — a token-based source, a package
+     * with only its own token — has to carry a hook on the repository.
+     */
+    public function webhookCoverage(): WebhookCoverage
+    {
+        if ($this->source?->usesInstallation()) {
+            return filled(config('services.github.app.webhook_secret'))
+                ? WebhookCoverage::Application
+                : WebhookCoverage::Unconfigured;
+        }
+
+        if ($this->webhook_id !== null) {
+            return WebhookCoverage::Repository;
+        }
+
+        return filled($this->webhook_error) ? WebhookCoverage::Failed : WebhookCoverage::None;
+    }
+
+    /**
+     * Where GitHub posts this package's own deliveries. Only meaningful for a
+     * package carrying a repository hook — an app-covered one is delivered to
+     * the account-wide URL instead.
+     */
+    public function webhookUrl(): string
+    {
+        return route('webhooks.github.package', $this);
+    }
+
+    /**
+     * The Composer name this repository most likely publishes under.
+     *
+     * A guess for the create wizard, used only when the repository's own
+     * composer.json cannot be read; the first sync replaces it with the real
+     * name. Null when the repository URL names no GitHub repository at all.
+     */
+    public function suggestedName(): ?string
+    {
+        try {
+            // Composer names are lowercase, GitHub paths need not be.
+            return mb_strtolower($this->repositoryPath());
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /**
+     * The commands a consuming project runs to install this package, keyed by
+     * a short label describing each step.
+     *
+     * @return array<string, string>
+     */
+    public function installCommands(): array
+    {
+        $repositoryKey = Str::slug(config('app.name')) ?: 'private';
+        $repositoryUrl = rtrim(url('/'), '/');
+
+        $require = $this->name;
+
+        if ($constraint = $this->suggestedConstraint()) {
+            $require .= ":{$constraint}";
+        }
+
+        return [
+            'repository' => "composer config repositories.{$repositoryKey} composer {$repositoryUrl}",
+            'require' => "composer require {$require}",
+        ];
+    }
+
+    /**
+     * The version constraint to suggest in an install command: a caret on the
+     * latest release, the default dev branch for unreleased packages, or
+     * nothing when no versions have been synced yet.
+     */
+    private function suggestedConstraint(): ?string
+    {
+        if ($this->latest_version !== null) {
+            return '^'.ltrim($this->latest_version, 'vV');
+        }
+
+        $devVersions = $this->versions()->where('is_dev', true)->pluck('version');
+
+        foreach (['dev-main', 'dev-master'] as $preferred) {
+            if ($devVersions->contains($preferred)) {
+                return $preferred;
+            }
+        }
+
+        return $devVersions->first();
     }
 
     /**

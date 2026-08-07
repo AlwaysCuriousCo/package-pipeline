@@ -259,6 +259,9 @@ class SourceTest extends TestCase
                 'name' => 'acme/widgets',
                 'type' => 'library',
             ]),
+            'github.acme.test/api/v3/repos/acme/widgets/commits/*' => Http::response([
+                'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
+            ]),
         ]);
 
         $source = Source::factory()->create([

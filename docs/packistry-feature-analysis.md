@@ -10,7 +10,8 @@ independently in package-pipeline (Laravel 13 + Filament v5). Prompts assume the
   in `app/Http/Controllers/ComposerRepositoryController.php` + `routes/web.php`
 - `Package` / `PackageVersion` models, `app/Services/PackageSynchronizer.php`, `app/Services/GitHub/GitHubClient.php`
 - Admin is Filament (`app/Filament/Resources`), no public SPA
-- Migration `2026_08_06_000000_add_sync_columns_and_package_versions.php` adds sync columns + versions table
+- Migrations `2026_08_03_193140_create_sources_table.php`, `..._193145_create_packages_table.php`,
+  `..._193150_create_package_versions_table.php` define the whole schema (pre-v1: folded in, never altered)
 
 Legend: ✅ already have · 🟡 partial · ❌ missing
 
@@ -30,7 +31,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 8 | Personal access tokens (per-user) | ❌ | 6 |
 | 9 | Roles + granular permissions | ❌ | — |
 | 10 | Per-user repository/package access scoping | ❌ | 5, 9 |
-| 11 | Provider webhooks (auto-sync on push/tag/delete) | ❌ | — |
+| 11 | Provider webhooks (auto-sync on push/tag/delete) | ✅ | — |
 | 12 | Queued batch imports with progress | 🟡 | — |
 | 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | 🟡 | — |
 | 13a | Sources with GitHub App auth + package bridging | ✅ | — |
@@ -297,26 +298,29 @@ secret. Push events resolve the package by `(source_id, provider_id)` and import
 `ping` returns 204; unknown events 422. Webhooks are auto-registered on the provider when a package is
 onboarded (`Client::createWebhook`).
 
-**Gap**: package-pipeline syncs by full re-scan only (manual/scheduled).
+**Implemented**, with three deliberate departures from Packistry's design — see
+[webhooks.md](webhooks.md):
 
-```text
-In this Laravel app (private Composer registry; GitHub sync exists in
-app/Services/PackageSynchronizer.php and app/Services/GitHub/GitHubClient.php), add GitHub webhook
-ingestion:
-1. Migration: add webhook_secret (encrypted cast) to packages — or to sources if a sources table
-   exists.
-2. Route POST /incoming/github/{package} (no CSRF, force JSON). Controller validates
-   X-Hub-Signature-256 HMAC against the secret (hash_equals), then handles: ping -> 204;
-   push of a tag -> sync only that tag (create/update the single PackageVersion, reusing the
-   normalizer and archive logic from PackageSynchronizer rather than a full resync);
-   push of a branch -> update that dev version; delete event -> remove the matching version and its
-   stored archive. Unknown events -> 422. Record last_synced_at / sync_error as the full sync does.
-3. Add a "webhook setup" section on the Filament Package page showing the payload URL + secret, and
-   an action that calls the GitHub API to create the webhook automatically (POST /repos/{repo}/hooks
-   with content_type json and the secret) using the package's stored token.
-4. Feature tests with signed fake payloads: valid signature imports one version, bad signature 401,
-   delete removes version, ping 204. Run tests.
-```
+- **One app-level webhook, not one per package.** Sources authenticate as a GitHub App, and an App
+  has a single webhook covering every repository in every installation (`POST /incoming/github`,
+  signed with `GITHUB_APP_WEBHOOK_SECRET`). Nothing is created per package, repositories added to an
+  installation later are covered for free, and no new repository permission is requested —
+  per-repository hooks need **Repository webhooks: write**, which every installation owner would
+  have to re-approve. Packistry has no App path, so per-repo hooks are its only option.
+  `POST /incoming/github/{package}` remains as exactly that fallback, for token-based sources, and
+  `WebhookRegistrar` creates one on package create.
+- **A full sync per delivery, not a single-ref import.** `PackageSynchronizer::unchanged()` already
+  skips refs whose sha has not moved, so a delivery costs two API calls when nothing changed;
+  a separate surgical import path would be a second implementation of version building to keep
+  correct. The sync is queued 15 seconds out so a `git push --tags` burst collapses into one run
+  (the existing `ShouldBeUniqueUntilProcessing` lock does the folding).
+- **Unhandled events are 202, not 422.** An app webhook receives whatever the app is subscribed to,
+  including repositories that are not packages here — the normal case, not an error, and a 4xx
+  would paint GitHub's delivery log red for working installations.
+
+Beyond the original scope: `sync()` now returns a `SyncOutcome`, which is what lets a new tag raise
+a notification (panel bell + Slack) while a dev branch moving stays silent, and a permanently
+failed sync announce itself.
 
 ## 12. Queued batch imports with progress
 

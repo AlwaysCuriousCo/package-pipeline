@@ -48,6 +48,11 @@ class ComposerRepositoryController extends Controller
             ->map(fn (PackageVersion $version): array => [
                 ...$version->metadata,
                 'name' => $name,
+                // Composer reads release dates from `time`. The column is the
+                // source of truth, so the served date can never drift from it;
+                // a version synced before the date was tracked omits the key
+                // rather than advertising a null.
+                ...($version->released_at ? ['time' => $version->released_at->toIso8601String()] : []),
                 'dist' => [
                     'type' => 'zip',
                     'url' => route('composer.dist', [
