@@ -88,7 +88,10 @@ class ComposerRepositoryTest extends TestCase
 
     public function test_the_dist_endpoint_proxies_and_caches_the_zipball(): void
     {
-        Storage::fake('local');
+        // The dist disk is configurable so it can be pointed at object
+        // storage; the endpoint must not assume a local one.
+        config(['filesystems.dists' => 's3']);
+        Storage::fake('s3');
         Http::fake([
             'api.github.com/repos/acme/widgets/zipball/*' => Http::response('zip-bytes'),
         ]);
@@ -96,16 +99,35 @@ class ComposerRepositoryTest extends TestCase
         $this->makeServedPackage();
         $reference = str_repeat('b', 40);
 
-        $this->get("/dist/acme/widgets/{$reference}.zip")
+        $response = $this->get("/dist/acme/widgets/{$reference}.zip")
             ->assertOk()
             ->assertHeader('Content-Type', 'application/zip');
 
-        Storage::disk('local')->assertExists("composer-dists/acme/widgets/{$reference}.zip");
+        $this->assertSame('zip-bytes', $response->streamedContent());
+
+        Storage::disk('s3')->assertExists("composer-dists/acme/widgets/{$reference}.zip");
+        $this->assertSame('zip-bytes', Storage::disk('s3')->get("composer-dists/acme/widgets/{$reference}.zip"));
         Http::assertSent(fn ($request): bool => $request->hasHeader('Authorization', 'Bearer ghp_secret'));
 
         // A second download is served from the cache without touching GitHub.
         $this->get("/dist/acme/widgets/{$reference}.zip")->assertOk();
         Http::assertSentCount(1);
+    }
+
+    public function test_a_failed_zipball_download_is_not_cached(): void
+    {
+        config(['filesystems.dists' => 's3']);
+        Storage::fake('s3');
+        Http::fake([
+            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('nope', 500),
+        ]);
+
+        $this->makeServedPackage();
+        $reference = str_repeat('b', 40);
+
+        $this->get("/dist/acme/widgets/{$reference}.zip")->assertServerError();
+
+        Storage::disk('s3')->assertMissing("composer-dists/acme/widgets/{$reference}.zip");
     }
 
     public function test_the_dist_endpoint_rejects_unknown_references(): void

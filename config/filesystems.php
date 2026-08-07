@@ -17,6 +17,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Composer Dist Cache Disk
+    |--------------------------------------------------------------------------
+    |
+    | The disk that cached package zipballs are written to. Application
+    | containers have ephemeral local storage, so any deployment with
+    | more than one container must point this at an "s3" bucket.
+    |
+    */
+
+    'dists' => env('DIST_DISK', env('FILESYSTEM_DISK', 'local')),
+
+    /*
+    |--------------------------------------------------------------------------
     | Filesystem Disks
     |--------------------------------------------------------------------------
     |

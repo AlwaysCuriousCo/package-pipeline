@@ -5,10 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Services\GitHub\GitHubClient;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Serves the app as a Composer v2 repository, so a project can point at it
@@ -62,10 +63,10 @@ class ComposerRepositoryController extends Controller
     }
 
     /**
-     * Proxy a version's zipball from GitHub, caching it locally so each
-     * commit is only downloaded once.
+     * Proxy a version's zipball from GitHub, caching it on the dist disk so
+     * each commit is only downloaded once.
      */
-    public function dist(string $vendor, string $package, string $reference): BinaryFileResponse
+    public function dist(string $vendor, string $package, string $reference): StreamedResponse
     {
         $name = "{$vendor}/{$package}";
 
@@ -78,25 +79,50 @@ class ComposerRepositoryController extends Controller
             "Reference {$reference} is not a known version of {$name}.",
         );
 
-        $disk = Storage::disk('local');
-        $path = $disk->path("composer-dists/{$vendor}/{$package}/{$reference}.zip");
+        $disk = Storage::disk(config('filesystems.dists'));
+        $path = "composer-dists/{$vendor}/{$package}/{$reference}.zip";
 
-        if (! $disk->exists("composer-dists/{$vendor}/{$package}/{$reference}.zip")) {
-            File::ensureDirectoryExists(dirname($path));
-
-            try {
-                GitHubClient::for($record)->downloadZipball($reference, $path);
-            } catch (\Throwable $exception) {
-                // A failed download must not leave a partial zip behind to be
-                // served as a cache hit on the next request.
-                File::delete($path);
-
-                throw $exception;
-            }
+        if (! $disk->exists($path)) {
+            $this->cacheZipball($disk, $path, $record, $reference);
         }
 
-        return response()->download($path, "{$vendor}-{$package}-{$reference}.zip", [
+        return $disk->download($path, "{$vendor}-{$package}-{$reference}.zip", [
             'Content-Type' => 'application/zip',
         ]);
+    }
+
+    /**
+     * Download a zipball to a temporary file and stream it onto the dist disk.
+     *
+     * Going via a temporary file keeps the whole archive out of memory and
+     * means a failed download never publishes a partial zip that a later
+     * request would serve as a cache hit.
+     */
+    private function cacheZipball(Filesystem $disk, string $path, Package $record, string $reference): void
+    {
+        $temporary = tempnam(sys_get_temp_dir(), 'composer-dist-');
+
+        throw_if($temporary === false, new \RuntimeException('Unable to create a temporary file for the zipball.'));
+
+        try {
+            GitHubClient::for($record)->downloadZipball($reference, $temporary);
+
+            $stream = fopen($temporary, 'r');
+
+            throw_if($stream === false, new \RuntimeException("Unable to read the downloaded zipball for {$reference}."));
+
+            try {
+                throw_if(
+                    $disk->writeStream($path, $stream) === false,
+                    new \RuntimeException("Unable to write {$path} to the dist disk."),
+                );
+            } finally {
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            }
+        } finally {
+            File::delete($temporary);
+        }
     }
 }

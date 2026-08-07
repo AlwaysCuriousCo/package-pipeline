@@ -67,15 +67,15 @@ class GitHubClient
     }
 
     /**
-     * Download the zipball for the given ref to a local file.
+     * Download the zipball for the given ref to a local file, streaming the
+     * response so that archive size is not bounded by the memory limit.
      */
     public function downloadZipball(string $ref, string $destination): void
     {
-        $response = $this->request()
+        $this->request()
+            ->sink($destination)
             ->get("/repos/{$this->repositoryPath}/zipball/{$ref}")
             ->throw();
-
-        file_put_contents($destination, $response->body());
     }
 
     /**
