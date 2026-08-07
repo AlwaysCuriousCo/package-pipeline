@@ -42,24 +42,10 @@ return new class extends Migration
             $table->unique(['provider', 'installation_id']);
             $table->unique(['provider', 'account']);
         });
-
-        Schema::table('packages', function (Blueprint $table) {
-            $table->foreignId('source_id')
-                ->nullable()
-                ->after('id')
-                // Deleting a source leaves its packages in place; they fall
-                // back to their own token or GITHUB_TOKEN until relinked.
-                ->constrained()
-                ->nullOnDelete();
-        });
     }
 
     public function down(): void
     {
-        Schema::table('packages', function (Blueprint $table) {
-            $table->dropConstrainedForeignId('source_id');
-        });
-
         Schema::dropIfExists('sources');
     }
 };

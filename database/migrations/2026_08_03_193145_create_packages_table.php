@@ -13,11 +13,21 @@ return new class extends Migration
     {
         Schema::create('packages', function (Blueprint $table) {
             $table->id();
+
+            // Deleting a source leaves its packages in place; they fall back
+            // to their own token or GITHUB_TOKEN until relinked.
+            $table->foreignId('source_id')->nullable()->constrained()->nullOnDelete();
+
             $table->string('repository')->unique();
             $table->string('latest_version')->nullable();
-            $table->string('name');
+
+            // Composer resolves packages by name, so it must be unique.
+            $table->string('name')->unique();
             $table->text('description')->nullable();
             $table->string('type')->nullable()->index();
+            $table->text('token')->nullable();
+            $table->timestamp('last_synced_at')->nullable();
+            $table->text('sync_error')->nullable();
             $table->timestamps();
         });
     }
