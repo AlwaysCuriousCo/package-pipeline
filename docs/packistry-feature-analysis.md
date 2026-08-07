@@ -33,6 +33,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 11 | Provider webhooks (auto-sync on push/tag/delete) | ❌ | — |
 | 12 | Queued batch imports with progress | 🟡 | — |
 | 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | 🟡 | — |
+| 13a | Sources with GitHub App auth + package bridging | ✅ | — |
 | 14 | Source project browser + one-click package onboarding | ❌ | 13 |
 | 15 | Download statistics + dashboard | ❌ | 2 |
 | 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ❌ | 9 |
@@ -342,6 +343,15 @@ In this Laravel app, move package syncing onto queued job batches:
 5. Ensure queue + batches tables exist (php artisan queue:batches-table if needed). Tests with
    Bus::fake and a small fake ref set exercising fan-out and failure isolation. Run tests.
 ```
+
+## 13a. Sources with GitHub App auth — implemented
+
+The `Source` model, its Filament resource, and the GitHub App install handshake are built; see
+[github-app.md](github-app.md). A source holds one GitHub owner and mints short-lived installation
+tokens, packages under that owner are linked to it on save, and `GitHubClient::for()` resolves
+source → package token → `GITHUB_TOKEN`. The provider is an enum (`App\Enums\SourceProvider`) but
+only GitHub is implemented — item 13 below is the remaining work: extracting a `SourceClient`
+contract and adding GitLab/Gitea/Bitbucket behind it.
 
 ## 13. Multi-provider source abstraction
 

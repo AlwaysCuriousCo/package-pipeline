@@ -22,13 +22,19 @@ class GitHubClient
     public function __construct(
         private readonly string $repositoryPath,
         private readonly ?string $token,
+        private readonly string $apiUrl = 'https://api.github.com',
     ) {}
 
+    /**
+     * A client for one package, authenticated with whatever credential the
+     * package resolves to — its connected source first of all.
+     */
     public static function for(Package $package): self
     {
         return new self(
             $package->repositoryPath(),
-            $package->token ?? config('services.github.token'),
+            $package->accessToken(),
+            $package->apiUrl(),
         );
     }
 
@@ -137,7 +143,7 @@ class GitHubClient
 
     private function request(): PendingRequest
     {
-        return Http::baseUrl('https://api.github.com')
+        return Http::baseUrl($this->apiUrl)
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->when($this->token, fn (PendingRequest $request) => $request->withToken($this->token))
             ->acceptJson();

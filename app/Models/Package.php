@@ -2,14 +2,16 @@
 
 namespace App\Models;
 
+use App\Enums\SourceProvider;
 use Database\Factories\PackageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use InvalidArgumentException;
 
-#[Fillable(['repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error'])]
+#[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -26,12 +28,73 @@ class Package extends Model
         ];
     }
 
+    protected static function booted(): void
+    {
+        static::saving(fn (self $package) => $package->linkSource());
+    }
+
     /**
      * @return HasMany<PackageVersion, $this>
      */
     public function versions(): HasMany
     {
         return $this->hasMany(PackageVersion::class);
+    }
+
+    /**
+     * @return BelongsTo<Source, $this>
+     */
+    public function source(): BelongsTo
+    {
+        return $this->belongsTo(Source::class);
+    }
+
+    /**
+     * Attach the connected source that owns this package's repository.
+     *
+     * Runs on every save, but only fills a source in when the package has none
+     * *and* the repository URL is new — so a source chosen (or cleared) by
+     * hand is never overwritten, and repointing a package at another
+     * organisation is a deliberate act rather than a silent re-credentialing.
+     */
+    public function linkSource(): void
+    {
+        if ($this->source_id !== null || ! $this->isDirty('repository')) {
+            return;
+        }
+
+        try {
+            $path = $this->repositoryPath();
+        } catch (InvalidArgumentException) {
+            // An unparseable repository belongs to no source.
+            return;
+        }
+
+        $this->source_id = Source::forRepositoryPath($path)?->id;
+    }
+
+    /**
+     * The credential to use when talking to this package's provider.
+     *
+     * The connected source wins, because it is the credential an admin
+     * deliberately attached to the whole organisation. A per-package token
+     * remains as an override for repositories no source covers, and
+     * GITHUB_TOKEN is the last resort.
+     */
+    public function accessToken(): ?string
+    {
+        return $this->source?->accessToken()
+            ?? $this->token
+            ?? config('services.github.token');
+    }
+
+    /**
+     * The API root to reach this package's repository through, which a
+     * self-hosted source overrides.
+     */
+    public function apiUrl(): string
+    {
+        return $this->source?->apiUrl() ?? SourceProvider::Github->defaultApiUrl();
     }
 
     /**

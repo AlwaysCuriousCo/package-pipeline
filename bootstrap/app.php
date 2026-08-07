@@ -12,7 +12,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // The admin-only routes outside the Filament panel (the GitHub App
+        // connect handshake) use the plain "auth" middleware, which has no
+        // login route of its own to fall back on. Keep this in sync with the
+        // panel's path() in App\Providers\Filament\AdminPanelProvider.
+        $middleware->redirectGuestsTo('/admin/login');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

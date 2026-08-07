@@ -15,9 +15,23 @@ return [
     */
 
     'github' => [
-        // Fallback token for packages that don't carry their own; used when
-        // syncing and when proxying zipballs from private repositories.
+        // Last-resort token, used only for packages with neither a connected
+        // source nor a token of their own.
         'token' => env('GITHUB_TOKEN'),
+
+        // The registered GitHub App that sources install onto an organisation
+        // to authenticate without a long-lived token. See docs/github-app.md.
+        'app' => [
+            'id' => env('GITHUB_APP_ID'),
+            // The generated .pem, given either as a file path or as the key
+            // itself with its newlines escaped as "\n".
+            'private_key' => env('GITHUB_APP_PRIVATE_KEY'),
+            // Read from GitHub when empty; only worth setting to skip that
+            // lookup, or if the app is renamed before the cache expires.
+            'slug' => env('GITHUB_APP_SLUG'),
+            // Overridden only on GitHub Enterprise.
+            'api_url' => env('GITHUB_APP_API_URL', 'https://api.github.com'),
+        ],
     ],
 
     'postmark' => [
