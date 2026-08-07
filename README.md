@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="art/package-pipeline-header.png" alt="Package Pipeline — self-hosted Laravel application for Composer package management" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="art/package-pipeline-header-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="art/package-pipeline-header.png">
+    <img src="art/package-pipeline-header.png" alt="Package Pipeline — self-hosted Laravel application for Composer package management" width="100%">
+  </picture>
 </p>
 
 # Package Pipeline
