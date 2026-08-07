@@ -20,6 +20,9 @@ class PackagesTable
     {
         return $table
             ->defaultSort('name')
+            // Syncs finish on a worker, so the row that shows their result has
+            // to come back for it rather than wait for the next navigation.
+            ->poll('30s')
             ->columns([
                 TextColumn::make('name')
                     ->searchable()
