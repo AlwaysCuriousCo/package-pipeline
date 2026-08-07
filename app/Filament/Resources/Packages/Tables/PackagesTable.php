@@ -31,6 +31,14 @@ class PackagesTable
                     ->openUrlInNewTab()
                     ->color('primary')
                     ->limit(50),
+                TextColumn::make('source.name')
+                    ->label('Source')
+                    ->badge()
+                    ->color(fn (Package $record): string => $record->source?->isConnected() ? 'success' : 'warning')
+                    ->searchable()
+                    ->sortable()
+                    ->placeholder('Unlinked')
+                    ->toggleable(),
                 TextColumn::make('latest_version')
                     ->label('Latest version')
                     ->badge()
@@ -68,6 +76,10 @@ class PackagesTable
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                SelectFilter::make('source')
+                    ->relationship('source', 'name')
+                    ->multiple()
+                    ->preload(),
                 SelectFilter::make('type')
                     ->options(fn (): array => Package::types())
                     ->multiple(),

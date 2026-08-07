@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ComposerRepositoryController;
+use App\Http\Controllers\SourceConnectionController;
 use Illuminate\Support\Facades\Route;
 
 // The app is administered entirely through Filament, so the root URL lands on
@@ -18,3 +19,18 @@ Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 
     ->name('composer.metadata');
 Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
     ->name('composer.dist');
+
+// The GitHub App install handshake for connecting a source. Both legs are
+// admin-only: the callback attaches an installation to a source, so it must
+// never be reachable by an anonymous request. Register the app's "Setup URL"
+// as <this-app's-url>/sources/github/callback.
+Route::middleware('auth')->group(function () {
+    Route::get('/sources/github/callback', [SourceConnectionController::class, 'callback'])
+        ->name('sources.github.callback');
+    // Connecting an account that has no source yet; the source is created from
+    // the installation GitHub hands back.
+    Route::get('/sources/connect', [SourceConnectionController::class, 'connectNew'])
+        ->name('sources.connect.new');
+    Route::get('/sources/{source}/connect', [SourceConnectionController::class, 'connect'])
+        ->name('sources.connect');
+});

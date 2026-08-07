@@ -11,13 +11,15 @@ use Throwable;
 class SyncPackages extends Command
 {
     protected $signature = 'packages:sync
-        {name? : Only sync the package with this composer name or "owner/repo" path}';
+        {name? : Only sync the package with this composer name or "owner/repo" path}
+        {--source= : Only sync packages connected through this source, by name or account}';
 
     protected $description = 'Sync package versions from their GitHub repositories';
 
     public function handle(PackageSynchronizer $synchronizer): int
     {
         $name = $this->argument('name');
+        $source = $this->option('source');
 
         // The stored name only becomes the composer name once a package has
         // synced, so an unsynced package is still addressable by its
@@ -28,6 +30,10 @@ class SyncPackages extends Command
                 fn ($query) => $query
                     ->where('name', $name)
                     ->orWhere('repository', 'like', '%'.$name.'%')
+            ))
+            ->when($source, fn ($query, string $source) => $query->whereHas(
+                'source',
+                fn ($query) => $query->where('name', $source)->orWhere('account', $source),
             ))
             ->get()
             ->filter(fn (Package $package): bool => $name === null
