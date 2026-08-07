@@ -32,7 +32,7 @@ class SourceConnectionTest extends TestCase
         // A request this suite forgot to fake must fail, not reach GitHub.
         Http::preventStrayRequests();
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->superAdmin()->create());
     }
 
     private function fakeInstallation(string $account = 'acme'): void

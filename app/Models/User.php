@@ -11,24 +11,25 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Spatie\Permission\Traits\HasRoles;
 
 #[Fillable(['name', 'email', 'password'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, HasRoles, Notifiable;
 
     /**
      * Determine whether the user may access the given Filament panel.
      *
-     * Outside of local development Filament requires this contract, otherwise
-     * every registered user can reach /admin. Narrow this check (role, team,
-     * email domain) once the app has an authorization model.
+     * A role is the entry ticket; what the user can do once inside is decided
+     * by Shield's generated policies. Holding no role at all means the account
+     * exists but cannot reach /admin, so a stray user row is never a way in.
      */
     public function canAccessPanel(Panel $panel): bool
     {
-        return true;
+        return $this->roles()->exists();
     }
 
     /**

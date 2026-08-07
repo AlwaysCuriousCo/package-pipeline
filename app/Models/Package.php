@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 #[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error'])]
@@ -204,6 +205,51 @@ class Package extends Model
         } catch (InvalidArgumentException) {
             return null;
         }
+    }
+
+    /**
+     * The commands a consuming project runs to install this package, keyed by
+     * a short label describing each step.
+     *
+     * @return array<string, string>
+     */
+    public function installCommands(): array
+    {
+        $repositoryKey = Str::slug(config('app.name')) ?: 'private';
+        $repositoryUrl = rtrim(url('/'), '/');
+
+        $require = $this->name;
+
+        if ($constraint = $this->suggestedConstraint()) {
+            $require .= ":{$constraint}";
+        }
+
+        return [
+            'repository' => "composer config repositories.{$repositoryKey} composer {$repositoryUrl}",
+            'require' => "composer require {$require}",
+        ];
+    }
+
+    /**
+     * The version constraint to suggest in an install command: a caret on the
+     * latest release, the default dev branch for unreleased packages, or
+     * nothing when no versions have been synced yet.
+     */
+    private function suggestedConstraint(): ?string
+    {
+        if ($this->latest_version !== null) {
+            return '^'.ltrim($this->latest_version, 'vV');
+        }
+
+        $devVersions = $this->versions()->where('is_dev', true)->pluck('version');
+
+        foreach (['dev-main', 'dev-master'] as $preferred) {
+            if ($devVersions->contains($preferred)) {
+                return $preferred;
+            }
+        }
+
+        return $devVersions->first();
     }
 
     /**

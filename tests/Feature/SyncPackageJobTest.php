@@ -6,7 +6,6 @@ use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\User;
-use App\Services\PackageSynchronizer;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -57,7 +56,7 @@ class SyncPackageJobTest extends TestCase
 
         $package = $this->makePackage();
 
-        (new SyncPackageJob($package))->handle(app(PackageSynchronizer::class));
+        $this->app->call([new SyncPackageJob($package), 'handle']);
 
         $this->assertSame('acme/widgets', $package->refresh()->name);
         $this->assertSame('v1.0.0', $package->latest_version);
@@ -135,7 +134,7 @@ class SyncPackageJobTest extends TestCase
         Queue::fake();
         Http::fake();
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->superAdmin()->create());
 
         $package = $this->makePackage();
 

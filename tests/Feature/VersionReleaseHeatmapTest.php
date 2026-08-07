@@ -28,7 +28,7 @@ class VersionReleaseHeatmapTest extends TestCase
     {
         parent::setUp();
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->superAdmin()->create());
 
         $this->today = CarbonImmutable::create(2026, 8, 7, 12);
         $this->travelTo($this->today);

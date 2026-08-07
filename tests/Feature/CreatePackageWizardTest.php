@@ -20,7 +20,7 @@ class CreatePackageWizardTest extends TestCase
     {
         parent::setUp();
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->superAdmin()->create());
     }
 
     /**
@@ -115,6 +115,31 @@ class CreatePackageWizardTest extends TestCase
             ->fillForm(['repository' => 'https://github.com/acme/gadgets'])
             ->goToNextWizardStep()
             ->assertSchemaStateSet(['name' => 'acme/gadgets']);
+    }
+
+    public function test_adding_a_token_after_a_failed_read_deciphers_the_repository_again(): void
+    {
+        // The first read has no credentials and 404s; the admin goes back,
+        // enters a token, and the same URL must be read again — this time
+        // successfully.
+        Http::fake([
+            'api.github.com/repos/acme/Widgets/contents/composer.json*' => Http::sequence()
+                ->push([], 404)
+                ->push(['name' => 'acme/widgets', 'description' => 'Widgets for Acme.']),
+        ]);
+
+        Livewire::test(CreatePackage::class)
+            ->fillForm(['repository' => 'https://github.com/acme/Widgets'])
+            ->goToNextWizardStep()
+            ->goToPreviousWizardStep()
+            ->fillForm(['token' => 'ghp_typed'])
+            ->goToNextWizardStep()
+            ->assertSchemaStateSet([
+                'name' => 'acme/widgets',
+                'description' => 'Widgets for Acme.',
+            ]);
+
+        Http::assertSentCount(2);
     }
 
     public function test_the_repository_is_read_through_the_source_that_owns_it(): void

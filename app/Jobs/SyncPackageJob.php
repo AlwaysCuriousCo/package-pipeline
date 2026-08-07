@@ -3,6 +3,9 @@
 namespace App\Jobs;
 
 use App\Models\Package;
+use App\Notifications\PackageSyncFailed;
+use App\Notifications\PackageVersionsPublished;
+use App\Services\AdminNotifier;
 use App\Services\PackageSynchronizer;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -43,6 +46,11 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      * lost between dispatch and processing cannot wedge a package's syncs.
      */
     public int $uniqueFor = 3600;
+
+    /**
+     * How long a push-triggered sync waits before it runs. @see debounced()
+     */
+    public const DEBOUNCE_SECONDS = 15;
 
     public function __construct(public Package $package) {}
 
@@ -85,9 +93,33 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         ];
     }
 
-    public function handle(PackageSynchronizer $synchronizer): void
+    /**
+     * A sync queued in response to a push, held back briefly so that a burst
+     * of deliveries becomes one sync.
+     *
+     * `git push --tags` on ten tags is ten deliveries in about a second, and a
+     * release pipeline that tags and then pushes a branch is several more. The
+     * uniqueness lock above is held for as long as the job sits in the queue,
+     * so a short delay lets every delivery in that burst collapse into the one
+     * run that was going to read the whole repository anyway.
+     */
+    public static function debounced(Package $package): void
     {
-        $synchronizer->sync($this->package);
+        self::dispatch($package)->delay(now()->addSeconds(self::DEBOUNCE_SECONDS));
+    }
+
+    public function handle(PackageSynchronizer $synchronizer, AdminNotifier $notifier): void
+    {
+        $outcome = $synchronizer->sync($this->package);
+
+        // Dev versions move on every commit and removals are usually a branch
+        // being tidied up, so a release — or a package arriving for the first
+        // time — is all that is worth anyone's attention.
+        if ($outcome->releases === [] && ! $outcome->initialImport) {
+            return;
+        }
+
+        $notifier->send(new PackageVersionsPublished($this->package, $outcome));
     }
 
     /**
@@ -97,8 +129,12 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      */
     public function failed(?Throwable $exception): void
     {
-        $this->package->forceFill([
-            'sync_error' => $exception?->getMessage() ?: 'The sync failed without reporting a reason.',
-        ])->save();
+        $reason = $exception?->getMessage() ?: 'The sync failed without reporting a reason.';
+
+        $this->package->forceFill(['sync_error' => $reason])->save();
+
+        // Only once the retries are spent. A package that stops syncing stops
+        // receiving releases, and nothing else would say so out loud.
+        app(AdminNotifier::class)->send(new PackageSyncFailed($this->package, $reason));
     }
 }

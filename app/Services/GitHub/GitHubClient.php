@@ -20,6 +20,12 @@ class GitHubClient
      */
     private const MAX_PAGES = 100;
 
+    /**
+     * The events a repository webhook subscribes to. Kept next to the code
+     * that creates one so the app's own webhook can be documented to match.
+     */
+    public const WEBHOOK_EVENTS = ['push', 'create', 'delete'];
+
     public function __construct(
         private readonly string $repositoryPath,
         private readonly ?string $token,
@@ -112,6 +118,53 @@ class GitHubClient
             ->sink($destination)
             ->get("/repos/{$this->repositoryPath}/zipball/{$ref}")
             ->throw();
+    }
+
+    /**
+     * Create a webhook on the repository, returning GitHub's id for it.
+     *
+     * Only the three events that can change what a version resolves to are
+     * subscribed: a new tag or branch (`create`), a moved one (`push` — which
+     * is also what a new commit on an existing branch is), and a removed one
+     * (`delete`). Anything wider would be deliveries we throw away.
+     */
+    public function createWebhook(string $url, string $secret): int
+    {
+        $id = $this->request()
+            ->post("/repos/{$this->repositoryPath}/hooks", [
+                'name' => 'web',
+                'active' => true,
+                'events' => self::WEBHOOK_EVENTS,
+                'config' => [
+                    'url' => $url,
+                    'content_type' => 'json',
+                    'secret' => $secret,
+                    'insecure_ssl' => '0',
+                ],
+            ])
+            ->throw()
+            ->json('id');
+
+        throw_unless(is_int($id), new RuntimeException(
+            "GitHub accepted the webhook on {$this->repositoryPath} but returned no id for it."
+        ));
+
+        return $id;
+    }
+
+    /**
+     * Remove a webhook from the repository. A hook already gone is not an
+     * error — the desired state is the same either way.
+     */
+    public function deleteWebhook(int $id): void
+    {
+        $response = $this->request()->delete("/repos/{$this->repositoryPath}/hooks/{$id}");
+
+        if ($response->status() === 404) {
+            return;
+        }
+
+        $response->throw();
     }
 
     /**

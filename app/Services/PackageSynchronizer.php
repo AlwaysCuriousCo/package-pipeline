@@ -16,10 +16,10 @@ class PackageSynchronizer
      * versions. The failure reason is recorded on the package before the
      * exception bubbles up to the caller.
      */
-    public function sync(Package $package): void
+    public function sync(Package $package): SyncOutcome
     {
         try {
-            $this->refresh($package, GitHubClient::for($package));
+            return $this->refresh($package, GitHubClient::for($package));
         } catch (Throwable $exception) {
             $package->forceFill(['sync_error' => $exception->getMessage()])->save();
 
@@ -27,7 +27,7 @@ class PackageSynchronizer
         }
     }
 
-    private function refresh(Package $package, GitHubClient $github): void
+    private function refresh(Package $package, GitHubClient $github): SyncOutcome
     {
         $versions = [];
 
@@ -96,6 +96,41 @@ class PackageSynchronizer
                 'sync_error' => null,
             ])->save();
         });
+
+        return $this->outcome($known->keys()->all(), $synced);
+    }
+
+    /**
+     * What changed, read off the versions that were known before the sync and
+     * the ones it settled on.
+     *
+     * Tagged and dev versions are reported apart because they mean different
+     * things to whoever is watching: a tag is a release, a branch moving is
+     * Tuesday.
+     *
+     * @param  list<string>  $known  the versions the package had before
+     * @param  array<string, array{is_dev: bool, ...}>  $synced
+     */
+    private function outcome(array $known, array $synced): SyncOutcome
+    {
+        // A version like "1" is an integer once it is an array key, and every
+        // comparison below reads better with the strings they started as.
+        $current = array_map(strval(...), array_keys($synced));
+        $known = array_map(strval(...), $known);
+
+        $added = array_diff($current, $known);
+
+        $releases = array_values(array_filter($added, fn (string $v): bool => ! $synced[$v]['is_dev']));
+
+        usort($releases, fn (string $a, string $b): int => version_compare(ltrim($a, 'vV'), ltrim($b, 'vV')));
+
+        return new SyncOutcome(
+            releases: $releases,
+            devVersions: array_values(array_filter($added, fn (string $v): bool => $synced[$v]['is_dev'])),
+            removed: array_values(array_diff($known, $current)),
+            initialImport: $known === [],
+            total: count($synced),
+        );
     }
 
     /**

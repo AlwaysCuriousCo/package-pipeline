@@ -23,7 +23,14 @@ organisation that will own it):
 | Homepage URL | your `APP_URL` |
 | Setup URL | `<APP_URL>/sources/github/callback` |
 | Redirect on update | ✅ checked |
-| Webhook | uncheck **Active** (not used yet) |
+| Webhook → Active | ✅ checked |
+| Webhook URL | `<APP_URL>/incoming/github` |
+| Webhook secret | a long random string, also set as `GITHUB_APP_WEBHOOK_SECRET` |
+
+Subscribe the app to **Push**, **Branch or tag creation** and **Branch or tag
+deletion** under **Permissions & events**. That one webhook covers every
+repository in every installation, so packages sync themselves the moment
+something is pushed — see [webhooks.md](webhooks.md) for the whole picture.
 
 Repository permissions — read-only is enough for syncing and serving dists:
 
@@ -47,6 +54,7 @@ Two values, both on the app's settings page:
 ```dotenv
 GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY=/secure/path/acme-package-pipeline.private-key.pem
+GITHUB_APP_WEBHOOK_SECRET=the-same-secret-set-on-the-app-s-webhook
 ```
 
 These identify *this registry* to GitHub — the equivalent of an OAuth

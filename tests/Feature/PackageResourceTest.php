@@ -19,7 +19,7 @@ class PackageResourceTest extends TestCase
     {
         parent::setUp();
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->superAdmin()->create());
     }
 
     public function test_the_package_index_lists_records(): void

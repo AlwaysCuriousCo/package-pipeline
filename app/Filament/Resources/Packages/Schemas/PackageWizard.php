@@ -42,9 +42,11 @@ class PackageWizard
                         // the owner out of whatever has been typed so far.
                         ->live(onBlur: true)
                         ->helperText('The package name and description are read from this repository\'s composer.json.'),
-                    // Remembers which URL was read, so returning to this step
-                    // does not re-read it and overwrite the edits made since.
-                    Hidden::make('inspected_repository')->dehydrated(false),
+                    // Remembers which URL was read and with what credentials,
+                    // so returning to this step does not re-read the repository
+                    // and overwrite the edits made since — while coming back to
+                    // fix the source or token after a failed read does.
+                    Hidden::make('inspected_fingerprint')->dehydrated(false),
                     Section::make('Authentication')
                         ->description(fn (Get $get): string => self::authenticationSummary($get))
                         ->collapsible()
@@ -75,12 +77,13 @@ class PackageWizard
     private static function decipher(Get $get, Set $set): void
     {
         $repository = trim((string) $get('repository'));
+        $fingerprint = self::fingerprint($get);
 
-        if ($repository === '' || $repository === $get('inspected_repository')) {
+        if ($repository === '' || $fingerprint === $get('inspected_fingerprint')) {
             return;
         }
 
-        $set('inspected_repository', $repository);
+        $set('inspected_fingerprint', $fingerprint);
 
         $package = self::draft($get);
         $failure = null;
@@ -113,6 +116,19 @@ class PackageWizard
             ->body(($failure ?? 'No composer.json was found on the default branch, or the repository is private.')
                 .' Go back to pick a source or enter a token if it needs credentials, otherwise fill the details in by hand.')
             ->send();
+    }
+
+    /**
+     * Everything the read depends on, so changing the source or token after a
+     * failed attempt counts as something new to inspect.
+     */
+    private static function fingerprint(Get $get): string
+    {
+        return json_encode([
+            trim((string) $get('repository')),
+            $get('source_id'),
+            $get('token') ?: null,
+        ]);
     }
 
     /**

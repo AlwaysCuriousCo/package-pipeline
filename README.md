@@ -29,16 +29,13 @@ cd package-pipeline
 composer run setup
 ```
 
-Create your admin login. The seeder reads the credentials from `.env` so nothing personal lands in version control — open `.env`, fill in these two (name is optional), then seed:
-
-```dotenv
-SUPER_ADMIN_EMAIL=you@example.com
-SUPER_ADMIN_PASSWORD=choose-something-strong
-```
+Create your admin login. The command prompts for a password, so it never lands in `.env`, in your shell history, or in version control:
 
 ```bash
-php artisan db:seed
+php artisan admin:create you@example.com
 ```
+
+Re-running it against the same address is safe — it updates that account rather than creating a second one, which also makes it the way to reset a forgotten password. The account is granted the `super_admin` role, which is what gets it into the panel; see [Roles and permissions](#roles-and-permissions).
 
 Start everything (HTTP server, queue worker, log tail, and Vite, all in one command):
 
@@ -75,6 +72,28 @@ A source is a GitHub organisation or user connected through a **GitHub App**: to
 
 Once the app is registered and `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` are set, connecting an organisation is one click from **Sources** in the admin panel. Packages are linked to their source automatically by repository owner.
 
+## Roles and permissions
+
+Access to the admin panel is controlled by [Filament Shield](https://filamentphp.com/plugins/bezhansalleh-shield), which layers roles and per-resource permissions over `spatie/laravel-permission`. Manage them under **Shield → Roles** in the panel.
+
+Two rules are worth knowing:
+
+- **A user with no role cannot reach `/admin` at all.** An account existing is never by itself a way in, so a leftover user row is harmless.
+- **`super_admin` is an ordinary role that holds every permission**, not a gate that skips the checks. What is ticked in the Roles screen is exactly what the role can do, which keeps access auditable — but it also means the role knows nothing about permissions created after it was granted.
+
+The permissions themselves are seeded from the panel's own resources, pages and widgets, so a fresh database gets them from `php artisan db:seed` (which `composer run setup` already runs).
+
+When you add a resource, page, or widget, generate its permissions and hand them to the super admin:
+
+```bash
+php artisan shield:generate --all --panel=admin   # permissions + a policy per model
+php artisan admin:create you@example.com          # re-syncs the role to every permission
+```
+
+Skip the second command and you will find yourself locked out of the resource you just added. Other roles keep whatever they had — tick the new permissions for each role that should have them.
+
+`shield:generate` writes policy classes into [app/Policies/](app/Policies/), which belong in version control. Deployments only need the database rows, so they run the seeder instead and never generate code.
+
 ## Using the registry from a project
 
 In any consuming project:
@@ -95,7 +114,6 @@ Everything lives in `.env`; the interesting knobs beyond a stock Laravel app:
 
 | Variable | Purpose |
 | --- | --- |
-| `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` / `SUPER_ADMIN_NAME` | Credentials the `UserSeeder` uses to create (or reset) the admin account. |
 | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | The GitHub App that powers sources. The key takes a path to the `.pem` or the key itself with `\n`-escaped newlines. |
 | `GITHUB_APP_SLUG` / `GITHUB_APP_API_URL` | Normally read from GitHub automatically; only set to skip that lookup or on GitHub Enterprise. |
 | `GITHUB_TOKEN` | Fallback token for packages with neither a connected source nor a token of their own. |
@@ -123,6 +141,8 @@ The short version for production:
   Schedule::command('packages:sync --queue')->hourly();
   ```
 
+- **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
+- **Create the first admin account** with `php artisan admin:create you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a signed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires in an hour; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same zipball cache. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
 - A health check endpoint is available at `/up`.
