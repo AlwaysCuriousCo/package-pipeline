@@ -1,9 +1,9 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "always-curious/package-pipeline",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "Package Pipeline — a self-hosted private Composer registry with a Filament admin panel.",
+    "keywords": ["composer", "registry", "packages", "laravel", "filament"],
     "license": "MIT",
     "require": {
         "php": "^8.3",

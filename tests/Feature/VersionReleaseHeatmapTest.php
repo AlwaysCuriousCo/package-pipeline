@@ -18,11 +18,20 @@ class VersionReleaseHeatmapTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * The graph is anchored on "today", so the clock is pinned to keep the
+     * window — and the dates that fall either side of it — deterministic.
+     */
+    private CarbonImmutable $today;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->actingAs(User::factory()->create());
+
+        $this->today = CarbonImmutable::create(2026, 8, 7, 12);
+        $this->travelTo($this->today);
     }
 
     public function test_the_dashboard_only_registers_the_heatmap(): void
@@ -35,51 +44,100 @@ class VersionReleaseHeatmapTest extends TestCase
         $this->assertNotContains(FilamentInfoWidget::class, $widgets);
     }
 
-    public function test_it_summarises_the_releases_of_the_current_year(): void
+    public function test_it_summarises_the_releases_of_the_last_twelve_months(): void
     {
-        $year = CarbonImmutable::now()->year;
-
         $package = Package::factory()->create(['name' => 'acme/widgets']);
         PackageVersion::factory()->for($package)->create([
             'version' => 'v1.2.0',
-            'released_at' => CarbonImmutable::create($year, 3, 4, 12),
+            'released_at' => $this->today->subMonths(5)->setTime(9, 0),
         ]);
         PackageVersion::factory()->for($package)->create([
             'version' => 'v1.3.0',
-            'released_at' => CarbonImmutable::create($year, 3, 4, 18),
+            'released_at' => $this->today->subMonths(5)->setTime(17, 0),
         ]);
 
         Livewire::test(VersionReleaseHeatmap::class)
-            ->assertSee("2 releases in {$year}")
-            ->assertSee('1 package')
-            ->assertSee('1 active day')
-            ->assertSee('2 releases on '.CarbonImmutable::create($year, 3, 4)->format('M j, Y').': acme/widgets v1.2.0, acme/widgets v1.3.0');
+            ->assertSee('Last 12 months · 2 releases · 1 package · 1 active day · busiest day 2')
+            ->assertSee('2 releases on '.$this->today->subMonths(5)->format('M j, Y').': acme/widgets v1.2.0, acme/widgets v1.3.0');
     }
 
-    public function test_it_reports_an_empty_year(): void
+    public function test_it_spans_the_twelve_months_ending_today(): void
     {
-        $year = CarbonImmutable::now()->year;
-
         PackageVersion::factory()->create([
-            'released_at' => CarbonImmutable::create($year - 1, 6, 1),
+            'released_at' => $this->today->subMonths(11),
+        ]);
+
+        // A day older than the window, and a day the window has not reached.
+        PackageVersion::factory()->create([
+            'released_at' => $this->today->subMonths(13),
+        ]);
+        PackageVersion::factory()->create([
+            'released_at' => $this->today->addWeek(),
         ]);
 
         Livewire::test(VersionReleaseHeatmap::class)
-            ->assertSee("No releases recorded so far in {$year}.");
+            ->assertSee('Last 12 months · 1 release · 1 package · 1 active day · busiest day 1');
+    }
+
+    public function test_it_runs_the_month_labels_up_to_the_current_month(): void
+    {
+        $data = $this->viewData();
+
+        // Thirteen labels, because a rolling window clips a month at each end:
+        // the graph opens part way through August 2025 and closes part way
+        // through August 2026.
+        $this->assertSame(
+            ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
+            array_column($data['months'], 'label')
+        );
+
+        $last = end($data['months']);
+
+        $this->assertGreaterThan(count($data['weeks']) - 3, $last['column']);
+        $this->assertTrue($last['anchored']);
+    }
+
+    public function test_it_ends_on_the_week_containing_today(): void
+    {
+        $data = $this->viewData();
+
+        // Today is a Friday, so the final column carries a Saturday it has not
+        // reached yet — the ragged edge a rolling window is supposed to have.
+        $this->assertSame(53, count($data['weeks']));
+        $this->assertNotNull(end($data['weeks'])[5]);
+        $this->assertNull(end($data['weeks'])[6]);
+    }
+
+    public function test_it_reports_an_empty_window(): void
+    {
+        PackageVersion::factory()->create([
+            'released_at' => $this->today->subYears(2),
+        ]);
+
+        Livewire::test(VersionReleaseHeatmap::class)
+            ->assertSee('No releases recorded in the last 12 months.');
     }
 
     public function test_it_ignores_dev_versions_and_undated_references(): void
     {
-        $year = CarbonImmutable::now()->year;
-
         PackageVersion::factory()->dev()->create([
-            'released_at' => CarbonImmutable::create($year, 5, 1),
+            'released_at' => $this->today->subMonth(),
         ]);
         PackageVersion::factory()->create([
             'released_at' => null,
         ]);
 
         Livewire::test(VersionReleaseHeatmap::class)
-            ->assertSee("No releases recorded so far in {$year}.");
+            ->assertSee('No releases recorded in the last 12 months.');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function viewData(): array
+    {
+        $widget = new VersionReleaseHeatmap;
+
+        return (fn (): array => $this->getViewData())->call($widget);
     }
 }

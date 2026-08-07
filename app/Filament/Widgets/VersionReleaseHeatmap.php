@@ -10,7 +10,12 @@ use Illuminate\Support\Collection;
 
 /**
  * A GitHub-style contribution graph of every tagged release across all tracked
- * packages, for the calendar year in progress.
+ * packages, over the twelve months ending today.
+ *
+ * The window rolls rather than snapping to the calendar year: a graph that ran
+ * to December would spend most of its width on months that have not happened
+ * yet, whereas this one always ends in the current month with a full year of
+ * history behind it.
  */
 class VersionReleaseHeatmap extends Widget
 {
@@ -31,28 +36,34 @@ class VersionReleaseHeatmap extends Widget
     protected const LEVELS = 4;
 
     /**
+     * The narrowest gap, in grid columns, between two month labels before the
+     * later of the two crowds the earlier off the row.
+     */
+    protected const MONTH_LABEL_GAP = 3;
+
+    /**
      * @return array<string, mixed>
      */
     protected function getViewData(): array
     {
-        $year = CarbonImmutable::now()->year;
-        $start = CarbonImmutable::create($year, 1, 1)->startOfDay();
+        $end = CarbonImmutable::now()->endOfDay();
+        $start = $end->subYear()->addDay()->startOfDay();
 
-        $versions = $this->releasedDuring($start, $start->endOfYear());
+        $versions = $this->releasedDuring($start, $end);
         $days = $this->groupByDay($versions);
 
         // The ramp is scaled against the busiest day so it always spans its full
         // range, however quiet or noisy the year turns out to be.
         $busiest = (int) $days->max('count');
 
+        $weeks = $this->weeks($start, $end, $days, $busiest);
+
         return [
-            'year' => $year,
-            'weeks' => $this->weeks($start, $days, $busiest),
-            'months' => $this->months($start),
+            'weeks' => $weeks,
+            'months' => $this->months($start, $end, count($weeks)),
             'weekdays' => [1 => 'Mon', 3 => 'Wed', 5 => 'Fri'],
             'levels' => range(0, self::LEVELS),
             'summary' => $this->summary(
-                year: $year,
                 total: $versions->count(),
                 packages: $versions->pluck('package_id')->unique()->count(),
                 activeDays: $days->count(),
@@ -111,26 +122,26 @@ class VersionReleaseHeatmap extends Widget
      * The grid, as columns of seven days running Sunday to Saturday.
      *
      * Columns are padded out to whole weeks so every row lines up; the days
-     * that spill into the neighbouring years are held as nulls and rendered as
-     * blanks.
+     * that fall either side of the window are held as nulls and rendered as
+     * blanks, which is what leaves the current week ragged at the right.
      *
      * @param  Collection<string, array{count: int, releases: array<int, string>}>  $days
      * @return array<int, array<int, array<string, mixed>|null>>
      */
-    protected function weeks(CarbonImmutable $start, Collection $days, int $busiest): array
+    protected function weeks(CarbonImmutable $start, CarbonImmutable $end, Collection $days, int $busiest): array
     {
         $cursor = $start->startOfWeek(CarbonInterface::SUNDAY);
-        $end = $start->endOfYear()->endOfWeek(CarbonInterface::SATURDAY);
+        $gridEnd = $end->endOfWeek(CarbonInterface::SATURDAY);
 
         $weeks = [];
 
-        while ($cursor <= $end) {
+        while ($cursor <= $gridEnd) {
             $week = [];
 
             foreach (range(0, 6) as $offset) {
                 $day = $cursor->addDays($offset);
 
-                $week[] = $day->year === $start->year
+                $week[] = $day->betweenIncluded($start, $end)
                     ? $this->cell($day, $days->get($day->toDateString()), $busiest)
                     : null;
             }
@@ -185,26 +196,51 @@ class VersionReleaseHeatmap extends Widget
     /**
      * Month names, each pinned to the grid column holding the 1st of the month.
      *
-     * @return array<int, array{label: string, column: int}>
+     * A rolling window opens and closes mid-month, so both ends need handling.
+     * The opening month's 1st sits before the grid, so its label is pulled back
+     * to column 1; each later month then evicts any label it would crowd, which
+     * keeps the current month — the one the graph is anchored on — and drops a
+     * sliver of a neighbour instead. Labels landing in the last few columns are
+     * anchored to the right-hand edge, where they would otherwise overflow the
+     * grid and drag a scrollbar along behind them.
+     *
+     * @return array<int, array{label: string, column: int, anchored: bool}>
      */
-    protected function months(CarbonImmutable $start): array
+    protected function months(CarbonImmutable $start, CarbonImmutable $end, int $columns): array
     {
         $gridStart = $start->startOfWeek(CarbonInterface::SUNDAY);
 
-        return array_map(fn (int $offset): array => [
-            'label' => $start->addMonths($offset)->format('M'),
-            'column' => intdiv((int) $gridStart->diffInDays($start->addMonths($offset)), 7) + 1,
-        ], range(0, 11));
+        $months = [];
+        $month = $start->startOfMonth();
+
+        while ($month <= $end) {
+            $column = max(1, intdiv((int) $gridStart->diffInDays($month), 7) + 1);
+
+            while ($months !== [] && end($months)['column'] > $column - self::MONTH_LABEL_GAP) {
+                array_pop($months);
+            }
+
+            $months[] = [
+                'label' => $month->format('M'),
+                'column' => $column,
+                'anchored' => $column > $columns - self::MONTH_LABEL_GAP,
+            ];
+
+            $month = $month->addMonth();
+        }
+
+        return $months;
     }
 
-    protected function summary(int $year, int $total, int $packages, int $activeDays, int $busiest): string
+    protected function summary(int $total, int $packages, int $activeDays, int $busiest): string
     {
         if ($total === 0) {
-            return "No releases recorded so far in {$year}.";
+            return 'No releases recorded in the last 12 months.';
         }
 
         return implode(' · ', [
-            $total.' '.($total === 1 ? 'release' : 'releases').' in '.$year,
+            'Last 12 months',
+            $total.' '.($total === 1 ? 'release' : 'releases'),
             $packages.' '.($packages === 1 ? 'package' : 'packages'),
             $activeDays.' active '.($activeDays === 1 ? 'day' : 'days'),
             'busiest day '.$busiest,

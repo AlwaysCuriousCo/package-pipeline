@@ -70,6 +70,13 @@
                 color: var(--pp-label-color);
             }
 
+            /* A label this close to the end is wider than the columns left to
+               it, so it hangs off the right edge instead of overflowing. */
+            .pp-heatmap-months > .pp-heatmap-month--anchored {
+                grid-column-end: -1;
+                justify-self: end;
+            }
+
             .pp-heatmap-week {
                 display: grid;
                 grid-template-rows: repeat(7, 1fr);
@@ -145,7 +152,10 @@
                 <div class="pp-heatmap-calendar" style="--pp-weeks: {{ count($weeks) }}">
                     <div class="pp-heatmap-months" aria-hidden="true">
                         @foreach ($months as $month)
-                            <span style="grid-column-start: {{ $month['column'] }}">{{ $month['label'] }}</span>
+                            <span
+                                @class(['pp-heatmap-month--anchored' => $month['anchored']])
+                                style="grid-column-start: {{ $month['column'] }}"
+                            >{{ $month['label'] }}</span>
                         @endforeach
                     </div>
 
