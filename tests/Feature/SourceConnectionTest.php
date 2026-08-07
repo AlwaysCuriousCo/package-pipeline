@@ -287,6 +287,54 @@ class SourceConnectionTest extends TestCase
         $this->assertNull($broken->fresh()->source_id);
     }
 
+    public function test_an_app_without_repository_permissions_is_reported(): void
+    {
+        Http::fake([
+            'api.github.com/app/installations/42/access_tokens' => Http::response([
+                'token' => 'ghs_installation',
+                'expires_at' => now()->addHour()->toIso8601String(),
+            ]),
+            // An app registered with no repository permissions: GitHub offers
+            // no repository picker at install time, so nothing is shared.
+            'api.github.com/app/installations/42' => Http::response([
+                'account' => ['login' => 'acme', 'type' => 'Organization'],
+                'repository_selection' => 'selected',
+                'permissions' => [],
+            ]),
+            'api.github.com/installation/repositories*' => Http::response(['total_count' => 0]),
+        ]);
+
+        $this->get(route('sources.connect.new'));
+
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect();
+
+        $source = Source::sole();
+
+        $this->assertTrue($source->isConnected());
+        $this->assertStringContainsString(
+            'requests no repository permissions',
+            (string) $source->emptyAccessReason(0),
+        );
+    }
+
+    public function test_an_installation_sharing_no_repositories_is_reported(): void
+    {
+        $source = Source::factory()->create([
+            'installation_id' => 42,
+            'metadata' => ['permissions' => ['contents' => 'read']],
+        ]);
+
+        $this->assertStringContainsString(
+            'no repositories were shared',
+            (string) $source->emptyAccessReason(0),
+        );
+
+        $this->assertNull($source->emptyAccessReason(3));
+    }
+
     public function test_a_callback_with_a_mismatched_state_is_rejected(): void
     {
         $this->fakeInstallation();
@@ -335,6 +383,42 @@ class SourceConnectionTest extends TestCase
         $this->get(route('sources.github.callback', ['installation_id' => 99, 'state' => $state]));
 
         $this->assertNull($other->fresh()->installation_id);
+    }
+
+    public function test_a_callback_without_a_state_connects_the_installation(): void
+    {
+        $this->fakeInstallation('acme');
+
+        // GitHub's "Redirect on update", and an account that already has the
+        // app, both land here with an installation but no state of ours.
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'setup_action' => 'update',
+        ]))->assertRedirect();
+
+        $source = Source::sole();
+
+        $this->assertSame('acme', $source->account);
+        $this->assertSame(42, $source->installation_id);
+        $this->assertTrue($source->isConnected());
+    }
+
+    public function test_a_callback_without_a_state_leaves_a_pending_connection_in_flight(): void
+    {
+        $this->fakeInstallation('acme');
+
+        // Reconnecting an existing source, interrupted by GitHub redirecting
+        // here for an unrelated installation change.
+        $source = Source::factory()->disconnected()->create(['account' => 'acme']);
+
+        $this->get(route('sources.connect', $source));
+        $state = session('sources.github.pending')['state'];
+
+        $this->get(route('sources.github.callback', ['installation_id' => 42]));
+
+        // The handshake survives, so finishing the install still lands on the
+        // source the admin started from.
+        $this->assertSame($state, session('sources.github.pending')['state']);
     }
 
     public function test_a_cancelled_install_leaves_the_source_untouched(): void

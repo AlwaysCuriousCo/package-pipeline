@@ -3,6 +3,7 @@
 namespace App\Services\GitHub;
 
 use App\Models\Package;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -77,6 +78,26 @@ class GitHubClient
         $decoded = json_decode($response->throw()->body(), true);
 
         return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * The commit date of the given ref, or null when GitHub does not report
+     * one. Composer publishes this as a version's `time`.
+     *
+     * The committer date is used rather than the author date: it is when the
+     * commit landed on the ref, which is what a release date means here.
+     */
+    public function commitDate(string $ref): ?CarbonImmutable
+    {
+        $response = $this->request()->get("/repos/{$this->repositoryPath}/commits/{$ref}");
+
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        $date = $response->throw()->json('commit.committer.date');
+
+        return is_string($date) && $date !== '' ? CarbonImmutable::parse($date) : null;
     }
 
     /**

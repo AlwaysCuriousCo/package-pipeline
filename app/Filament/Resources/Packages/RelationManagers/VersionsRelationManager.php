@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\RelationManagers;
 
+use App\Models\PackageVersion;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -29,10 +30,17 @@ class VersionsRelationManager extends RelationManager
                     ->label('Commit')
                     ->limit(12)
                     ->copyable(),
+                TextColumn::make('released_at')
+                    ->label('Released')
+                    ->dateTime()
+                    ->description(fn (PackageVersion $record): ?string => $record->released_at?->diffForHumans())
+                    ->placeholder('Unknown')
+                    ->sortable(),
                 TextColumn::make('updated_at')
                     ->label('Last synced')
                     ->dateTime()
-                    ->sortable(),
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 TernaryFilter::make('is_dev')

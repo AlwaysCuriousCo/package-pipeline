@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\Package;
+use App\Models\PackageVersion;
 use App\Services\GitHub\GitHubClient;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -41,9 +43,18 @@ class PackageSynchronizer
             $versions[$this->branchVersion($branch)] = ['reference' => $sha, 'is_dev' => true];
         }
 
+        $known = $package->versions()->get()->keyBy('version');
         $synced = [];
 
         foreach ($versions as $version => $ref) {
+            $version = (string) $version;
+
+            if (($unchanged = $this->unchanged($known->get($version), $ref)) !== null) {
+                $synced[$version] = $unchanged;
+
+                continue;
+            }
+
             $composerJson = $github->composerJson($ref['reference']);
 
             // A ref without a composer.json (or without a package name) is not
@@ -54,7 +65,8 @@ class PackageSynchronizer
 
             $synced[$version] = [
                 ...$ref,
-                'metadata' => [...$composerJson, 'version' => (string) $version],
+                'released_at' => $github->commitDate($ref['reference']),
+                'metadata' => [...$composerJson, 'version' => $version],
             ];
         }
 
@@ -84,6 +96,36 @@ class PackageSynchronizer
                 'sync_error' => null,
             ])->save();
         });
+    }
+
+    /**
+     * The stored row for a ref that has not moved since the last sync, in the
+     * shape the sync writes back — or null when the ref has to be re-read.
+     *
+     * A commit sha names an immutable tree, so a version still pointing at the
+     * same sha cannot have a different composer.json or commit date than the
+     * one already stored. Reusing it saves two API calls per version, which
+     * for a repository of any age is nearly the whole sync. A row missing
+     * either piece is treated as changed so it is backfilled.
+     *
+     * @param  array{reference: string, is_dev: bool}  $ref
+     * @return array{reference: string, is_dev: bool, released_at: CarbonImmutable, metadata: array<string, mixed>}|null
+     */
+    private function unchanged(?PackageVersion $known, array $ref): ?array
+    {
+        if (! $known instanceof PackageVersion
+            || $known->reference !== $ref['reference']
+            || $known->is_dev !== $ref['is_dev']
+            || $known->released_at === null
+            || ! isset($known->metadata['name'])) {
+            return null;
+        }
+
+        return [
+            ...$ref,
+            'released_at' => $known->released_at,
+            'metadata' => $known->metadata,
+        ];
     }
 
     /**

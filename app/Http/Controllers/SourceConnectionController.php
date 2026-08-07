@@ -66,22 +66,42 @@ class SourceConnectionController extends Controller
 
     public function callback(Request $request): RedirectResponse
     {
-        $pending = $request->session()->pull(self::SESSION_KEY);
+        $pending = $request->session()->get(self::SESSION_KEY);
 
         $state = $request->query('state');
 
-        // Without a matching state this callback did not originate from a
-        // "Connect" click in this session, so there is nothing safe to attach
-        // the installation to.
-        if (! is_array($pending) || ! is_string($state) || ! hash_equals($pending['state'], $state)) {
+        // GitHub sends the admin here without a state whenever the redirect was
+        // not one we started: the app's "Redirect on update" fires after any
+        // change to an installation, and an account that already has the app
+        // lands on its settings page rather than a fresh install, which drops
+        // the state on the way. Those are legitimate, so they are treated as
+        // the "connect whatever was installed" flow below.
+        $unsolicited = $state === null;
+
+        // A state with nothing pending is a replayed or stale callback, and a
+        // state that does not match the pending one did not originate from a
+        // "Connect" click in this session. Neither is safe to attach an
+        // installation to.
+        if (! $unsolicited && (! is_array($pending) || ! is_string($state) || ! hash_equals($pending['state'], $state))) {
+            $request->session()->forget(self::SESSION_KEY);
+
             return $this->back(null, 'danger', 'Connection could not be verified', 'The install did not match a pending connection. Start again from the source you want to connect.');
         }
 
-        // A null source_id is the "connect an account we have no source for
-        // yet" flow; the source is built from the installation below.
-        $source = $pending['source_id'] === null ? null : Source::find($pending['source_id']);
+        // Only a callback we can tie to this session consumes the handshake;
+        // an unsolicited one must leave a connection already in flight alone.
+        if (! $unsolicited) {
+            $request->session()->forget(self::SESSION_KEY);
+        }
 
-        if ($pending['source_id'] !== null && ! $source instanceof Source) {
+        // A null source_id — and an unsolicited callback, which names no source
+        // at all — is the "connect an account we have no source for yet" flow;
+        // the source is resolved from the installation below.
+        $sourceId = $unsolicited ? null : $pending['source_id'];
+
+        $source = $sourceId === null ? null : Source::find($sourceId);
+
+        if ($sourceId !== null && ! $source instanceof Source) {
             return $this->back(null, 'danger', 'Source no longer exists', 'It was deleted while the install was in progress.');
         }
 
@@ -124,6 +144,13 @@ class SourceConnectionController extends Controller
         }
 
         $this->adoptMatchingPackages($source);
+
+        // Connecting an account that shares nothing is not a failure — the
+        // credentials work — but it is not done either, so it is flagged with
+        // what is left to do rather than reported as a success.
+        if ($reason = $source->emptyAccessReason($count)) {
+            return $this->back($source, 'warning', "Connected {$source->account}, but no repositories", $reason);
+        }
 
         return $this->back($source, 'success', "Connected {$source->account}", "{$count} repositories are reachable from this source.");
     }

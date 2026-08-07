@@ -26,6 +26,7 @@ class ComposerRepositoryTest extends TestCase
             'version' => 'v1.1.0',
             'reference' => str_repeat('b', 40),
             'is_dev' => false,
+            'released_at' => '2026-02-01 12:00:00',
             'metadata' => [
                 'name' => 'acme/widgets',
                 'version' => 'v1.1.0',
@@ -71,6 +72,18 @@ class ComposerRepositoryTest extends TestCase
         $this->assertSame('zip', $versions[0]['dist']['type']);
         $this->assertSame(str_repeat('b', 40), $versions[0]['dist']['reference']);
         $this->assertStringContainsString('/dist/acme/widgets/'.str_repeat('b', 40).'.zip', $versions[0]['dist']['url']);
+        $this->assertSame('2026-02-01T12:00:00+00:00', $versions[0]['time']);
+    }
+
+    public function test_a_version_with_no_recorded_date_is_served_without_a_time(): void
+    {
+        // `dev-main` in the fixture predates date tracking. Composer treats a
+        // null `time` as malformed, so the key is left out entirely.
+        $this->makeServedPackage();
+
+        $versions = $this->get('/p2/acme/widgets~dev.json')->assertOk()->json('packages.acme/widgets');
+
+        $this->assertArrayNotHasKey('time', $versions[0]);
     }
 
     public function test_dev_metadata_lists_branch_versions(): void

@@ -27,6 +27,14 @@ Repository permissions — read-only is enough for syncing and serving dists:
 - **Contents**: Read-only
 - **Metadata**: Read-only (mandatory)
 
+These are not optional polish. GitHub only offers a repository picker for apps
+that ask for at least one repository permission, so an app registered without
+them installs onto an account sharing nothing, and every source connected
+through it reads zero repositories. If that has already happened, add the
+permissions under **Permissions & events** on the app's settings, then accept
+the permission request on each installation — GitHub does not apply new
+permissions to an existing install until its owner approves them.
+
 Then **Generate a private key** and download the `.pem`.
 
 ## 2. Configure this app
