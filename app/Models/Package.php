@@ -119,6 +119,23 @@ class Package extends Model
     }
 
     /**
+     * The Composer name this repository most likely publishes under.
+     *
+     * A guess for the create wizard, used only when the repository's own
+     * composer.json cannot be read; the first sync replaces it with the real
+     * name. Null when the repository URL names no GitHub repository at all.
+     */
+    public function suggestedName(): ?string
+    {
+        try {
+            // Composer names are lowercase, GitHub paths need not be.
+            return mb_strtolower($this->repositoryPath());
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /**
      * The distinct package types currently in use, keyed by value.
      *
      * `type` is a free-text column, so this powers the form's suggestions and

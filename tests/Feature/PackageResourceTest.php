@@ -36,8 +36,6 @@ class PackageResourceTest extends TestCase
             ->fillForm([
                 'name' => 'acme/widgets',
                 'repository' => 'https://github.com/acme/widgets',
-                'latest_version' => 'v2.1.0',
-                'type' => 'library',
                 'description' => 'Widgets for Acme.',
             ])
             ->call('create')
@@ -46,8 +44,7 @@ class PackageResourceTest extends TestCase
         $this->assertDatabaseHas('packages', [
             'name' => 'acme/widgets',
             'repository' => 'https://github.com/acme/widgets',
-            'latest_version' => 'v2.1.0',
-            'type' => 'library',
+            'description' => 'Widgets for Acme.',
         ]);
     }
 

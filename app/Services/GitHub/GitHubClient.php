@@ -60,16 +60,18 @@ class GitHubClient
     }
 
     /**
-     * The decoded composer.json at the given ref, or null when the file is
-     * missing or not valid JSON.
+     * The decoded composer.json at the given ref — or at the default branch
+     * when no ref is given, which is all that is known of a repository before
+     * it has ever been synced. Null when the file is missing, the repository
+     * is out of reach, or the contents are not valid JSON.
      *
      * @return array<string, mixed>|null
      */
-    public function composerJson(string $ref): ?array
+    public function composerJson(?string $ref = null): ?array
     {
         $response = $this->request()
             ->withHeaders(['Accept' => 'application/vnd.github.raw+json'])
-            ->get("/repos/{$this->repositoryPath}/contents/composer.json", ['ref' => $ref]);
+            ->get("/repos/{$this->repositoryPath}/contents/composer.json", filled($ref) ? ['ref' => $ref] : []);
 
         if ($response->status() === 404) {
             return null;
