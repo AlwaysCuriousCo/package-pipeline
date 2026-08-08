@@ -60,7 +60,7 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      */
     public const DEBOUNCE_SECONDS = 15;
 
-    public function __construct(public Package $package) {}
+    public function __construct(public Package $package, public bool $force = false) {}
 
     /**
      * Wait between attempts rather than retrying straight into whatever
@@ -126,9 +126,9 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      * job then goes straight to the dispatcher, which performs no second
      * uniqueness check.
      */
-    public static function dispatchUnlessPending(Package $package): bool
+    public static function dispatchUnlessPending(Package $package, bool $force = false): bool
     {
-        $job = new self($package);
+        $job = new self($package, $force);
         $lock = new UniqueLock(app(Cache::class));
 
         if (! $lock->acquire($job)) {
@@ -163,12 +163,12 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         if ($batch !== null
             && $this->package->syncRunning()
             && $batch->createdAt->gt(now()->subHours(self::STALE_BATCH_HOURS))) {
-            self::dispatch($this->package)->delay(now()->addSeconds(30));
+            self::dispatch($this->package, $this->force)->delay(now()->addSeconds(30));
 
             return;
         }
 
-        PackageSyncBatch::dispatchFor($this->package);
+        PackageSyncBatch::dispatchFor($this->package, $this->force);
     }
 
     /**

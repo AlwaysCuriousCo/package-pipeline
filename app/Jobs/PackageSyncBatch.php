@@ -17,15 +17,15 @@ use Illuminate\Support\Facades\Bus;
  */
 class PackageSyncBatch
 {
-    public static function dispatchFor(Package $package): Batch
+    public static function dispatchFor(Package $package, bool $force = false): Batch
     {
         // What "changed" means afterwards is measured against what was stored
         // when the sync began, captured here because the batch's callbacks
         // only ever see the end state.
         $known = array_map(strval(...), $package->versions()->pluck('version')->all());
 
-        $batch = Bus::batch([new DiscoverVersions($package)])
-            ->name("Sync {$package->name}")
+        $batch = Bus::batch([new DiscoverVersions($package, $force)])
+            ->name(($force ? 'Rebuild' : 'Sync')." {$package->name}")
             ->allowFailures()
             ->finally(new FinalizePackageSync((int) $package->getKey(), $known))
             ->dispatch();

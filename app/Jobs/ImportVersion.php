@@ -37,6 +37,7 @@ class ImportVersion implements ShouldQueue
         public string $version,
         public string $reference,
         public bool $isDev,
+        public bool $force = false,
     ) {}
 
     /**
@@ -58,6 +59,6 @@ class ImportVersion implements ShouldQueue
         $synchronizer->import($this->package, $this->version, [
             'reference' => $this->reference,
             'is_dev' => $this->isDev,
-        ]);
+        ], $this->force);
     }
 }

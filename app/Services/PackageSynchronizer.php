@@ -35,7 +35,7 @@ class PackageSynchronizer
      * land, and finalize() notes the failures on the package. Only a sync
      * that produces no versions at all throws.
      */
-    public function sync(Package $package): SyncOutcome
+    public function sync(Package $package, bool $force = false): SyncOutcome
     {
         try {
             $known = array_map(strval(...), $package->versions()->pluck('version')->all());
@@ -45,14 +45,14 @@ class PackageSynchronizer
             $this->resolveComposerName($package);
             $this->prune($package, array_map(strval(...), array_keys($refs)));
 
-            $changed = $this->changed($package, $refs);
+            $changed = $this->changed($package, $refs, $force);
 
             $failed = 0;
             $lastError = null;
 
             foreach ($changed as $version => $ref) {
                 try {
-                    $this->import($package, (string) $version, $ref);
+                    $this->import($package, (string) $version, $ref, $force);
                 } catch (Throwable $exception) {
                     $failed++;
                     $lastError = $exception;
@@ -142,8 +142,14 @@ class PackageSynchronizer
      * @param  array<string, array{reference: string, is_dev: bool}>  $refs
      * @return array<string, array{reference: string, is_dev: bool}>
      */
-    public function changed(Package $package, array $refs): array
+    public function changed(Package $package, array $refs, bool $force = false): array
     {
+        // A rebuild trusts nothing stored: every ref imports fresh, which is
+        // the recovery hammer for corrupted archives and metadata drift.
+        if ($force) {
+            return $refs;
+        }
+
         $known = $package->versions()->get()->keyBy('version');
 
         return array_filter(
@@ -165,11 +171,11 @@ class PackageSynchronizer
      *
      * @param  array{reference: string, is_dev: bool}  $ref
      */
-    public function import(Package $package, string $version, array $ref): bool
+    public function import(Package $package, string $version, array $ref, bool $force = false): bool
     {
         $existing = $package->versions()->where('version', $version)->first();
 
-        if ($this->unchanged($existing, $ref)) {
+        if (! $force && $this->unchanged($existing, $ref)) {
             return true;
         }
 

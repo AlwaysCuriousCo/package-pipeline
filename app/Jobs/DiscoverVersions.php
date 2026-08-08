@@ -34,7 +34,7 @@ class DiscoverVersions implements ShouldQueue
      */
     public bool $deleteWhenMissingModels = true;
 
-    public function __construct(public Package $package) {}
+    public function __construct(public Package $package, public bool $force = false) {}
 
     /**
      * Wait between attempts rather than retrying straight into whatever
@@ -59,7 +59,7 @@ class DiscoverVersions implements ShouldQueue
             $synchronizer->resolveComposerName($this->package);
             $synchronizer->prune($this->package, array_map(strval(...), array_keys($refs)));
 
-            $changed = $synchronizer->changed($this->package, $refs);
+            $changed = $synchronizer->changed($this->package, $refs, $this->force);
         } catch (Throwable $exception) {
             // Every attempt leaves the reason where the panel reads it, not
             // just the one that exhausts the retries.
@@ -71,7 +71,7 @@ class DiscoverVersions implements ShouldQueue
         $imports = [];
 
         foreach ($changed as $version => $ref) {
-            $imports[] = new ImportVersion($this->package, (string) $version, $ref['reference'], $ref['is_dev']);
+            $imports[] = new ImportVersion($this->package, (string) $version, $ref['reference'], $ref['is_dev'], $this->force);
         }
 
         if ($imports !== []) {

@@ -40,7 +40,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 15 | Download statistics + dashboard | ✅ | 2 |
 | 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ✅ | 9 |
 | 17 | Operational CLI commands | ✅ | varies |
-| 18 | Package rebuild & maintenance jobs | 🟡 | 2, 12 |
+| 18 | Package rebuild & maintenance jobs | ✅ | 2, 12 |
 
 Suggested independent tracks: **Core registry** (1–4), **Access control** (5–10), **Sync pipeline**
 (11–14), **Observability/ops** (15, 17, 18), **Auth UX** (16).
@@ -459,15 +459,19 @@ prefix listings show. Syncing was already scriptable as `packages:sync {name?} {
 batch from its source — the recovery hammer for webhook drift, normalizer changes, or corrupted
 archives. Also `renormalize_version_order` migration/job pattern for retroactive fixes.
 
-```text
-In this Laravel + Filament app, add package rebuild: a RebuildPackage service that, for a given
-Package, re-runs a full sync from its source (reusing PackageSynchronizer / the sync batch if
-present), re-downloading archives for versions whose stored file is missing and pruning versions
-that no longer exist upstream; expose it as a Filament table+page action ("Rebuild") with
-confirmation and as artisan package:rebuild {name?} (all packages when omitted, with progress bar).
-Ensure rebuild is idempotent (running twice yields identical rows/files). Feature test: mutate a
-version row and delete an archive file, rebuild, assert both restored. Run tests.
-```
+**Implemented** as a `force` flag threaded through the one sync implementation rather than a second
+import path: `PackageSynchronizer::sync($package, force: true)` makes `changed()` return every ref
+and `import()` skip its `unchanged()` fast-path, so a rebuild re-reads metadata, re-downloads every
+archive and prunes what is gone upstream — while the package keeps serving its current rows, since
+each is replaced in place rather than wiped first. The flag rides the whole queued pipeline too
+(`SyncPackageJob` → `PackageSyncBatch` → `DiscoverVersions` → `ImportVersion`, batches named
+"Rebuild {name}"), so the panel's Rebuild action (table + view page, confirmed, hidden for uploaded
+artifacts) inherits the debounce/uniqueness/overlap rules for free. `RebuildPackage` wraps both
+drivers; `package:rebuild {name?} {--repo=}` sweeps one or all synced packages inline with a
+progress bar. Idempotent by construction — a second rebuild settles on identical rows (archive
+*paths* are fresh uuids by ArchiveStore's design; `archives:clean` collects the replaced files).
+Packistry's `NormalizeVersionOrder` job is subsumed: a rebuild re-normalizes every version. Covered
+in `tests/Feature/PackageRebuildTest.php`.
 
 ---
 

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
+use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Models\Package;
 use Filament\Actions\BulkActionGroup;
@@ -109,6 +110,7 @@ class PackagesTable
             ])
             ->recordActions([
                 SyncPackageAction::make(),
+                RebuildPackageAction::make(),
                 ViewAction::make(),
                 EditAction::make(),
             ])
