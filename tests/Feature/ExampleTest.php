@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
-// use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
+    // The login page reads the active authentication sources for its SSO
+    // buttons, so even this smoke test needs a migrated database.
+    use RefreshDatabase;
+
     public function test_the_root_url_redirects_to_the_filament_login_page(): void
     {
         $response = $this->get('/');

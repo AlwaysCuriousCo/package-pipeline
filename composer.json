@@ -12,6 +12,7 @@
         "joaopaulolndev/filament-edit-profile": "^3.0",
         "laravel/framework": "^13.17",
         "laravel/slack-notification-channel": "^3.10",
+        "laravel/socialite": "^5.29",
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35"
     },

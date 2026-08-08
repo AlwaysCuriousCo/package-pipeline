@@ -3,6 +3,7 @@
 use App\Http\Controllers\ComposerRepositoryController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\SourceConnectionController;
+use App\Http\Controllers\SsoController;
 use App\Http\Middleware\AuthenticateComposer;
 use App\Http\Middleware\ResolveComposerRepository;
 use Illuminate\Support\Facades\Route;
@@ -67,6 +68,14 @@ Route::post('/incoming/github', [GitHubWebhookController::class, 'app'])
     ->name('webhooks.github');
 Route::post('/incoming/github/{package}', [GitHubWebhookController::class, 'repository'])
     ->name('webhooks.github.package');
+
+// The SSO round trip for runtime-configured login providers. The login page
+// renders one button per active authentication source; the callback signs
+// the resolved user into the Filament panel.
+Route::get('/auth/{source}/redirect', [SsoController::class, 'redirect'])
+    ->name('sso.redirect');
+Route::get('/auth/{source}/callback', [SsoController::class, 'callback'])
+    ->name('sso.callback');
 
 // The GitHub App install handshake for connecting a source. Both legs are
 // admin-only: the callback attaches an installation to a source, so it must

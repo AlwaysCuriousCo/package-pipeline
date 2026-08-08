@@ -13,6 +13,8 @@ use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Contracts\View\View as ViewContract;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -31,6 +33,13 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+            // One "Continue with …" button per active authentication source,
+            // under the password form. Rendered from a hook rather than a
+            // login page subclass, so the stock page stays stock.
+            ->renderHook(
+                PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
+                fn (): ViewContract => view('filament.auth.sso-buttons'),
+            )
             // Also the target of the link `php artisan admin:create` prints,
             // which is how the first account gets a password.
             ->passwordReset()

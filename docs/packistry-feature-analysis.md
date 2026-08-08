@@ -38,7 +38,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 13a | Sources with GitHub App auth + package bridging | ✅ | — |
 | 14 | Source project browser + one-click package onboarding | ❌ | 13 |
 | 15 | Download statistics + dashboard | ✅ | 2 |
-| 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ❌ | 9 |
+| 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ✅ | 9 |
 | 17 | Operational CLI commands | ✅ | varies |
 | 18 | Package rebuild & maintenance jobs | 🟡 | 2, 12 |
 
@@ -426,23 +426,20 @@ domain allowlist), and a `default_user_role` for just-in-time provisioned users.
 active sources; callback matches users by `external_id`/email. Optionally maps an auth source to
 package grants (`authentication_source_package`).
 
-```text
-In this Laravel + Filament v5 app (Filament handles login; users have a role column), add runtime-
-configurable SSO:
-1. composer require laravel/socialite (+ socialiteproviders/manager for generic OIDC).
-2. Model + migration: authentication_sources (name, provider enum [oidc, github, google, gitlab],
-   client_id, client_secret encrypted cast, discovery_url nullable for oidc, active boolean,
-   allow_registration boolean default true, allowed_domains json nullable, default_user_role
-   string default 'user') and users.external_id nullable string with (provider, external_id) unique.
-3. Routes /auth/{source}/redirect and /auth/{source}/callback driving Socialite with credentials
-   loaded from the row (for oidc, resolve endpoints from the discovery document, cached). Callback:
-   match user by external_id, else by email; if none and allow_registration and email domain passes
-   allowed_domains, create the user with default_user_role; then Filament::auth()->login().
-4. Extend the Filament login page to render one "Continue with {name}" button per active source.
-5. Filament resource for authentication_sources (admins only).
-6. Tests with Socialite mocked: existing-user login, JIT registration, domain rejection,
-   registration disabled. Run tests.
-```
+**Implemented** with `laravel/socialite` alone — Socialite ships GitHub/Google/GitLab drivers, and
+generic OIDC is a slim in-house provider (`app/Auth/OidcProvider.php`) whose endpoints come from
+the issuer's discovery document (fetched by `SsoProviderFactory`, cached an hour), so no
+socialiteproviders/manager. `authentication_sources` rows carry provider, OAuth client (secret
+encrypted), discovery URL, active, allow_registration, allowed_domains, and `default_role` — a
+select of the *actual* Shield roles rather than Packistry's hardcoded 'user', since roles here are
+runtime-shaped. The identity binding is `(authentication_source_id, external_id)` unique on users;
+the callback matches by binding, then by email (binding the identity only when the account is
+unbound — one provider must never quietly take over another's users), then JIT-registers when
+allowed and the domain passes, marking the email verified because the IdP vouched for it. A matched
+account with no role is refused with an explanation rather than a Filament 403. The login page
+gains "Continue with {name}" buttons per active source through a `AUTH_LOGIN_FORM_AFTER` render
+hook — the stock login page stays stock — and a Login providers resource sits in Access Management.
+Covered in `tests/Feature/SsoTest.php` with the provider factory swapped out.
 
 ## 17. Operational CLI commands
 
