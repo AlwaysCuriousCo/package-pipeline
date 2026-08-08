@@ -15,6 +15,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class PackageResource extends Resource
 {
@@ -23,6 +24,16 @@ class PackageResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
 
     protected static ?string $recordTitleAttribute = 'name';
+
+    /**
+     * Row-level scoping for users without Unscoped:Package: the table, and
+     * every page that resolves a record through it, only reaches packages
+     * the signed-in user has been granted.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->visibleToUser(auth()->user());
+    }
 
     public static function form(Schema $schema): Schema
     {

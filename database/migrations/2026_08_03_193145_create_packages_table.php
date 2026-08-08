@@ -14,20 +14,38 @@ return new class extends Migration
         Schema::create('packages', function (Blueprint $table) {
             $table->id();
 
+            // The Composer repository this package is served from. Deleting a
+            // repository is refused while it still holds packages — an admin
+            // moves or deletes them first, deliberately.
+            $table->foreignId('repository_id')->constrained()->restrictOnDelete();
+
             // Deleting a source leaves its packages in place; they fall back
             // to their own token or GITHUB_TOKEN until relinked.
             $table->foreignId('source_id')->nullable()->constrained()->nullOnDelete();
 
-            $table->string('repository')->unique();
+            // Null for packages published by artifact upload, which have no
+            // VCS repository behind them.
+            $table->string('repository')->nullable();
             $table->string('latest_version')->nullable();
 
-            // Composer resolves packages by name, so it must be unique.
-            $table->string('name')->unique();
+            // Composer resolves packages by name, so it must be unique — per
+            // repository, since each repository is its own registry. The same
+            // goes for the VCS repository URL.
+            $table->string('name');
             $table->text('description')->nullable();
             $table->string('type')->nullable()->index();
             $table->text('token')->nullable();
             $table->timestamp('last_synced_at')->nullable();
             $table->text('sync_error')->nullable();
+
+            // Denormalized from the downloads table so search results and
+            // sortable listings never need a count over it;
+            // `downloads:recalculate` rebuilds it from the source of truth.
+            $table->unsignedBigInteger('total_downloads')->default(0);
+
+            // The job batch currently (or last) rebuilding this package's
+            // versions, so the panel can show the imports' progress.
+            $table->string('sync_batch_id')->nullable();
 
             // The repository webhook created for this package, which only
             // exists as the fallback for repositories the GitHub App's own
@@ -48,6 +66,9 @@ return new class extends Migration
             $table->timestamp('webhook_received_at')->nullable();
 
             $table->timestamps();
+
+            $table->unique(['repository_id', 'name']);
+            $table->unique(['repository_id', 'repository']);
         });
     }
 

@@ -6,6 +6,7 @@ use App\Enums\WebhookCoverage;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
 use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
+use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
@@ -14,6 +15,7 @@ use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use RuntimeException;
 use Tests\TestCase;
@@ -431,6 +433,8 @@ class PackageWebhookRegistrationTest extends TestCase
 
     public function test_creating_a_package_through_the_wizard_registers_its_webhook(): void
     {
+        Queue::fake([SyncPackageJob::class]);
+
         $this->fakeGitHub();
         $this->tokenSource();
 

@@ -14,6 +14,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -33,6 +34,9 @@ class PackageSyncNotificationTest extends TestCase
 
         Notification::fake();
 
+        // Syncing stores an archive per version on the dist disk.
+        Storage::fake(config('filesystems.dists'));
+
         // Stubs are registered once and read the refs at request time, because
         // a second Http::fake() only ever adds to the first — and these tests
         // are about a repository that changes between two syncs.
@@ -45,6 +49,9 @@ class PackageSyncNotificationTest extends TestCase
             ]),
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
+            ]),
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+                'Content-Type' => 'application/zip',
             ]),
         ]);
     }
@@ -119,7 +126,8 @@ class PackageSyncNotificationTest extends TestCase
         Notification::assertSentTo(
             User::query()->get(),
             PackageVersionsPublished::class,
-            fn (PackageVersionsPublished $notification): bool => $notification->outcome->releases === ['v1.1.0']
+            // The tag v1.1.0 publishes as its normalized spelling.
+            fn (PackageVersionsPublished $notification): bool => $notification->outcome->releases === ['1.1.0']
                 && ! $notification->outcome->initialImport,
         );
     }

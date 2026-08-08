@@ -5,9 +5,16 @@ namespace App\Models;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Services\GitHub\GitHubApp;
+use App\Services\GitHub\GitHubClient;
 use App\Services\GitHub\WebhookRegistrar;
+use App\Services\GitLab\GitLabClient;
+use App\Sources\RepositoryClient;
+use App\Sources\StubClient;
 use Database\Factories\PackageFactory;
+use Illuminate\Bus\Batch;
+use Illuminate\Bus\BatchRepository;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -16,7 +23,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -49,7 +56,14 @@ class Package extends Model
 
     protected static function booted(): void
     {
-        static::saving(fn (self $package) => $package->linkSource());
+        static::saving(function (self $package): void {
+            // Every package is served from a repository; anything created
+            // without choosing one lands in the default repository at the
+            // registry root.
+            $package->repository_id ??= Repository::default()->id;
+
+            $package->linkSource();
+        });
 
         // A repository hook left behind on GitHub would keep posting to a URL
         // that resolves to nothing. Removing it is best effort: the package is
@@ -74,6 +88,108 @@ class Package extends Model
     }
 
     /**
+     * The Composer repository this package is served from.
+     *
+     * Named for what it is rather than `repository()`, because that name is
+     * taken: the `repository` attribute is the VCS URL the package syncs from.
+     *
+     * @return BelongsTo<Repository, $this>
+     */
+    public function composerRepository(): BelongsTo
+    {
+        return $this->belongsTo(Repository::class, 'repository_id');
+    }
+
+    /**
+     * Narrow to the packages the presenting token may see — the one place
+     * the Composer endpoints' access control lives.
+     *
+     * No token sees public repositories only. A user's personal token sees
+     * exactly what its owner does. A deploy token sees public repositories
+     * plus whatever it was granted — or everything, when it holds no grants.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeVisibleTo(Builder $query, ?Token $token): Builder
+    {
+        $principal = $token?->tokenable;
+
+        if ($principal instanceof User) {
+            return $query->visibleToUser($principal);
+        }
+
+        if ($principal instanceof DeployToken && ! $principal->isScoped()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($principal): void {
+            $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true));
+
+            if ($principal instanceof DeployToken) {
+                $query
+                    ->orWhereIn('packages.id', $principal->packages()->select('packages.id'))
+                    ->orWhereIn('packages.repository_id', $principal->repositories()->select('repositories.id'));
+            }
+        });
+    }
+
+    /**
+     * Narrow to the packages a panel user may see: everything for a user
+     * holding Unscoped:Package, otherwise public repositories plus their
+     * explicit package and repository grants.
+     *
+     * Applied by the package table, the dashboard widgets, and — through
+     * visibleTo() — the user's own personal access tokens.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeVisibleToUser(Builder $query, User $user): Builder
+    {
+        if ($user->hasUnscopedAccess()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($user): void {
+            $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true))
+                ->orWhereIn('packages.id', $user->packages()->select('packages.id'))
+                ->orWhereIn('packages.repository_id', $user->repositories()->select('repositories.id'));
+        });
+    }
+
+    /**
+     * The job batch currently (or last) rebuilding this package's versions,
+     * or null when none has run or the batch has been pruned.
+     *
+     * Read through the repository rather than the Bus facade so it still
+     * answers from the real job_batches table when the dispatcher is faked.
+     */
+    public function syncBatch(): ?Batch
+    {
+        return $this->sync_batch_id === null
+            ? null
+            : app(BatchRepository::class)->find($this->sync_batch_id);
+    }
+
+    /**
+     * Whether a sync batch is still working through this package's versions.
+     *
+     * A batch that allows failures is never marked finished once a job has
+     * failed — only its pending count ever tells the truth. "Every job has
+     * run, some badly" is done, not in progress.
+     */
+    public function syncRunning(): bool
+    {
+        $batch = $this->syncBatch();
+
+        return $batch !== null
+            && ! $batch->finished()
+            && ! $batch->cancelled()
+            && $batch->pendingJobs > $batch->failedJobs;
+    }
+
+    /**
      * Attach the connected source that owns this package's repository.
      *
      * Runs on every save, but only fills a source in when the package has none
@@ -94,7 +210,41 @@ class Package extends Model
             return;
         }
 
-        $this->source_id = Source::forRepositoryPath($path)?->id;
+        $this->source_id = Source::forRepositoryPath($path, $this->provider())?->id;
+
+        // Anything resolved through the relation from here on must see the
+        // source just linked, not a null cached while it was being decided.
+        $this->unsetRelation('source');
+    }
+
+    /**
+     * The provider this package's repository lives on: the connected source's
+     * word for it, or the repository URL's host as the honest guess.
+     *
+     * The relation is only touched when a source is actually linked: this
+     * runs inside linkSource() itself (via repositoryPath), and lazy-loading
+     * there would cache the relation as null before source_id is decided.
+     */
+    public function provider(): SourceProvider
+    {
+        if ($this->source_id !== null && $this->source instanceof Source) {
+            return $this->source->provider;
+        }
+
+        return SourceProvider::forHost($this->parsedRepository()['host']);
+    }
+
+    /**
+     * The client that speaks this package's provider — the one seam through
+     * which syncing, webhooks and the wizard reach any VCS API.
+     */
+    public function client(): RepositoryClient
+    {
+        return match ($provider = $this->provider()) {
+            SourceProvider::Github => GitHubClient::for($this),
+            SourceProvider::Gitlab => GitLabClient::for($this),
+            default => new StubClient($provider),
+        };
     }
 
     /**
@@ -109,7 +259,9 @@ class Package extends Model
     {
         return $this->source?->accessToken()
             ?? $this->token
-            ?? config('services.github.token');
+            // The environment fallback is a GitHub credential; handing it to
+            // another provider's API would only leak it.
+            ?? ($this->provider() === SourceProvider::Github ? config('services.github.token') : null);
     }
 
     /**
@@ -118,28 +270,61 @@ class Package extends Model
      */
     public function apiUrl(): string
     {
-        return $this->source?->apiUrl() ?? SourceProvider::Github->defaultApiUrl();
+        return $this->source?->apiUrl() ?? $this->provider()->defaultApiUrl();
     }
 
     /**
-     * The "owner/repo" path of the GitHub repository.
+     * The provider-side path of the repository: "owner/repo" on GitHub,
+     * the full (possibly nested) namespace path on GitLab.
      *
-     * Accepts a full GitHub URL (https or git@, with or without .git) as well
-     * as a bare "owner/repo" value.
+     * Accepts a full URL (https, ssh, or git@, with or without .git) from
+     * any provider, as well as a bare path.
      */
     public function repositoryPath(): string
     {
-        $repository = trim($this->repository);
+        $parsed = $this->parsedRepository();
 
-        if (preg_match('#github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$#i', $repository, $matches)) {
-            return "{$matches[1]}/{$matches[2]}";
+        $path = $parsed['path'];
+
+        if ($path === null) {
+            throw new InvalidArgumentException(blank($this->repository)
+                ? 'This package has no VCS repository URL; it is published by artifact upload.'
+                : "Unable to determine the repository path from [{$this->repository}].");
         }
 
-        if (preg_match('#^([\w.-]+)/([\w.-]+?)(?:\.git)?$#', $repository, $matches)) {
-            return "{$matches[1]}/{$matches[2]}";
+        // GitHub repositories are exactly owner/repo; anything after that in
+        // a pasted URL (/tree/main, /issues) is browser chrome, not path.
+        if ($this->provider() === SourceProvider::Github) {
+            return implode('/', array_slice(explode('/', $path), 0, 2));
         }
 
-        throw new InvalidArgumentException("Unable to determine the GitHub repository from [{$repository}].");
+        return $path;
+    }
+
+    /**
+     * The host and repository path the stored URL names, each null when the
+     * URL does not yield one.
+     *
+     * @return array{host: ?string, path: ?string}
+     */
+    private function parsedRepository(): array
+    {
+        $repository = trim((string) $this->repository);
+
+        if (preg_match('#^(?:https?://|ssh://git@|git@)([^/:]+)[:/](.+?)(?:\.git)?/?$#i', $repository, $matches)) {
+            $path = trim($matches[2], '/');
+
+            return [
+                'host' => $matches[1],
+                'path' => str_contains($path, '/') ? $path : null,
+            ];
+        }
+
+        if (preg_match('#^[\w.-]+(?:/[\w.-]+)+$#', $repository)) {
+            return ['host' => null, 'path' => preg_replace('/\.git$/i', '', $repository)];
+        }
+
+        return ['host' => null, 'path' => null];
     }
 
     /**
@@ -214,13 +399,15 @@ class Package extends Model
     }
 
     /**
-     * Where GitHub posts this package's own deliveries. Only meaningful for a
-     * package carrying a repository hook — an app-covered one is delivered to
-     * the account-wide URL instead.
+     * Where the provider posts this package's own deliveries. Only meaningful
+     * for a package carrying a repository hook — an app-covered one is
+     * delivered to the account-wide URL instead.
      */
     public function webhookUrl(): string
     {
-        return route('webhooks.github.package', $this);
+        return $this->provider() === SourceProvider::Gitlab
+            ? route('webhooks.gitlab.package', $this)
+            : route('webhooks.github.package', $this);
     }
 
     /**
@@ -248,8 +435,18 @@ class Package extends Model
      */
     public function installCommands(): array
     {
+        $repository = $this->composerRepository;
+
+        // A package in a named repository is reached through that mount, and
+        // the config key carries the path so two repositories on the same
+        // registry never fight over one entry in the consumer's composer.json.
         $repositoryKey = Str::slug(config('app.name')) ?: 'private';
-        $repositoryUrl = rtrim(url('/'), '/');
+
+        if (! $repository->isDefault()) {
+            $repositoryKey .= "-{$repository->path}";
+        }
+
+        $repositoryUrl = rtrim($repository->url(), '/');
 
         $require = $this->name;
 
@@ -283,6 +480,26 @@ class Package extends Model
         }
 
         return $devVersions->first();
+    }
+
+    /**
+     * Recompute latest_version from the versions actually stored: the highest
+     * stable tag, or null when only pre-releases and branches exist.
+     *
+     * The synchronizer maintains the column during syncs; this is for the
+     * paths that change versions without one — artifact uploads, rebuilds.
+     */
+    public function refreshLatestVersion(): void
+    {
+        $latest = $this->versions()
+            ->where('is_dev', false)
+            ->pluck('version')
+            ->map(strval(...))
+            ->reject(fn (string $version): bool => (bool) preg_match('/(alpha|beta|rc|dev)/i', $version))
+            ->sort(fn (string $a, string $b): int => version_compare(ltrim($a, 'vV'), ltrim($b, 'vV')))
+            ->last();
+
+        $this->forceFill(['latest_version' => $latest])->save();
     }
 
     /**

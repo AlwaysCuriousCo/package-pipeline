@@ -3,11 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Package;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
-use Mockery;
 use Tests\TestCase;
 
 class ComposerRepositoryTest extends TestCase
@@ -29,6 +27,8 @@ class ComposerRepositoryTest extends TestCase
             'reference' => str_repeat('b', 40),
             'is_dev' => false,
             'released_at' => '2026-02-01 12:00:00',
+            'archive_path' => 'packages/acme/widgets/v110.zip',
+            'shasum' => sha1('zip-bytes'),
             'metadata' => [
                 'name' => 'acme/widgets',
                 'version' => 'v1.1.0',
@@ -37,6 +37,7 @@ class ComposerRepositoryTest extends TestCase
             ],
         ]);
 
+        // dev-main predates archive storage: no archive_path, no shasum.
         $package->versions()->create([
             'version' => 'dev-main',
             'reference' => str_repeat('d', 40),
@@ -141,7 +142,7 @@ class ComposerRepositoryTest extends TestCase
             ->assertExactJson(['packageNames' => ['aaa/first', 'acme/widgets']]);
     }
 
-    public function test_stable_metadata_lists_tagged_versions_with_proxied_dists(): void
+    public function test_stable_metadata_lists_tagged_versions_with_local_dists(): void
     {
         $this->makeServedPackage();
 
@@ -154,8 +155,20 @@ class ComposerRepositoryTest extends TestCase
         $this->assertSame(['php' => '^8.3'], $versions[0]['require']);
         $this->assertSame('zip', $versions[0]['dist']['type']);
         $this->assertSame(str_repeat('b', 40), $versions[0]['dist']['reference']);
+        $this->assertSame(sha1('zip-bytes'), $versions[0]['dist']['shasum']);
         $this->assertStringContainsString('/dist/acme/widgets/'.str_repeat('b', 40).'.zip', $versions[0]['dist']['url']);
         $this->assertSame('2026-02-01T12:00:00+00:00', $versions[0]['time']);
+    }
+
+    public function test_a_version_without_a_stored_archive_is_served_without_a_shasum(): void
+    {
+        // Composer treats the key as a checksum to enforce; advertising a null
+        // would be worse than admitting there is none yet.
+        $this->makeServedPackage();
+
+        $versions = $this->get('/p2/acme/widgets~dev.json')->assertOk()->json('packages.acme/widgets');
+
+        $this->assertArrayNotHasKey('shasum', $versions[0]['dist']);
     }
 
     public function test_a_version_with_no_recorded_date_is_served_without_a_time(): void
@@ -184,15 +197,14 @@ class ComposerRepositoryTest extends TestCase
         $this->get('/p2/acme/missing.json')->assertNotFound();
     }
 
-    public function test_the_dist_endpoint_proxies_and_caches_the_zipball(): void
+    public function test_the_dist_endpoint_serves_the_stored_archive(): void
     {
         // The dist disk is configurable so it can be pointed at object
         // storage; the endpoint must not assume a local one.
         config(['filesystems.dists' => 's3']);
         Storage::fake('s3');
-        Http::fake([
-            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('zip-bytes'),
-        ]);
+        Storage::disk('s3')->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+        Http::fake();
 
         $this->makeServedPackage();
         $reference = str_repeat('b', 40);
@@ -203,53 +215,60 @@ class ComposerRepositoryTest extends TestCase
 
         $this->assertSame('zip-bytes', $response->streamedContent());
 
-        Storage::disk('s3')->assertExists("composer-dists/acme/widgets/{$reference}.zip");
-        $this->assertSame('zip-bytes', Storage::disk('s3')->get("composer-dists/acme/widgets/{$reference}.zip"));
-        Http::assertSent(fn ($request): bool => $request->hasHeader('Authorization', 'Bearer ghp_secret'));
-
-        // A second download is served from the cache without touching GitHub.
-        $this->get("/dist/acme/widgets/{$reference}.zip")->assertOk();
-        Http::assertSentCount(1);
+        // Serving is storage only. GitHub is never consulted, so consumers
+        // need no GitHub credentials and an outage there changes nothing.
+        Http::assertNothingSent();
     }
 
-    public function test_a_failed_zipball_download_is_not_cached(): void
+    public function test_a_version_without_a_stored_archive_is_a_404(): void
     {
         config(['filesystems.dists' => 's3']);
         Storage::fake('s3');
-        Http::fake([
-            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('nope', 500),
-        ]);
 
+        // dev-main's row predates archive storage, so nothing is stored yet.
         $this->makeServedPackage();
-        $reference = str_repeat('b', 40);
 
-        $this->get("/dist/acme/widgets/{$reference}.zip")->assertServerError();
-
-        Storage::disk('s3')->assertMissing("composer-dists/acme/widgets/{$reference}.zip");
+        $this->get('/dist/acme/widgets/'.str_repeat('d', 40).'.zip')->assertNotFound();
     }
 
-    public function test_a_failed_dist_write_is_removed_from_the_disk(): void
+    public function test_an_archive_missing_from_the_disk_is_a_404(): void
     {
+        // The row says stored, the disk disagrees — the next sync backfills
+        // it; until then the honest answer is a 404, not a broken stream.
         config(['filesystems.dists' => 's3']);
-        Http::fake([
-            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('zip-bytes'),
-        ]);
-
-        $reference = str_repeat('b', 40);
-        $path = "composer-dists/acme/widgets/{$reference}.zip";
-
-        // A write that fails after partially uploading must not leave the
-        // truncated object behind for the next request to serve.
-        $disk = Mockery::mock(Filesystem::class);
-        $disk->shouldReceive('exists')->with($path)->andReturnFalse();
-        $disk->shouldReceive('writeStream')->once()->with($path, Mockery::any())->andReturnFalse();
-        $disk->shouldReceive('delete')->once()->with($path);
-
-        Storage::set('s3', $disk);
+        Storage::fake('s3');
 
         $this->makeServedPackage();
 
-        $this->get("/dist/acme/widgets/{$reference}.zip")->assertServerError();
+        $this->get('/dist/acme/widgets/'.str_repeat('b', 40).'.zip')->assertNotFound();
+    }
+
+    public function test_the_dist_endpoint_falls_back_to_a_sibling_row_for_the_same_commit(): void
+    {
+        // A tag and a branch can point at the same commit. When the first
+        // row's file is gone from the disk, a sibling row's still-stored zip
+        // must serve rather than 404ing on the first path checked.
+        config(['filesystems.dists' => 's3']);
+        Storage::fake('s3');
+
+        // v1.1.0's archive_path points at a file that was never stored; only
+        // the sibling branch row's archive exists on the disk.
+        $package = $this->makeServedPackage();
+
+        $package->versions()->create([
+            'version' => 'dev-release',
+            'reference' => str_repeat('b', 40),
+            'is_dev' => true,
+            'archive_path' => 'packages/acme/widgets/sibling.zip',
+            'shasum' => sha1('sibling-bytes'),
+            'metadata' => ['name' => 'acme/widgets', 'version' => 'dev-release'],
+        ]);
+
+        Storage::disk('s3')->put('packages/acme/widgets/sibling.zip', 'sibling-bytes');
+
+        $response = $this->get('/dist/acme/widgets/'.str_repeat('b', 40).'.zip')->assertOk();
+
+        $this->assertSame('sibling-bytes', $response->streamedContent());
     }
 
     public function test_the_dist_endpoint_rejects_unknown_references(): void

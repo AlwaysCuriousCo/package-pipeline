@@ -3,12 +3,14 @@
 namespace Tests\Feature;
 
 use App\Filament\Resources\Packages\Pages\CreatePackage;
+use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -53,6 +55,8 @@ class CreatePackageWizardTest extends TestCase
 
     public function test_the_deciphered_details_can_be_customised_before_creating(): void
     {
+        Queue::fake([SyncPackageJob::class]);
+
         $this->fakeComposerJson();
 
         Livewire::test(CreatePackage::class)
@@ -158,6 +162,8 @@ class CreatePackageWizardTest extends TestCase
 
     public function test_a_token_typed_into_the_wizard_is_used_to_read_the_repository(): void
     {
+        Queue::fake([SyncPackageJob::class]);
+
         $this->fakeComposerJson();
 
         Livewire::test(CreatePackage::class)

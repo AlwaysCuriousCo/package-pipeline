@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Pages\ApiTokens;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -12,6 +13,8 @@ use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Contracts\View\View as ViewContract;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -30,6 +33,13 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+            // One "Continue with …" button per active authentication source,
+            // under the password form. Rendered from a hook rather than a
+            // login page subclass, so the stock page stays stock.
+            ->renderHook(
+                PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
+                fn (): ViewContract => view('filament.auth.sso-buttons'),
+            )
             // Also the target of the link `php artisan admin:create` prints,
             // which is how the first account gets a password.
             ->passwordReset()
@@ -63,6 +73,13 @@ class AdminPanelProvider extends PanelProvider
                     ->label(fn (): string => auth()->user()->name)
                     ->url(fn (): string => EditProfilePage::getUrl())
                     ->icon('heroicon-m-user-circle'),
+                // Personal Composer credentials, self-service for every
+                // panel user — which is why it lives here and not in the
+                // sidebar with the admin-managed resources.
+                'api-tokens' => MenuItem::make()
+                    ->label('API tokens')
+                    ->url(fn (): string => ApiTokens::getUrl())
+                    ->icon('heroicon-m-key'),
             ])
             // The bell, where a package's own releases and failed syncs land.
             // Syncing happens on a queue in response to a push, so there is

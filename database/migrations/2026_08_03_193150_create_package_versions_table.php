@@ -15,8 +15,25 @@ return new class extends Migration
             $table->id();
             $table->foreignId('package_id')->constrained()->cascadeOnDelete();
             $table->string('version');
+
+            // A string whose lexical order matches semantic version order
+            // (see App\Support\VersionNormalizer::order), which is what
+            // "latest" and the /p2 response ordering sort by. Null only on
+            // rows predating it; the next sync backfills.
+            $table->string('order')->nullable()->index();
+
             $table->string('reference');
             $table->boolean('is_dev')->default(false);
+
+            // Where this version's zip lives on the dist disk, and the sha1
+            // Composer verifies downloads against. Null only for a row whose
+            // archive has not been stored yet; the next sync backfills it.
+            $table->string('archive_path')->nullable();
+            $table->string('shasum', 40)->nullable();
+
+            // Denormalized from the downloads table, kept by the download
+            // listener and downloads:recalculate.
+            $table->unsignedBigInteger('total_downloads')->default(0);
 
             // Nullable because a ref may resolve before its date is known; the
             // next sync backfills it, since a null date is what looks stale.

@@ -7,12 +7,21 @@ use App\Services\PackageSynchronizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Tests\TestCase;
 
 class PackageSyncTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Syncing stores an archive per version on the dist disk.
+        Storage::fake(config('filesystems.dists'));
+    }
 
     /**
      * Fake the endpoints a sync reads. Overrides are registered ahead of the
@@ -43,6 +52,9 @@ class PackageSyncTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+                'Content-Type' => 'application/zip',
+            ]),
         ]);
     }
 
@@ -66,7 +78,8 @@ class PackageSyncTest extends TestCase
         $package->refresh();
 
         $this->assertSame('acme/widgets', $package->name);
-        $this->assertSame('v1.1.0', $package->latest_version);
+        // Tags are stored under their normalized spelling: v1.1.0 → 1.1.0.
+        $this->assertSame('1.1.0', $package->latest_version);
         $this->assertSame('Widgets for Acme.', $package->description);
         $this->assertSame('library', $package->type);
         $this->assertNotNull($package->last_synced_at);
@@ -75,14 +88,161 @@ class PackageSyncTest extends TestCase
         $versions = $package->versions()->pluck('is_dev', 'version');
 
         $this->assertSame([
+            '1.0.0' => false,
+            '1.1.0' => false,
             '2.x-dev' => true,
             'dev-main' => true,
-            'v1.0.0' => false,
-            'v1.1.0' => false,
         ], $versions->sortKeys()->all());
 
         // The malformed tag is ignored rather than served.
         $this->assertNull($package->versions()->where('version', 'not-a-version')->first());
+    }
+
+    public function test_sync_stores_an_archive_with_a_shasum_for_every_version(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $disk = Storage::disk(config('filesystems.dists'));
+
+        foreach ($package->versions()->get() as $version) {
+            $this->assertNotNull($version->archive_path, "{$version->version} has no stored archive.");
+            $this->assertSame(sha1('zip-bytes'), $version->shasum);
+            $disk->assertExists($version->archive_path);
+
+            // Paths carry the composer name, not the pre-sync placeholder.
+            $this->assertStringStartsWith('packages/acme/widgets/', $version->archive_path);
+        }
+    }
+
+    /**
+     * The (repository_id, name) unique index would reject the first-sync
+     * rename with a bare query error; the conflict must fail the sync with a
+     * reason a human can act on instead.
+     */
+    public function test_a_composer_name_already_published_in_the_repository_fails_the_sync_clearly(): void
+    {
+        $this->fakeGitHub();
+
+        // Another package in the same (default) Composer repository already
+        // publishes the name this repository's composer.json declares.
+        Package::factory()->create([
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/widgets-fork',
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('The name conflict should have failed the sync.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('acme/widgets', $exception->getMessage());
+        }
+
+        $package->refresh();
+
+        // The reason lands where the panel reads it, and the placeholder name
+        // survives — the row was never renamed into the collision.
+        $this->assertStringContainsString('already publishes', (string) $package->sync_error);
+        $this->assertSame('acme/widgets-placeholder', $package->name);
+    }
+
+    public function test_an_unchanged_version_missing_its_archive_is_backfilled(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // A row from before archives were stored: same ref, no archive.
+        $version = $package->versions()->where('version', '1.1.0')->sole();
+        $version->forceFill(['archive_path' => null, 'shasum' => null])->save();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $version->refresh();
+
+        $this->assertNotNull($version->archive_path);
+        $this->assertSame(sha1('zip-bytes'), $version->shasum);
+        Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+    }
+
+    public function test_an_unchanged_version_whose_archive_file_is_gone_is_rebuilt(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // The columns say stored, but the disk lost the file — object storage
+        // loss, or a deploy that wiped archives while the database survived.
+        $version = $package->versions()->where('version', '1.1.0')->sole();
+        Storage::disk(config('filesystems.dists'))->delete($version->archive_path);
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $version->refresh();
+
+        $this->assertNotNull($version->archive_path);
+        Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+    }
+
+    public function test_a_zipball_that_is_not_a_zip_fails_the_sync(): void
+    {
+        // A proxy's HTML error page arriving with a 200 must not be stored
+        // and served to Composer as an archive.
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('<html>maintenance</html>', 200, [
+                'Content-Type' => 'text/html',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('Expected the sync to reject the non-zip download.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('instead of a zip archive', $exception->getMessage());
+        }
+
+        $this->assertStringContainsString('instead of a zip archive', (string) $package->refresh()->sync_error);
+        $this->assertSame(0, $package->versions()->count());
+    }
+
+    /**
+     * One broken ref costs one version: the others still land, and the gap is
+     * recorded on the package instead of failing the sync outright.
+     */
+    public function test_one_bad_ref_does_not_fail_the_rest_of_the_sync(): void
+    {
+        // Only v1.1.0's zipball comes back as an HTML error page.
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/zipball/*' => fn ($request) => str_contains($request->url(), str_repeat('b', 40))
+                ? Http::response('<html>maintenance</html>', 200, ['Content-Type' => 'text/html'])
+                : Http::response('zip-bytes', 200, ['Content-Type' => 'application/zip']),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $package->refresh();
+
+        $this->assertSame(
+            ['1.0.0', '2.x-dev', 'dev-main'],
+            $package->versions()->pluck('version')->sort()->values()->all(),
+        );
+
+        $this->assertNotNull($package->last_synced_at);
+        $this->assertSame('1.0.0', $package->latest_version);
+        $this->assertSame('1 of 4 version imports failed; the next sync will retry them.', $package->sync_error);
     }
 
     public function test_sync_records_the_commit_date_of_each_version(): void
@@ -93,7 +253,7 @@ class PackageSyncTest extends TestCase
 
         app(PackageSynchronizer::class)->sync($package);
 
-        $released = $package->versions()->where('version', 'v1.1.0')->sole()->released_at;
+        $released = $package->versions()->where('version', '1.1.0')->sole()->released_at;
 
         $this->assertNotNull($released);
         $this->assertSame('2026-02-01 12:00:00', $released->utc()->toDateTimeString());
@@ -114,7 +274,7 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         $this->assertSame(4, $package->versions()->count());
-        $this->assertNull($package->versions()->where('version', 'v1.1.0')->sole()->released_at);
+        $this->assertNull($package->versions()->where('version', '1.1.0')->sole()->released_at);
     }
 
     public function test_a_second_sync_does_not_refetch_refs_that_have_not_moved(): void
@@ -130,8 +290,8 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         // The second sync still lists tags and branches — it cannot know what
-        // moved otherwise — but reads no composer.json or commit for the four
-        // unchanged refs.
+        // moved otherwise — but reads no composer.json, commit, or zipball
+        // for the four unchanged refs.
         $refListings = 2;
 
         $this->assertSame($requestsAfterFirstSync + $refListings, count(Http::recorded()));
@@ -294,7 +454,7 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         $this->assertSame(205, $package->versions()->count());
-        $this->assertNotNull($package->versions()->where('version', 'v1.0.205')->first());
+        $this->assertNotNull($package->versions()->where('version', '1.0.205')->first());
     }
 
     public function test_sync_stops_at_a_full_page_that_advertises_no_successor(): void

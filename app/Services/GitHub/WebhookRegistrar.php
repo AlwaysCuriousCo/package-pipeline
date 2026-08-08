@@ -73,7 +73,7 @@ class WebhookRegistrar
         $secret = Str::random(40);
 
         try {
-            $id = GitHubClient::for($package)->createWebhook($package->webhookUrl(), $secret);
+            $id = $package->client()->createWebhook($package->webhookUrl(), $secret);
         } catch (Throwable $exception) {
             $package->forceFill(['webhook_error' => $this->reason($exception)])->save();
 
@@ -92,7 +92,7 @@ class WebhookRegistrar
             // and the secret for this one is lost with the save. Take it back
             // down before reporting the failure.
             try {
-                GitHubClient::for($package)->deleteWebhook($id);
+                $package->client()->deleteWebhook($id);
             } catch (Throwable $cleanup) {
                 Log::warning('Could not remove a GitHub webhook that failed to persist locally.', [
                     'package' => $package->name,
@@ -129,7 +129,7 @@ class WebhookRegistrar
         }
 
         try {
-            GitHubClient::for($package)->deleteWebhook($package->webhook_id);
+            $package->client()->deleteWebhook($package->webhook_id);
         } catch (Throwable $exception) {
             Log::warning('Could not remove the GitHub webhook for a deleted package.', [
                 'package' => $package->name,

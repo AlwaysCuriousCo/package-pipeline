@@ -8,6 +8,7 @@ use App\Services\PackageSynchronizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class SourceTest extends TestCase
@@ -164,8 +165,9 @@ class SourceTest extends TestCase
 
     public function test_a_package_without_a_source_uses_its_own_token_then_the_env_fallback(): void
     {
+        // No source exists for this owner, so the package stands alone.
         $package = Package::factory()->create([
-            'repository' => 'https://gitlab.com/acme/widgets',
+            'repository' => 'https://github.com/acme/widgets',
             'token' => 'ghp_package_level',
         ]);
 
@@ -176,6 +178,12 @@ class SourceTest extends TestCase
         $package->forceFill(['token' => null])->save();
 
         $this->assertSame('ghp_env', $package->fresh()->accessToken());
+
+        // The environment fallback is a GitHub credential; a package on any
+        // other host never sees it.
+        $gitlab = Package::factory()->create(['repository' => 'https://gitlab.com/acme/widgets']);
+
+        $this->assertNull($gitlab->accessToken());
     }
 
     public function test_a_new_package_is_linked_to_the_source_owning_its_repository(): void
@@ -246,6 +254,7 @@ class SourceTest extends TestCase
 
     public function test_syncing_uses_the_source_credential_and_base_url(): void
     {
+        Storage::fake(config('filesystems.dists'));
         Http::fake([
             'api.github.com/app/installations/*/access_tokens' => Http::response([
                 'token' => 'ghs_installation',
@@ -261,6 +270,9 @@ class SourceTest extends TestCase
             ]),
             'github.acme.test/api/v3/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
+            ]),
+            'github.acme.test/api/v3/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+                'Content-Type' => 'application/zip',
             ]),
         ]);
 
@@ -278,7 +290,7 @@ class SourceTest extends TestCase
 
         app(PackageSynchronizer::class)->sync($package);
 
-        $this->assertSame('v1.0.0', $package->fresh()->latest_version);
+        $this->assertSame('1.0.0', $package->fresh()->latest_version);
 
         // Every repository call went to the source's own host, carrying the
         // installation token rather than any package-level credential.

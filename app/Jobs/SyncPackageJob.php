@@ -4,9 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Package;
 use App\Notifications\PackageSyncFailed;
-use App\Notifications\PackageVersionsPublished;
 use App\Services\AdminNotifier;
-use App\Services\PackageSynchronizer;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as Cache;
@@ -17,27 +15,34 @@ use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Throwable;
 
 /**
- * Rebuild one package's versions from its repository, off the request.
+ * Start one package's sync, off the request.
  *
- * A first sync reads two GitHub endpoints per version, which is far too long
- * to hold an HTTP request open, so the panel and the console command both hand
- * the work here rather than running it inline.
+ * The sync itself runs as a job batch (PackageSyncBatch): discovery fans out
+ * one import job per ref, so this job's own work is only to start it — but it
+ * stays the single entry point because it is what carries the debounce and
+ * uniqueness rules every caller (panel, console, webhooks) relies on.
  */
 class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Queueable;
 
     /**
-     * A sync reads GitHub and then writes in a single transaction, so a
-     * partial run leaves nothing behind and re-running is safe.
+     * Dispatching the batch is a couple of writes; re-running it is safe
+     * because the batch's own jobs are idempotent per ref.
      */
     public int $tries = 3;
 
     /**
-     * The default 60 seconds only covers a repository with a handful of
-     * versions. Give a first import of a long-lived one room to finish.
+     * Starting the batch does not read GitHub at all — the batch's jobs carry
+     * their own timeouts for that.
      */
-    public int $timeout = 600;
+    public int $timeout = 60;
+
+    /**
+     * How long a rebuild may sit unfinished before it is presumed lost and a
+     * new sync may start over it. @see handle()
+     */
+    public const STALE_BATCH_HOURS = 2;
 
     /**
      * Deleting a package while its sync is still queued is not a failure.
@@ -55,7 +60,7 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      */
     public const DEBOUNCE_SECONDS = 15;
 
-    public function __construct(public Package $package) {}
+    public function __construct(public Package $package, public bool $force = false) {}
 
     /**
      * Wait between attempts rather than retrying straight into whatever
@@ -121,9 +126,9 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      * job then goes straight to the dispatcher, which performs no second
      * uniqueness check.
      */
-    public static function dispatchUnlessPending(Package $package): bool
+    public static function dispatchUnlessPending(Package $package, bool $force = false): bool
     {
-        $job = new self($package);
+        $job = new self($package, $force);
         $lock = new UniqueLock(app(Cache::class));
 
         if (! $lock->acquire($job)) {
@@ -144,24 +149,37 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         return true;
     }
 
-    public function handle(PackageSynchronizer $synchronizer, AdminNotifier $notifier): void
+    public function handle(): void
     {
-        $outcome = $synchronizer->sync($this->package);
+        // Two rebuilds of one package must never run concurrently, or the
+        // loser's prune deletes rows the winner just wrote. WithoutOverlapping
+        // cannot see the batch — it only guards this job — so a sync arriving
+        // while a batch is still importing steps aside and comes back once it
+        // is done, exactly as a push made mid-sync always has. A batch that
+        // has sat unfinished for hours is a worker lost mid-run, not a sync in
+        // progress, and must not wedge the package forever.
+        $batch = $this->package->syncBatch();
 
-        // Dev versions move on every commit and removals are usually a branch
-        // being tidied up, so a release — or a package arriving for the first
-        // time — is all that is worth anyone's attention.
-        if ($outcome->releases === [] && ! $outcome->initialImport) {
-            return;
+        if ($batch !== null && $this->package->syncRunning()) {
+            if ($batch->createdAt->gt(now()->subHours(self::STALE_BATCH_HOURS))) {
+                self::dispatch($this->package, $this->force)->delay(now()->addSeconds(30));
+
+                return;
+            }
+
+            // Presumed lost, but its import jobs may still be sitting on the
+            // queue; cancelled, they no-op instead of racing the new batch's
+            // prune and imports.
+            $batch->cancel();
         }
 
-        $notifier->send(new PackageVersionsPublished($this->package, $outcome));
+        PackageSyncBatch::dispatchFor($this->package, $this->force);
     }
 
     /**
-     * The synchronizer records its own failure reason before rethrowing, but a
-     * job can die without ever reaching it — a timeout, or a worker killed
-     * mid-run. Leave a reason in the column the panel reads either way.
+     * The batch's own jobs record their failure reasons, but this job can die
+     * before the batch exists at all — a queue connection refusing, a worker
+     * killed mid-dispatch. Leave a reason in the column the panel reads.
      */
     public function failed(?Throwable $exception): void
     {

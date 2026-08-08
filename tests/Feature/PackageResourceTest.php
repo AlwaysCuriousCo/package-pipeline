@@ -5,9 +5,12 @@ namespace Tests\Feature;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
 use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Packages\Pages\ListPackages;
+use App\Jobs\SyncPackageJob;
 use App\Models\Package;
+use App\Models\Source;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -32,6 +35,8 @@ class PackageResourceTest extends TestCase
 
     public function test_a_package_can_be_created(): void
     {
+        Queue::fake([SyncPackageJob::class]);
+
         Livewire::test(CreatePackage::class)
             ->fillForm([
                 'name' => 'acme/widgets',
@@ -46,10 +51,16 @@ class PackageResourceTest extends TestCase
             'repository' => 'https://github.com/acme/widgets',
             'description' => 'Widgets for Acme.',
         ]);
+
+        // A new package imports its versions right away rather than waiting
+        // for the next push.
+        Queue::assertPushed(SyncPackageJob::class, fn (SyncPackageJob $job): bool => $job->package->name === 'acme/widgets');
     }
 
     public function test_a_package_can_be_created_without_a_release(): void
     {
+        Queue::fake([SyncPackageJob::class]);
+
         Livewire::test(CreatePackage::class)
             ->fillForm([
                 'name' => 'acme/preview',
@@ -62,6 +73,22 @@ class PackageResourceTest extends TestCase
             'name' => 'acme/preview',
             'latest_version' => null,
         ]);
+    }
+
+    public function test_arriving_from_a_source_preselects_it(): void
+    {
+        $source = Source::factory()->create();
+
+        Livewire::withQueryParams(['source' => $source->getKey()])
+            ->test(CreatePackage::class)
+            ->assertSchemaStateSet(['source_id' => $source->getKey()]);
+    }
+
+    public function test_an_unknown_source_in_the_url_is_ignored(): void
+    {
+        Livewire::withQueryParams(['source' => 999])
+            ->test(CreatePackage::class)
+            ->assertSchemaStateSet(['source_id' => null]);
     }
 
     public function test_the_repository_must_be_a_unique_url(): void

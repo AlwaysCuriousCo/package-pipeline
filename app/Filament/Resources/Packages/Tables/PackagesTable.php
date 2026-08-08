@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
+use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Models\Package;
 use Filament\Actions\BulkActionGroup;
@@ -30,10 +31,17 @@ class PackagesTable
                 TextColumn::make('repository')
                     ->label('Repository')
                     ->searchable()
-                    ->url(fn (Package $record): string => $record->repository)
+                    ->url(fn (Package $record): ?string => $record->repository)
                     ->openUrlInNewTab()
                     ->color('primary')
-                    ->limit(50),
+                    ->limit(50)
+                    ->placeholder('Uploaded artifacts'),
+                TextColumn::make('composerRepository.name')
+                    ->label('Served in')
+                    ->badge()
+                    ->color('gray')
+                    ->sortable()
+                    ->toggleable(),
                 TextColumn::make('source.name')
                     ->label('Source')
                     ->badge()
@@ -57,6 +65,11 @@ class PackagesTable
                     ->label('Versions')
                     ->counts('versions')
                     ->sortable(),
+                TextColumn::make('total_downloads')
+                    ->label('Downloads')
+                    ->numeric()
+                    ->sortable()
+                    ->toggleable(),
                 TextColumn::make('last_synced_at')
                     ->label('Last synced')
                     ->since()
@@ -79,6 +92,11 @@ class PackagesTable
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                SelectFilter::make('composerRepository')
+                    ->label('Composer repository')
+                    ->relationship('composerRepository', 'name')
+                    ->multiple()
+                    ->preload(),
                 SelectFilter::make('source')
                     ->relationship('source', 'name')
                     ->multiple()
@@ -92,6 +110,7 @@ class PackagesTable
             ])
             ->recordActions([
                 SyncPackageAction::make(),
+                RebuildPackageAction::make(),
                 ViewAction::make(),
                 EditAction::make(),
             ])

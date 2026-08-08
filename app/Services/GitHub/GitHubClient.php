@@ -3,13 +3,14 @@
 namespace App\Services\GitHub;
 
 use App\Models\Package;
+use App\Sources\RepositoryClient;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
-class GitHubClient
+class GitHubClient implements RepositoryClient
 {
     private const PER_PAGE = 100;
 
@@ -114,10 +115,18 @@ class GitHubClient
      */
     public function downloadZipball(string $ref, string $destination): void
     {
-        $this->request()
+        $response = $this->request()
             ->sink($destination)
             ->get("/repos/{$this->repositoryPath}/zipball/{$ref}")
             ->throw();
+
+        // A 200 that is not a zip — a proxy's HTML error page, say — must not
+        // be stored and served to Composer as an archive.
+        $contentType = strtolower($response->header('Content-Type'));
+
+        throw_unless(str_contains($contentType, 'zip'), new RuntimeException(
+            "GitHub returned '{$contentType}' instead of a zip archive for {$this->repositoryPath}@{$ref}."
+        ));
     }
 
     /**

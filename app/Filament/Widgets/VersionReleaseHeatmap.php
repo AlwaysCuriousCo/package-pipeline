@@ -88,6 +88,15 @@ class VersionReleaseHeatmap extends Widget
         return PackageVersion::query()
             ->where('is_dev', false)
             ->whereBetween('released_at', [$start, $end])
+            // A user with row-level scoping sees their packages' history, not
+            // the whole registry's.
+            ->when(
+                auth()->user(),
+                fn ($query, $user) => $query->whereHas(
+                    'package',
+                    fn ($packages) => $packages->visibleToUser($user),
+                ),
+            )
             ->with('package:id,name')
             ->get(['id', 'package_id', 'version', 'released_at']);
     }

@@ -20,11 +20,18 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // GitHub posts deliveries with no session and no token; they carry a
         // signature instead, which the webhook controller checks before doing
-        // anything with the payload.
-        $middleware->validateCsrfTokens(except: ['incoming/*']);
+        // anything with the payload. Artifact uploads are likewise stateless:
+        // CI authenticates with an access token, not a session.
+        $middleware->validateCsrfTokens(except: ['incoming/*', 'upload/*', 'r/*/upload/*']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // The upload endpoint is driven by curl in CI scripts, which rarely
+        // send an Accept header; a validation failure must still answer 422
+        // JSON, never a redirect to a login page.
         $exceptions->shouldRenderJsonWhen(
-            fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
+            fn (Request $request) => $request->is('api/*')
+                || $request->is('upload/*')
+                || $request->is('r/*/upload/*')
+                || $request->expectsJson(),
         );
     })->create();

@@ -8,9 +8,9 @@
 
 # Package Pipeline
 
-Package Pipeline is a self-hosted private Composer registry with a [Filament](https://filamentphp.com) admin panel. Point it at your GitHub repositories and it syncs their tags and branches into versioned package metadata, then serves everything over the standard [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer) — so any project can `composer require` your private packages without them ever touching Packagist.
+Sharing private PHP packages across projects is a chore: every consuming app needs its own `repositories` entries in `composer.json`, its own GitHub credentials, and Composer crawls the GitHub API repo-by-repo just to resolve versions. Package Pipeline replaces all of that with one self-hosted registry. Point it at your GitHub repositories once, and every project can `composer require` your private packages as if they were on Packagist — one repository URL to configure, no per-repo wiring, and your code never leaves your infrastructure.
 
-**How it works, in one pass:** you register a **package** (a GitHub repository) in the admin panel, a sync job reads its tags and branches and stores each one as a version, and Composer clients fetch `/packages.json`, per-package metadata, and zipball dists straight from the app. Zipballs are proxied from GitHub once and cached on a local or S3 disk. Authentication against GitHub goes through a **source** (a connected GitHub App installation with short-lived, org-owned tokens), a per-package token, or a global fallback token — whichever is available, in that order.
+**How it works, in one pass:** you register a **package** (a GitHub repository) in the [Filament](https://filamentphp.com) admin panel, a sync job reads its tags and branches and stores each one as a version, and Composer clients fetch `/packages.json`, per-package metadata, and zipball dists straight from the app over the standard [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer). Each version's zipball is downloaded from GitHub at sync time and stored on a local or S3 disk with its sha1 checksum, so dist downloads are served entirely from the app's own storage. Authentication against GitHub goes through a **source** (a connected GitHub App installation with short-lived, org-owned tokens), a per-package token, or a global fallback token — whichever is available, in that order.
 
 ## Requirements
 
@@ -103,7 +103,7 @@ composer config repositories.private composer https://packages.example.com
 composer require acme/core
 ```
 
-Composer will resolve versions from the registry and download dists through it; each zipball is fetched from GitHub once and cached.
+Composer will resolve versions from the registry and download dists through it; every zipball is served from the archive stored at sync time (and verified against its published `shasum`), so GitHub is never in the download path.
 
 > [!WARNING]
 > The Composer endpoints (`/packages.json`, `/p2/...`, `/dist/...`) are currently **unauthenticated** — anyone who can reach the app over the network can list and install your packages. Until repository-level auth lands, run the app somewhere access-controlled: a VPN, a private network, or behind a proxy that enforces auth.
@@ -117,7 +117,7 @@ Everything lives in `.env`; the interesting knobs beyond a stock Laravel app:
 | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | The GitHub App that powers sources. The key takes a path to the `.pem` or the key itself with `\n`-escaped newlines. |
 | `GITHUB_APP_SLUG` / `GITHUB_APP_API_URL` | Normally read from GitHub automatically; only set to skip that lookup or on GitHub Enterprise. |
 | `GITHUB_TOKEN` | Fallback token for packages with neither a connected source nor a token of their own. |
-| `DIST_DISK` | Disk for cached Composer zipballs. Defaults to `FILESYSTEM_DISK`; set to `s3` on any deployment whose containers don't share a local disk. |
+| `DIST_DISK` | Disk where version archives (Composer zipballs) are stored at sync time. Defaults to `FILESYSTEM_DISK`; set to `s3` on any deployment whose containers don't share a local disk. |
 
 ## Development
 
@@ -143,7 +143,8 @@ The short version for production:
 
 - **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
 - **Create the first admin account** with `php artisan admin:create you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a signed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
-- **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same zipball cache. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically.
+- **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same stored archives. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically.
+- **Prune orphaned archives occasionally** with `php artisan archives:clean` (`--dry-run` to preview) — re-synced versions write fresh files and leave their old ones behind by design. It's a fine candidate for the scheduler alongside `packages:sync`.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
 - A health check endpoint is available at `/up`.
 
@@ -152,7 +153,7 @@ The short version for production:
 [Laravel Cloud](https://cloud.laravel.com) runs this app well with almost no configuration. Create the application from your fork of this repository, then:
 
 1. **Attach a database.** App containers are ephemeral, so the SQLite default won't survive a deploy — attach a Cloud database (MySQL or Postgres) from the environment's **Resources** and let Cloud inject the `DB_*` variables.
-2. **Attach an object storage bucket** and set `DIST_DISK=s3`. Cloud injects the `AWS_*` variables when the bucket is attached; without it, cached zipballs vanish on every deploy and each instance keeps its own cache.
+2. **Attach an object storage bucket** and set `DIST_DISK=s3`. Cloud injects the `AWS_*` variables when the bucket is attached; without it, stored version archives vanish on every deploy and Composer downloads 404 until the next sync rebuilds them.
 3. **Add the deploy commands** so migrations and Shield's permission rows are in place before anyone logs in:
 
    ```bash

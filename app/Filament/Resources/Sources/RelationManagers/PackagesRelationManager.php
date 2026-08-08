@@ -4,7 +4,9 @@ namespace App\Filament\Resources\Sources\RelationManagers;
 
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
+use Filament\Actions\Action;
 use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
@@ -22,6 +24,16 @@ class PackagesRelationManager extends RelationManager
             ->recordTitleAttribute('name')
             ->defaultSort('name')
             ->recordUrl(fn (Package $record): string => PackageResource::getUrl('view', ['record' => $record]))
+            ->headerActions([
+                Action::make('createPackage')
+                    ->label('New package')
+                    ->icon(Heroicon::OutlinedPlus)
+                    // Creation is a wizard of its own, so this links out to it
+                    // rather than opening a modal — carrying the source along
+                    // so the new package authenticates through it from the start.
+                    ->url(fn (): string => PackageResource::getUrl('create', ['source' => $this->getOwnerRecord()->getKey()]))
+                    ->visible(fn (): bool => PackageResource::canCreate()),
+            ])
             ->columns([
                 TextColumn::make('name')
                     ->searchable()

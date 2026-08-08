@@ -21,9 +21,10 @@ class PackageInfolist
                 TextEntry::make('name'),
                 TextEntry::make('repository')
                     ->label('Repository URL')
-                    ->url(fn (Package $record): string => $record->repository)
+                    ->url(fn (Package $record): ?string => $record->repository)
                     ->openUrlInNewTab()
-                    ->color('primary'),
+                    ->color('primary')
+                    ->placeholder('None — published by artifact upload'),
                 TextEntry::make('latest_version')
                     ->label('Latest version')
                     ->badge()
@@ -31,6 +32,13 @@ class PackageInfolist
                 TextEntry::make('type')
                     ->badge()
                     ->placeholder('-'),
+                TextEntry::make('composerRepository.name')
+                    ->label('Served in')
+                    ->badge()
+                    ->color('gray')
+                    ->helperText(fn (Package $record): string => $record->composerRepository->public
+                        ? 'Public repository — readable without a token.'
+                        : 'Private repository — consumers need an access token.'),
                 TextEntry::make('source.name')
                     ->label('Source')
                     ->badge()

@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use BezhanSalleh\FilamentShield\Support\Utils;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Artisan;
 use Spatie\Permission\PermissionRegistrar;
@@ -35,6 +36,15 @@ class ShieldPermissionSeeder extends Seeder
             '--all' => true,
             '--option' => 'permissions',
             '--panel' => 'admin',
+        ]);
+
+        // Packistry's `unscoped`, spelled in Shield's permission grammar: the
+        // row-level visibility bypass Package::visibleToUser() checks. Shield
+        // only derives entity CRUD permissions, so it is declared here; any
+        // role can be granted it on the Roles screen's custom permissions tab.
+        Utils::getPermissionModel()::firstOrCreate([
+            'name' => 'Unscoped:Package',
+            'guard_name' => 'web',
         ]);
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();

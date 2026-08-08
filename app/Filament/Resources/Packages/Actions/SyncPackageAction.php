@@ -23,6 +23,9 @@ class SyncPackageAction
         return Action::make('sync')
             ->label('Sync')
             ->icon(Heroicon::OutlinedArrowPath)
+            // A package published by artifact upload has no repository to
+            // pull from; offering a sync would only manufacture a failure.
+            ->visible(fn (Package $record): bool => filled($record->repository))
             ->action(function (Package $record): void {
                 // The job is unique per package until it starts, so a sync a
                 // webhook already queued swallows this one — say so instead
