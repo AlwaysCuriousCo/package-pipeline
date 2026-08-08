@@ -165,6 +165,21 @@ class CreateAdminCommandTest extends TestCase
         $this->assertDatabaseCount('password_reset_tokens', 0);
     }
 
+    public function test_the_reset_link_goes_stale_after_five_minutes(): void
+    {
+        $output = $this->runNonInteractively(['email' => 'admin@example.com']);
+
+        $link = $this->linkFrom($output);
+
+        $this->assertStringContainsString('expires in 5 minutes', $output);
+
+        // The URL ends up in deploy logs, so its signature must expire well
+        // before the underlying token would.
+        $this->travel(6)->minutes();
+
+        $this->get($link)->assertForbidden();
+    }
+
     public function test_the_link_flag_skips_the_password_prompt(): void
     {
         $output = $this->runNonInteractively(['email' => 'admin@example.com', '--link' => true]);

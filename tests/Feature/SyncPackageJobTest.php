@@ -7,6 +7,8 @@ use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
+use Illuminate\Bus\Dispatcher as BusDispatcher;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
@@ -184,6 +186,39 @@ class SyncPackageJobTest extends TestCase
 
         $this->assertTrue(SyncPackageJob::dispatchUnlessPending($package));
         $this->assertFalse(SyncPackageJob::dispatchUnlessPending($package));
+
+        Queue::assertPushed(SyncPackageJob::class, 1);
+    }
+
+    /**
+     * The lock is taken before the dispatch, so a dispatch that throws must
+     * give it back — leaked, it would answer every sync for the next hour
+     * with "already queued" while nothing is on the queue at all.
+     */
+    public function test_a_failed_dispatch_releases_the_uniqueness_lock(): void
+    {
+        Queue::fake();
+
+        $package = $this->makePackage();
+
+        $this->mock(Dispatcher::class)
+            ->shouldReceive('dispatch')
+            ->once()
+            ->andThrow(new RuntimeException('The queue connection refused.'));
+
+        try {
+            SyncPackageJob::dispatchUnlessPending($package);
+            $this->fail('The dispatch failure should have surfaced.');
+        } catch (RuntimeException) {
+            // The caller hears about it rather than being told "queued".
+        }
+
+        // With the real dispatcher back, the very next attempt goes through —
+        // which it only can if the failed one released its lock. Mocking the
+        // contract dropped its alias, so the concrete binding restores it.
+        $this->app->instance(Dispatcher::class, $this->app->make(BusDispatcher::class));
+
+        $this->assertTrue(SyncPackageJob::dispatchUnlessPending($package));
 
         Queue::assertPushed(SyncPackageJob::class, 1);
     }
