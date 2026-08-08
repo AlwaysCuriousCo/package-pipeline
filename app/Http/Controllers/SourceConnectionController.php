@@ -152,7 +152,27 @@ class SourceConnectionController extends Controller
             return $this->back($source, 'warning', "Connected {$source->account}, but no repositories", $reason);
         }
 
-        return $this->back($source, 'success', "Connected {$source->account}", "{$count} repositories are reachable from this source.");
+        return $this->back(
+            $source,
+            'success',
+            "Connected {$source->account}",
+            "{$count} repositories are reachable from this source.{$this->webhookAdvice()}",
+        );
+    }
+
+    /**
+     * A nudge towards the app's webhook, said here because this is the moment
+     * an admin is configuring the source and has the app's settings page open.
+     *
+     * Without it packages still sync themselves — each one falls back to a
+     * webhook on its own repository — but that needs a permission the app may
+     * not have, and one webhook on the app covers every repository instead.
+     */
+    private function webhookAdvice(): string
+    {
+        return app(GitHubApp::class)->hasWebhook()
+            ? ''
+            : ' Auto-sync is not set up yet: see "Auto-sync" below for the payload URL and a secret to put on the app\'s webhook.';
     }
 
     /**

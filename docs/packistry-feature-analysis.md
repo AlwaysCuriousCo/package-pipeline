@@ -294,14 +294,16 @@ onboarded (`Client::createWebhook`).
 **Implemented**, with three deliberate departures from Packistry's design — see
 [webhooks.md](webhooks.md):
 
-- **One app-level webhook, not one per package.** Sources authenticate as a GitHub App, and an App
-  has a single webhook covering every repository in every installation (`POST /incoming/github`,
-  signed with `GITHUB_APP_WEBHOOK_SECRET`). Nothing is created per package, repositories added to an
-  installation later are covered for free, and no new repository permission is requested —
-  per-repository hooks need **Repository webhooks: write**, which every installation owner would
-  have to re-approve. Packistry has no App path, so per-repo hooks are its only option.
-  `POST /incoming/github/{package}` remains as exactly that fallback, for token-based sources, and
-  `WebhookRegistrar` creates one on package create.
+- **An app-level webhook in front of Packistry's per-package one.** Packistry only has token auth,
+  so a hook on each repository is its only option. Sources here can authenticate as a GitHub App,
+  which has a single webhook covering every repository in every installation
+  (`POST /incoming/github`, signed with `GITHUB_APP_WEBHOOK_SECRET`) — nothing per package, new
+  repositories covered for free, and no permission beyond the read-only ones syncing already needs.
+  Packistry's approach remains as the fallback and the general case: `WebhookRegistrar` creates a
+  hook on the repository at package-create time (`POST /incoming/github/{package}`, its own
+  encrypted secret) whenever the app webhook is not covering it — including on a registry that has
+  simply not set the app webhook up. Configuring it is offered on the source page, where the payload
+  URL and a generated secret are shown, rather than left to this document.
 - **A full sync per delivery, not a single-ref import.** `PackageSynchronizer::unchanged()` already
   skips refs whose sha has not moved, so a delivery costs two API calls when nothing changed;
   a separate surgical import path would be a second implementation of version building to keep

@@ -123,6 +123,16 @@ class GitHubWebhookController extends Controller
             return $this->ignore("No package is published from {$repository}.");
         }
 
+        // A package with auto-sync switched off had its own hook removed when
+        // it was switched off, but the app's webhook cannot be told to skip
+        // one repository — so it is skipped here instead, which is what makes
+        // the toggle mean the same thing whichever path a delivery arrives by.
+        $packages = $packages->filter(fn (Package $target): bool => $target->webhook_enabled);
+
+        if ($packages->isEmpty()) {
+            return $this->ignore("Auto-sync is switched off for every package published from {$repository}.");
+        }
+
         foreach ($packages as $target) {
             $target->forceFill(['webhook_received_at' => now()])->save();
 

@@ -11,11 +11,15 @@ use Throwable;
 /**
  * Gives a package a way to hear about its own pushes.
  *
- * Most packages need nothing: their source is an installed GitHub App, and the
- * app's single webhook already delivers for every repository the installation
- * can see. This is the fallback for the rest — a token-based source, or a
- * package carrying its own token — where the only place a hook can live is on
- * the repository itself.
+ * Creating a hook on the repository is the general answer, and the one every
+ * package gets: it needs nothing configured beforehand and works the same for
+ * a token-based source as for an installed app.
+ *
+ * The exception is worth taking when it is available. A GitHub App has one
+ * webhook of its own that already delivers for every repository in every
+ * installation, so a package under an installed app with that webhook set up
+ * is covered before it is created — and a hook on the repository would only
+ * mean the same push arriving twice.
  */
 class WebhookRegistrar
 {
@@ -30,12 +34,39 @@ class WebhookRegistrar
      *
      * @return WebhookCoverage the coverage the package ended up with
      */
+    /**
+     * Make GitHub match what the package asks for.
+     *
+     * The toggle is the intent and this is what carries it out, in both
+     * directions: switching auto-sync on creates whatever is missing,
+     * switching it off takes the repository hook back down rather than
+     * leaving GitHub posting to an endpoint that now ignores it.
+     */
+    public function reconcile(Package $package): WebhookCoverage
+    {
+        if (! $package->webhook_enabled) {
+            $this->deregister($package);
+
+            return WebhookCoverage::Disabled;
+        }
+
+        return $this->register($package);
+    }
+
     public function register(Package $package): WebhookCoverage
     {
         $coverage = $package->webhookCoverage();
 
-        // Already covered, one way or the other.
-        if ($coverage->isActive() || $coverage === WebhookCoverage::Unconfigured) {
+        // Nothing to arrange for a package that has asked not to be synced.
+        if ($coverage === WebhookCoverage::Disabled) {
+            return $coverage;
+        }
+
+        // Already covered, one way or the other. Everything else — including
+        // an app-installed package on a registry whose app webhook is not set
+        // up — falls through and gets a hook of its own, because a package
+        // that hears about its pushes beats one waiting on configuration.
+        if ($coverage->isActive()) {
             return $coverage;
         }
 
@@ -109,9 +140,15 @@ class WebhookRegistrar
             return;
         }
 
-        // The record may be gone already; only touch it while it is still there.
+        // The record may be gone already; only touch it while it is still
+        // there. An old failure goes with the hook, so switching auto-sync
+        // back on starts from a clean slate rather than from last time.
         if ($package->exists) {
-            $package->forceFill(['webhook_id' => null, 'webhook_secret' => null])->save();
+            $package->forceFill([
+                'webhook_id' => null,
+                'webhook_secret' => null,
+                'webhook_error' => null,
+            ])->save();
         }
     }
 
@@ -121,13 +158,32 @@ class WebhookRegistrar
     public function unmetRequirement(Package $package): ?string
     {
         return match ($package->webhookCoverage()) {
-            WebhookCoverage::Application, WebhookCoverage::Repository => null,
-            WebhookCoverage::Unconfigured => 'This package is covered by the GitHub App\'s webhook, but no GITHUB_APP_WEBHOOK_SECRET is set here, so deliveries cannot be verified. '
-                .'Set the secret on the app\'s webhook and in this app\'s environment — see docs/webhooks.md.',
-            WebhookCoverage::Failed => "The repository webhook could not be created: {$package->webhook_error}",
-            WebhookCoverage::None => 'No webhook covers this repository, so pushes will not sync it. '
-                .'Connect its account as a GitHub App source, or use "Create webhook" to add one to the repository — which needs a credential with admin rights on it.',
+            // Off on purpose is not something left undone.
+            WebhookCoverage::Application, WebhookCoverage::Repository, WebhookCoverage::Disabled => null,
+            WebhookCoverage::Failed => "The repository webhook could not be created: {$package->webhook_error} {$this->remedy($package)}",
+            WebhookCoverage::None => "No webhook covers this repository, so pushes will not sync it. {$this->remedy($package)}",
         };
+    }
+
+    /**
+     * How to get this particular package syncing itself.
+     *
+     * Creating a hook needs write access to the repository's webhooks, which
+     * neither a read-only token nor an app installed for Contents alone has.
+     * Where an app is involved there is a second way out that needs no
+     * repository permission at all, and it is usually the better one — it
+     * covers every repository the installation can see, not just this one.
+     */
+    private function remedy(Package $package): string
+    {
+        if ($package->source?->usesInstallation()) {
+            return 'Either turn on the GitHub App\'s own webhook and set GITHUB_APP_WEBHOOK_SECRET, which covers every repository in the installation at once, '
+                .'or give the app "Webhooks: Read and write" so it can create one on the repository. See docs/webhooks.md.';
+        }
+
+        return 'The credential this package authenticates with needs write access to the repository\'s webhooks '
+            .'(a fine-grained token with Webhooks: Read and write, or a classic token with admin:repo_hook), '
+            .'then use "Create webhook" to try again.';
     }
 
     /**

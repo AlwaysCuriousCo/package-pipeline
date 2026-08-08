@@ -20,11 +20,11 @@ enum WebhookCoverage: string implements HasColor, HasLabel
     /** Covered by a hook created on the repository itself. */
     case Repository = 'repository';
 
-    /** The app would cover it, but no webhook secret is configured here. */
-    case Unconfigured = 'unconfigured';
-
     /** Creating the repository hook was attempted and failed. */
     case Failed = 'failed';
+
+    /** Switched off for this package: pushes are heard and ignored. */
+    case Disabled = 'disabled';
 
     /** No delivery path: pushes will not sync until one is set up. */
     case None = 'none';
@@ -34,8 +34,8 @@ enum WebhookCoverage: string implements HasColor, HasLabel
         return match ($this) {
             self::Application => 'GitHub App webhook',
             self::Repository => 'Repository webhook',
-            self::Unconfigured => 'Not configured',
             self::Failed => 'Not created',
+            self::Disabled => 'Off',
             self::None => 'None',
         };
     }
@@ -45,7 +45,8 @@ enum WebhookCoverage: string implements HasColor, HasLabel
         return match ($this) {
             self::Application, self::Repository => 'success',
             self::Failed => 'danger',
-            self::Unconfigured, self::None => 'warning',
+            self::Disabled => 'gray',
+            self::None => 'warning',
         };
     }
 

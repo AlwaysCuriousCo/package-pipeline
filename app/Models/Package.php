@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
+use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\WebhookRegistrar;
 use Database\Factories\PackageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -15,11 +16,22 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error'])]
+#[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
     use HasFactory;
+
+    /**
+     * The column default alone would leave a freshly created package holding
+     * null in memory until it is read back, and the webhook is set up in that
+     * window — so the default is stated here as well.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'webhook_enabled' => true,
+    ];
 
     /**
      * @return array<string, string>
@@ -29,6 +41,7 @@ class Package extends Model
         return [
             'token' => 'encrypted',
             'webhook_secret' => 'encrypted',
+            'webhook_enabled' => 'boolean',
             'last_synced_at' => 'datetime',
             'webhook_received_at' => 'datetime',
         ];
@@ -175,14 +188,26 @@ class Package extends Model
      */
     public function webhookCoverage(): WebhookCoverage
     {
-        if ($this->source?->usesInstallation()) {
-            return filled(config('services.github.app.webhook_secret'))
-                ? WebhookCoverage::Application
-                : WebhookCoverage::Unconfigured;
+        // Switched off deliberately, which is not the same as uncovered and
+        // must not read like something left undone.
+        if (! $this->webhook_enabled) {
+            return WebhookCoverage::Disabled;
         }
 
+        // A hook on the repository is the concrete thing. If one exists it is
+        // what delivers, whatever else may also be configured — so it is
+        // checked first, and a registry that later turns the app's webhook on
+        // does not start describing this package as covered by something else.
         if ($this->webhook_id !== null) {
             return WebhookCoverage::Repository;
+        }
+
+        // Confirmed with GitHub rather than assumed from a secret sitting in
+        // this app's environment: an app whose webhook was never switched on
+        // delivers nothing, and a package told it is covered by one would
+        // never get the repository hook that would have worked.
+        if ($this->source?->usesInstallation() && app(GitHubApp::class)->hasWebhook()) {
+            return WebhookCoverage::Application;
         }
 
         return filled($this->webhook_error) ? WebhookCoverage::Failed : WebhookCoverage::None;

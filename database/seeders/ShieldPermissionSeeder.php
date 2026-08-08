@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Artisan;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * Creates the permission rows that Shield's policies check against.
@@ -22,10 +23,20 @@ class ShieldPermissionSeeder extends Seeder
 {
     public function run(): void
     {
+        // Shield creates the rows in a way that skips Spatie's cache-clearing
+        // hook, then resolves them *through* the cache to grant them to the
+        // super admin role. A cache primed while the table was empty (any web
+        // request or command before first seeding does this) then aborts the
+        // generate with PermissionDoesNotExist — so start from a cold cache,
+        // and leave a cold one behind for whatever runs next.
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         Artisan::call('shield:generate', [
             '--all' => true,
             '--option' => 'permissions',
             '--panel' => 'admin',
         ]);
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
     }
 }

@@ -30,7 +30,13 @@ organisation that will own it):
 Subscribe the app to **Push**, **Branch or tag creation** and **Branch or tag
 deletion** under **Permissions & events**. That one webhook covers every
 repository in every installation, so packages sync themselves the moment
-something is pushed — see [webhooks.md](webhooks.md) for the whole picture.
+something is pushed.
+
+This is optional, and can be done later — the panel shows the payload URL and
+generates a secret for you under **Auto-sync** on any connected source. Without
+it, each package instead gets a webhook on its own repository when it is
+created, which needs the app to also have **Webhooks: Read and write**. See
+[webhooks.md](webhooks.md) for both paths.
 
 Repository permissions — read-only is enough for syncing and serving dists:
 

@@ -297,6 +297,41 @@ class GitHubWebhookTest extends TestCase
         }
     }
 
+    /**
+     * The app's webhook cannot be told to skip one repository, so a package
+     * that has switched auto-sync off is skipped on the way in — otherwise
+     * the toggle would only mean something for packages carrying their own
+     * hook, which are the ones that did not need it explained.
+     */
+    public function test_a_package_with_auto_sync_switched_off_is_ignored(): void
+    {
+        $this->package()->forceFill(['webhook_enabled' => false])->save();
+
+        $this->deliver('push', $this->push())
+            ->assertAccepted()
+            ->assertJsonPath('status', 'ignored');
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_one_package_opting_out_does_not_hold_up_another_on_the_same_repository(): void
+    {
+        $this->package()->forceFill(['webhook_enabled' => false])->save();
+
+        $syncing = Package::factory()->create([
+            'name' => 'acme/widgets-mirror',
+            'repository' => 'acme/widgets',
+        ]);
+
+        $this->deliver('push', $this->push())->assertAccepted();
+
+        Queue::assertPushed(
+            SyncPackageJob::class,
+            fn (SyncPackageJob $job): bool => $job->package->is($syncing),
+        );
+        Queue::assertPushed(SyncPackageJob::class, 1);
+    }
+
     public function test_the_repository_being_created_publishes_nothing(): void
     {
         $this->package();

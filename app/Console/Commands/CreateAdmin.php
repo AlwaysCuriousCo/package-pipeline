@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
+use Spatie\Permission\PermissionRegistrar;
 
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\text;
@@ -98,6 +99,11 @@ class CreateAdmin extends Command
      */
     private function grantSuperAdmin(User $user): array
     {
+        // syncPermissions() resolves ids through Spatie's permission cache;
+        // if that cache predates the seeding of the permissions (easy to do
+        // in a hosted command runner), the sync throws rather than syncing.
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $role = Utils::createRole();
 
         // Scoped to the role's own guard: syncing a permission belonging to
