@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Models\Repository;
+use App\Support\VersionNormalizer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use ZipArchive;
@@ -32,7 +33,10 @@ class CreateVersionFromZip
         'prefer-stable', 'scripts', 'extra',
     ];
 
-    public function __construct(private readonly ArchiveStore $archives) {}
+    public function __construct(
+        private readonly ArchiveStore $archives,
+        private readonly VersionNormalizer $normalizer = new VersionNormalizer,
+    ) {}
 
     /**
      * Create (or replace) the version the zip describes, inside the given
@@ -79,7 +83,8 @@ class CreateVersionFromZip
             // sha, so the file's own hash stands in — which also makes a
             // replaced upload a new URL, never a silently different file.
             'reference' => sha1_file($zip),
-            'is_dev' => str_starts_with($version, 'dev-') || str_ends_with($version, '-dev'),
+            'order' => $this->normalizer->order($version),
+            'is_dev' => $this->normalizer->isDev($version),
             'released_at' => now(),
             'metadata' => [
                 ...array_intersect_key($composerJson, array_flip(self::METADATA_KEYS)),

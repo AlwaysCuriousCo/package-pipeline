@@ -114,7 +114,8 @@ class PackageSyncBatchTest extends TestCase
         $package->refresh();
 
         $this->assertSame('acme/widgets', $package->name);
-        $this->assertSame('v1.1.0', $package->latest_version);
+        // Tags are stored under their normalized spelling: v1.1.0 → 1.1.0.
+        $this->assertSame('1.1.0', $package->latest_version);
         $this->assertSame('Widgets for Acme.', $package->description);
         $this->assertNotNull($package->last_synced_at);
         $this->assertNull($package->sync_error);
@@ -182,13 +183,13 @@ class PackageSyncBatchTest extends TestCase
 
         // Three of four versions made it; the broken one is simply missing.
         $this->assertSame(
-            ['2.x-dev', 'dev-main', 'v1.0.0'],
+            ['1.0.0', '2.x-dev', 'dev-main'],
             $package->versions()->pluck('version')->sort()->values()->all(),
         );
 
         // The package still counts as synced — and says what it is missing.
         $this->assertNotNull($package->last_synced_at);
-        $this->assertSame('v1.0.0', $package->latest_version);
+        $this->assertSame('1.0.0', $package->latest_version);
         $this->assertSame('1 of 4 version imports failed; the next sync will retry them.', $package->sync_error);
 
         $this->assertSame(1, $package->syncBatch()->failedJobs);

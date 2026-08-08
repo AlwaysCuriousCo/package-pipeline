@@ -68,7 +68,7 @@ class SyncPackageJobTest extends TestCase
         $this->app->call([new SyncPackageJob($package), 'handle']);
 
         $this->assertSame('acme/widgets', $package->refresh()->name);
-        $this->assertSame('v1.0.0', $package->latest_version);
+        $this->assertSame('1.0.0', $package->latest_version);
         $this->assertSame(1, $package->versions()->count());
     }
 
@@ -283,7 +283,7 @@ class SyncPackageJobTest extends TestCase
         $this->assertDatabaseCount('jobs', 0);
         $this->assertDatabaseCount('failed_jobs', 0);
         $this->assertSame('acme/widgets', $package->refresh()->name);
-        $this->assertSame('v1.0.0', $package->latest_version);
+        $this->assertSame('1.0.0', $package->latest_version);
         $this->assertNotNull($package->last_synced_at);
         $this->assertNull($package->sync_error);
 

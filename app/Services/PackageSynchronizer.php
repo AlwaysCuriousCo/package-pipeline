@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Services\GitHub\GitHubClient;
+use App\Support\VersionNormalizer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Throwable;
@@ -20,7 +21,10 @@ use Throwable;
  */
 class PackageSynchronizer
 {
-    public function __construct(private readonly ArchiveStore $archives) {}
+    public function __construct(
+        private readonly ArchiveStore $archives,
+        private readonly VersionNormalizer $normalizer = new VersionNormalizer,
+    ) {}
 
     /**
      * Pull tags and branches from GitHub and rebuild the package's stored
@@ -86,11 +90,13 @@ class PackageSynchronizer
                 continue;
             }
 
-            $versions[$tag] = ['reference' => $sha, 'is_dev' => false];
+            // Stored under its normalized spelling (v1.2.3 → 1.2.3), so the
+            // registry serves one vocabulary however maintainers tag.
+            $versions[$this->normalizer->version($tag)] = ['reference' => $sha, 'is_dev' => false];
         }
 
         foreach ($github->branches() as $branch => $sha) {
-            $versions[$this->branchVersion($branch)] = ['reference' => $sha, 'is_dev' => true];
+            $versions[$this->normalizer->devVersion($branch)] = ['reference' => $sha, 'is_dev' => true];
         }
 
         return $versions;
@@ -179,6 +185,7 @@ class PackageSynchronizer
 
         $data = [
             ...$ref,
+            'order' => $this->normalizer->order($version),
             'released_at' => $github->commitDate($ref['reference']),
             'metadata' => [...$composerJson, 'version' => $version],
         ];
@@ -334,23 +341,6 @@ class PackageSynchronizer
     private function isVersionLikeTag(string $tag): bool
     {
         return (bool) preg_match('/^v?\d+(\.\d+){0,3}([._-]?(alpha|beta|rc|dev|patch|pl|p)\.?\d*)?$/i', $tag);
-    }
-
-    /**
-     * The Composer dev version for a branch, following Packagist's naming:
-     * numeric branches become "2.0.x-dev" / "1.x-dev", others "dev-main".
-     */
-    private function branchVersion(string $branch): string
-    {
-        if (preg_match('/^v?\d+(\.\d+)*$/', $branch)) {
-            return "{$branch}.x-dev";
-        }
-
-        if (preg_match('/^v?\d+(\.(\d+|x))*$/i', $branch)) {
-            return "{$branch}-dev";
-        }
-
-        return "dev-{$branch}";
     }
 
     /**

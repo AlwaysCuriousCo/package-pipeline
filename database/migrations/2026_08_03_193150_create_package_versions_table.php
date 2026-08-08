@@ -15,6 +15,13 @@ return new class extends Migration
             $table->id();
             $table->foreignId('package_id')->constrained()->cascadeOnDelete();
             $table->string('version');
+
+            // A string whose lexical order matches semantic version order
+            // (see App\Support\VersionNormalizer::order), which is what
+            // "latest" and the /p2 response ordering sort by. Null only on
+            // rows predating it; the next sync backfills.
+            $table->string('order')->nullable()->index();
+
             $table->string('reference');
             $table->boolean('is_dev')->default(false);
 

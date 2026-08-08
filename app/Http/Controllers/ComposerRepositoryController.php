@@ -108,7 +108,11 @@ class ComposerRepositoryController extends Controller
 
         $versions = $record->versions()
             ->where('is_dev', $dev)
-            ->orderByDesc('version')
+            // Releases sort by the normalizer's order string, whose lexical
+            // order is semantic order (1.10.0 above 1.9.0). Branches have no
+            // release line to sort along, so dev versions keep name order.
+            ->when($dev, fn (Builder $query) => $query->orderByDesc('version'))
+            ->unless($dev, fn (Builder $query) => $query->orderByDesc('order'))
             ->get()
             ->map(fn (PackageVersion $version): array => [
                 ...$version->metadata,

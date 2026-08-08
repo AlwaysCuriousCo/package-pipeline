@@ -24,7 +24,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 |---|---------|--------|------------|
 | 1 | Composer v2 API completeness (search.json, list.json, stable/dev split) | ✅ | — |
 | 2 | Local archive storage + dist serving (zips, sha1, cleanup) | ✅ | — |
-| 3 | Version normalization & ordering (composer/semver) | ❌ | — |
+| 3 | Version normalization & ordering (composer/semver) | ✅ | — |
 | 4 | Artifact upload endpoint (CI pushes a zip) | ✅ | 2 |
 | 5 | Multiple named repositories (`/r/{path}`, public/private) | ✅ | — |
 | 6 | Token authentication for Composer clients (http-basic) | ✅ | — |
@@ -97,24 +97,18 @@ pre-release suffixes like `-beta.2` → `1.2.3-beta2`), maps branches to dev ver
 (e.g. which version's composer.json updates the package name/description/type) compare `order`, and
 `/p2` responses sort by it. A `NormalizeVersionOrder` job re-normalizes after algorithm changes.
 
-**Gap**: package-pipeline sorts with `orderByDesc('version')` (string sort — `1.10.0` < `1.9.0`) and
-has ad-hoc tag/branch mapping in `PackageSynchronizer`.
-
-```text
-In this Laravel app, add proper Composer version normalization:
-1. composer require composer/semver.
-2. Create app/Support/VersionNormalizer.php with: version(string): string (strip leading v, normalize
-   pre-release suffixes; pass through dev-* and *-dev), devVersion(string branch): string
-   (main -> dev-main, 2.x -> 2.x-dev, numeric 2 -> 2.x-dev), and order(string): string using
-   Composer\Semver\VersionParser::normalize (dev-* returns as-is).
-3. Migration: add `order` (string, indexed) to package_versions; backfill existing rows in the
-   migration using the normalizer.
-4. Use it in app/Services/PackageSynchronizer.php when creating versions, and replace
-   orderByDesc('version') in ComposerRepositoryController with orderByDesc('order') for stable
-   versions (dev versions keep name ordering).
-5. Unit-test the normalizer against edge cases: v1.2.3, 1.2, 1.2.3.4, 1.0.0-beta.2, RC tags,
-   branches main/develop/2.x/2, and verify 1.10.0 sorts above 1.9.0. Run tests.
-```
+**Implemented**: `app/Support/VersionNormalizer.php` with `version()` (v1.2.3 → 1.2.3,
+1.0.0-beta.2 → 1.0.0-beta2, dev versions pass through), `devVersion()` (main → dev-main,
+2 → 2.x-dev, 2.0 → 2.0.x-dev, 2.x → 2.x-dev), and `order()`. One refinement over the prompt:
+`VersionParser::normalize()` output alone is *not* lexically sortable (`'1.10.0.0' < '1.9.0.0'` as
+strings), so `order()` builds on the parser's canonical four-segment form but zero-pads every
+segment and maps the stability suffix to a weighted tail (dev < alpha < beta < RC < stable <
+patch, pre-release numbers padded too) — an `order by` in any database then ranks 1.10.0 above
+1.9.0 and 1.0.0 above its own RCs. The indexed `order` column is folded into the create migration
+(pre-v1; a rebuild re-normalizes everything, standing in for Packistry's `NormalizeVersionOrder`
+job). Tags are now *stored* under their normalized spelling, the synchronizer and the upload
+service both stamp `order`, and `/p2` sorts releases by it while dev versions keep name order.
+Covered in `tests/Unit/VersionNormalizerTest.php` and `tests/Feature/VersionOrderingTest.php`.
 
 ## 4. Artifact upload endpoint (push from CI)
 

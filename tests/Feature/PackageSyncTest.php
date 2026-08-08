@@ -78,7 +78,8 @@ class PackageSyncTest extends TestCase
         $package->refresh();
 
         $this->assertSame('acme/widgets', $package->name);
-        $this->assertSame('v1.1.0', $package->latest_version);
+        // Tags are stored under their normalized spelling: v1.1.0 → 1.1.0.
+        $this->assertSame('1.1.0', $package->latest_version);
         $this->assertSame('Widgets for Acme.', $package->description);
         $this->assertSame('library', $package->type);
         $this->assertNotNull($package->last_synced_at);
@@ -87,10 +88,10 @@ class PackageSyncTest extends TestCase
         $versions = $package->versions()->pluck('is_dev', 'version');
 
         $this->assertSame([
+            '1.0.0' => false,
+            '1.1.0' => false,
             '2.x-dev' => true,
             'dev-main' => true,
-            'v1.0.0' => false,
-            'v1.1.0' => false,
         ], $versions->sortKeys()->all());
 
         // The malformed tag is ignored rather than served.
@@ -126,7 +127,7 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         // A row from before archives were stored: same ref, no archive.
-        $version = $package->versions()->where('version', 'v1.1.0')->sole();
+        $version = $package->versions()->where('version', '1.1.0')->sole();
         $version->forceFill(['archive_path' => null, 'shasum' => null])->save();
 
         app(PackageSynchronizer::class)->sync($package);
@@ -148,7 +149,7 @@ class PackageSyncTest extends TestCase
 
         // The columns say stored, but the disk lost the file — object storage
         // loss, or a deploy that wiped archives while the database survived.
-        $version = $package->versions()->where('version', 'v1.1.0')->sole();
+        $version = $package->versions()->where('version', '1.1.0')->sole();
         Storage::disk(config('filesystems.dists'))->delete($version->archive_path);
 
         app(PackageSynchronizer::class)->sync($package);
@@ -202,12 +203,12 @@ class PackageSyncTest extends TestCase
         $package->refresh();
 
         $this->assertSame(
-            ['2.x-dev', 'dev-main', 'v1.0.0'],
+            ['1.0.0', '2.x-dev', 'dev-main'],
             $package->versions()->pluck('version')->sort()->values()->all(),
         );
 
         $this->assertNotNull($package->last_synced_at);
-        $this->assertSame('v1.0.0', $package->latest_version);
+        $this->assertSame('1.0.0', $package->latest_version);
         $this->assertSame('1 of 4 version imports failed; the next sync will retry them.', $package->sync_error);
     }
 
@@ -219,7 +220,7 @@ class PackageSyncTest extends TestCase
 
         app(PackageSynchronizer::class)->sync($package);
 
-        $released = $package->versions()->where('version', 'v1.1.0')->sole()->released_at;
+        $released = $package->versions()->where('version', '1.1.0')->sole()->released_at;
 
         $this->assertNotNull($released);
         $this->assertSame('2026-02-01 12:00:00', $released->utc()->toDateTimeString());
@@ -240,7 +241,7 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         $this->assertSame(4, $package->versions()->count());
-        $this->assertNull($package->versions()->where('version', 'v1.1.0')->sole()->released_at);
+        $this->assertNull($package->versions()->where('version', '1.1.0')->sole()->released_at);
     }
 
     public function test_a_second_sync_does_not_refetch_refs_that_have_not_moved(): void
@@ -420,7 +421,7 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         $this->assertSame(205, $package->versions()->count());
-        $this->assertNotNull($package->versions()->where('version', 'v1.0.205')->first());
+        $this->assertNotNull($package->versions()->where('version', '1.0.205')->first());
     }
 
     public function test_sync_stops_at_a_full_page_that_advertises_no_successor(): void

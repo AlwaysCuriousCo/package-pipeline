@@ -283,7 +283,7 @@ class SourceTest extends TestCase
 
         app(PackageSynchronizer::class)->sync($package);
 
-        $this->assertSame('v1.0.0', $package->fresh()->latest_version);
+        $this->assertSame('1.0.0', $package->fresh()->latest_version);
 
         // Every repository call went to the source's own host, carrying the
         // installation token rather than any package-level credential.

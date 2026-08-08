@@ -126,7 +126,8 @@ class PackageSyncNotificationTest extends TestCase
         Notification::assertSentTo(
             User::query()->get(),
             PackageVersionsPublished::class,
-            fn (PackageVersionsPublished $notification): bool => $notification->outcome->releases === ['v1.1.0']
+            // The tag v1.1.0 publishes as its normalized spelling.
+            fn (PackageVersionsPublished $notification): bool => $notification->outcome->releases === ['1.1.0']
                 && ! $notification->outcome->initialImport,
         );
     }
