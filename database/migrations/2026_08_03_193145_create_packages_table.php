@@ -29,6 +29,10 @@ return new class extends Migration
             $table->timestamp('last_synced_at')->nullable();
             $table->text('sync_error')->nullable();
 
+            // The job batch currently (or last) rebuilding this package's
+            // versions, so the panel can show the imports' progress.
+            $table->string('sync_batch_id')->nullable();
+
             // The repository webhook created for this package, which only
             // exists as the fallback for repositories the GitHub App's own
             // webhook does not deliver for. Packages under an installed app

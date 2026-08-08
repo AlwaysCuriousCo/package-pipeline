@@ -30,10 +30,10 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 6 | Token authentication for Composer clients (http-basic) | ❌ | — |
 | 7 | Deploy tokens (machine access, repo/package scoped) | ❌ | 6 |
 | 8 | Personal access tokens (per-user) | ❌ | 6 |
-| 9 | Roles + granular permissions | ❌ | — |
+| 9 | Roles + granular permissions | ✅ | — |
 | 10 | Per-user repository/package access scoping | ❌ | 5, 9 |
 | 11 | Provider webhooks (auto-sync on push/tag/delete) | ✅ | — |
-| 12 | Queued batch imports with progress | 🟡 | — |
+| 12 | Queued batch imports with progress | ✅ | — |
 | 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | 🟡 | — |
 | 13a | Sources with GitHub App auth + package bridging | ✅ | — |
 | 14 | Source project browser + one-click package onboarding | ❌ | 13 |
@@ -242,21 +242,16 @@ two roles (admin, user) mapped in config to a flat permission enum covering CRUD
 batch_*) plus `dashboard` and `unscoped` (bypasses row-level scoping). A `Gate::before`-style check
 resolves `$user->can(Permission::X)` from the role → permission map. Simple, no DB permission tables.
 
-```text
-In this Laravel + Filament app, add config-driven role authorization:
-1. app/Enums/Role.php (Admin, User) and app/Enums/Permission.php (string-backed cases:
-   package_create/read/update/delete, version_read, token_manage, user_manage, source_manage,
-   dashboard, unscoped — adjust to the domains that exist in app/Filament/Resources).
-2. Migration: role string column on users defaulting to 'user'; the existing super admin seeder
-   gets role admin.
-3. config/authorization.php maps each role to a permission array; register a Gate::before or
-   per-permission Gate definitions reading that map; add User::can support via a hasPermission()
-   helper.
-4. Enforce in Filament: each Resource's canViewAny/canCreate/canEdit/canDelete checks the matching
-   permission; hide navigation items the user can't access; keep Filament login open to both roles.
-5. Tests: role map resolves correctly; a 'user' role cannot access an admin-only resource page
-   (HTTP test against the Filament route). Run tests.
-```
+**Implemented**, as one deliberate departure: roles and permissions are database-backed via
+`bezhansalleh/filament-shield` (spatie/laravel-permission underneath) rather than Packistry's
+config-enum map. Shield derives one permission per panel entity action (`ViewAny:Package`,
+`Create:Source`, …) from the panel itself (`ShieldPermissionSeeder` regenerates them every seed, so
+they cannot drift as resources are added), generated policies in `app/Policies` enforce them on every
+resource, and `User::canAccessPanel()` requires holding at least one role — a stray user row is never
+a way in. Roles are managed in the panel's own Roles resource, so an admin can shape any number of
+roles at runtime instead of the two the config file would freeze; `admin:create` grants the
+super-admin role with every permission. Row-level visibility (Packistry's `unscoped`) is item 10's
+concern, not a permission flag here.
 
 ## 10. Per-user repository/package access scoping
 
@@ -322,23 +317,41 @@ and fans out one `ImportImportable` job per ref (batch `allowFailures()`). The U
 show progress (total/processed/failed) and can prune finished batches. Result: importing a package with
 hundreds of tags doesn't block a request and failures are per-version, not all-or-nothing.
 
-**Gap**: `PackageSynchronizer::sync()` runs inline and one bad ref can fail the whole sync.
+**Implemented**, with the batch layered under the existing entry point rather than replacing it.
+`PackageSynchronizer` is decomposed into steps — `discover()`, `resolveComposerName()`, `prune()`,
+`changed()`, `import()` (one ref: composer.json, commit date, row + archive in one transaction),
+`finalize()` — so there is exactly one implementation of version building with two drivers:
+`sync()` composes the steps inline for `packages:sync` and the tests, and the batch
+(`App\Jobs\PackageSyncBatch::dispatchFor`) runs them as a named `Bus::batch` with
+`allowFailures()`: `DiscoverVersions` lists refs, prunes, and fans out one `ImportVersion` job per
+ref whose sha moved (unchanged refs add no job at all, so a routine sync is a batch of one), and a
+`FinalizePackageSync` `finally` callback recomputes the package's columns, sets
+`last_synced_at`/`sync_error`, and sends the item-11 notifications. The batch id is stored on the
+package (`sync_batch_id`, folded into the create migration pre-v1) and a polling widget on the
+package view page renders imported/total/failed with a progress bar while
+`Package::syncRunning()` — which knows that a batch with failures never gets `finished_at` — says
+the imports are still going.
 
-```text
-In this Laravel app, move package syncing onto queued job batches:
-1. Refactor app/Services/PackageSynchronizer.php so the per-reference work (fetch composer.json,
-   normalize version, upsert PackageVersion, store archive) lives in a dedicated
-   app/Jobs/ImportVersion.php job (Batchable, Queueable) that takes package id + ref data.
-2. Add app/Jobs/DiscoverVersions.php that lists tags+branches via GitHubClient and adds one
-   ImportVersion per ref to its batch; expose PackageSyncBatch::dispatchFor(Package) that creates a
-   named Bus::batch([DiscoverVersions]) with allowFailures(), storing batch id on the package.
-3. After the batch finishes, prune versions no longer present upstream (finally callback) and set
-   last_synced_at / sync_error.
-4. Wire the Filament "sync" action (or create one on PackageResource) to dispatch the batch and show
-   batch progress on the package view (poll job_batches by stored id: processed/total/failed).
-5. Ensure queue + batches tables exist (php artisan queue:batches-table if needed). Tests with
-   Bus::fake and a small fake ref set exercising fan-out and failure isolation. Run tests.
-```
+Deliberate departures from the prompt:
+
+- **`SyncPackageJob` stays the single entry point** and now only starts the batch: the webhook
+  debounce, uniqueness lock, and "sync already queued" panel affordance all hang off that job, and
+  a sync arriving while a batch is still importing re-queues itself for after it finishes (with a
+  2-hour staleness override) instead of racing it — two rebuilds pruning concurrently was the bug
+  the old `WithoutOverlapping` prevented, and the batch inherits that guarantee here.
+- **Pruning happens at discovery, not in the finally callback.** The discovered ref list is the
+  authority on what exists upstream; waiting for the imports would keep serving versions already
+  deleted. The finally callback instead recomputes package metadata from what the imports stored.
+- **Partial failure is a recorded state, not an error**: the batch finishes, `last_synced_at` is
+  set, and `sync_error` reads "N of M version imports failed; the next sync will retry them" —
+  which the next sync does, because an incomplete row is treated as changed.
+- Inline `sync()` keeps the same per-ref isolation (a lone bad ref costs its version, not the
+  sync), throwing only when nothing at all could be imported.
+
+The `job_batches` table already existed in the default jobs migration. Covered in
+`tests/Feature/PackageSyncBatchTest.php` (fan-out, no-op re-sync, failure isolation on a real
+database queue, discovery-failure cancellation, deferral while a batch runs, widget states) plus
+the reworked `tests/Feature/PackageSyncTest.php` / `SyncPackageJobTest.php`.
 
 ## 13a. Sources with GitHub App auth — implemented
 

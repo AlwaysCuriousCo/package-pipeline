@@ -7,6 +7,8 @@ use App\Enums\WebhookCoverage;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\WebhookRegistrar;
 use Database\Factories\PackageFactory;
+use Illuminate\Bus\Batch;
+use Illuminate\Bus\BatchRepository;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -71,6 +73,37 @@ class Package extends Model
     public function source(): BelongsTo
     {
         return $this->belongsTo(Source::class);
+    }
+
+    /**
+     * The job batch currently (or last) rebuilding this package's versions,
+     * or null when none has run or the batch has been pruned.
+     *
+     * Read through the repository rather than the Bus facade so it still
+     * answers from the real job_batches table when the dispatcher is faked.
+     */
+    public function syncBatch(): ?Batch
+    {
+        return $this->sync_batch_id === null
+            ? null
+            : app(BatchRepository::class)->find($this->sync_batch_id);
+    }
+
+    /**
+     * Whether a sync batch is still working through this package's versions.
+     *
+     * A batch that allows failures is never marked finished once a job has
+     * failed — only its pending count ever tells the truth. "Every job has
+     * run, some badly" is done, not in progress.
+     */
+    public function syncRunning(): bool
+    {
+        $batch = $this->syncBatch();
+
+        return $batch !== null
+            && ! $batch->finished()
+            && ! $batch->cancelled()
+            && $batch->pendingJobs > $batch->failedJobs;
     }
 
     /**

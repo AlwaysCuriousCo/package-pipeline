@@ -251,7 +251,8 @@ class SyncPackageJobTest extends TestCase
 
     /**
      * The end-to-end path, with no Queue::fake() anywhere: the command writes a
-     * real row to the `jobs` table and a real worker picks it up and syncs.
+     * real row to the `jobs` table and a real worker picks up the whole
+     * cascade — dispatcher, discovery, one import per ref, finalization.
      * Everything above this proves only that dispatch() was called.
      */
     public function test_a_queued_sync_is_picked_up_and_run_by_a_worker(): void
@@ -265,17 +266,19 @@ class SyncPackageJobTest extends TestCase
 
         $this->artisan('packages:sync', ['--queue' => true])->assertSuccessful();
 
-        // Nothing has run yet: the work is parked in the database.
+        // Nothing has run yet: the work is parked in the database, and the
+        // batch does not exist until the dispatcher job runs.
         $this->assertDatabaseCount('jobs', 1);
+        $this->assertDatabaseCount('job_batches', 0);
 
         $payload = json_decode((string) DB::table('jobs')->value('payload'), true);
 
         $this->assertSame(SyncPackageJob::class, $payload['displayName']);
         $this->assertSame(3, $payload['maxTries']);
-        $this->assertSame(600, $payload['timeout']);
+        $this->assertSame(60, $payload['timeout']);
         $this->assertNull($package->refresh()->last_synced_at);
 
-        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+        $this->artisan('queue:work', ['--stop-when-empty' => true])->assertSuccessful();
 
         $this->assertDatabaseCount('jobs', 0);
         $this->assertDatabaseCount('failed_jobs', 0);
@@ -283,6 +286,11 @@ class SyncPackageJobTest extends TestCase
         $this->assertSame('v1.0.0', $package->latest_version);
         $this->assertNotNull($package->last_synced_at);
         $this->assertNull($package->sync_error);
+
+        // The batch ran to completion and the package knows which one it was.
+        $this->assertNotNull($package->syncBatch());
+        $this->assertTrue($package->syncBatch()->finished());
+        $this->assertFalse($package->syncRunning());
     }
 
     public function test_a_worker_records_a_failed_sync_rather_than_losing_it(): void
@@ -295,11 +303,16 @@ class SyncPackageJobTest extends TestCase
 
         $this->artisan('packages:sync', ['--queue' => true])->assertSuccessful();
 
+        // The dispatcher job never touches GitHub, so it succeeds and leaves
+        // the discovery job on the queue.
+        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+
         // The worker exits 0 whether or not the job it ran threw; the outcome
         // is recorded on the job, so that is where to look.
         $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
 
-        // One attempt of three: the job goes back to the queue, not to the floor.
+        // One attempt of three: the discovery goes back to the queue, not to
+        // the floor.
         $this->assertDatabaseCount('failed_jobs', 0);
         $this->assertSame(1, DB::table('jobs')->value('attempts'));
         $this->assertStringContainsString('Bad credentials', (string) $package->refresh()->sync_error);

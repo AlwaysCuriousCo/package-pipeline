@@ -161,6 +161,35 @@ class PackageSyncTest extends TestCase
         $this->assertSame(0, $package->versions()->count());
     }
 
+    /**
+     * One broken ref costs one version: the others still land, and the gap is
+     * recorded on the package instead of failing the sync outright.
+     */
+    public function test_one_bad_ref_does_not_fail_the_rest_of_the_sync(): void
+    {
+        // Only v1.1.0's zipball comes back as an HTML error page.
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/zipball/*' => fn ($request) => str_contains($request->url(), str_repeat('b', 40))
+                ? Http::response('<html>maintenance</html>', 200, ['Content-Type' => 'text/html'])
+                : Http::response('zip-bytes', 200, ['Content-Type' => 'application/zip']),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $package->refresh();
+
+        $this->assertSame(
+            ['2.x-dev', 'dev-main', 'v1.0.0'],
+            $package->versions()->pluck('version')->sort()->values()->all(),
+        );
+
+        $this->assertNotNull($package->last_synced_at);
+        $this->assertSame('v1.0.0', $package->latest_version);
+        $this->assertSame('1 of 4 version imports failed; the next sync will retry them.', $package->sync_error);
+    }
+
     public function test_sync_records_the_commit_date_of_each_version(): void
     {
         $this->fakeGitHub();
