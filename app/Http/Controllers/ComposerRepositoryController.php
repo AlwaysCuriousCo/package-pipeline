@@ -148,14 +148,19 @@ class ComposerRepositoryController extends Controller
 
         abort_if($versions->isEmpty(), 404, "Reference {$reference} is not a known version of {$name}.");
 
-        // A tag and a branch can share a commit; any row with a stored
-        // archive serves for both.
-        $version = $versions->first(fn (PackageVersion $version): bool => $version->archive_path !== null);
-
         $disk = $this->archives->disk();
 
+        // A tag and a branch can share a commit; any row with a stored
+        // archive serves for both. The disk is asked per row rather than
+        // once, because a row's path can outlive its file — a sibling row
+        // may still hold a live zip for the same commit.
+        $version = $versions->first(
+            fn (PackageVersion $version): bool => $version->archive_path !== null
+                && $disk->exists($version->archive_path),
+        );
+
         abort_unless(
-            $version instanceof PackageVersion && $disk->exists($version->archive_path),
+            $version instanceof PackageVersion,
             404,
             "No archive is stored for {$name}@{$reference}; syncing the package will build it.",
         );

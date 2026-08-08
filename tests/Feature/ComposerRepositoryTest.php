@@ -243,6 +243,34 @@ class ComposerRepositoryTest extends TestCase
         $this->get('/dist/acme/widgets/'.str_repeat('b', 40).'.zip')->assertNotFound();
     }
 
+    public function test_the_dist_endpoint_falls_back_to_a_sibling_row_for_the_same_commit(): void
+    {
+        // A tag and a branch can point at the same commit. When the first
+        // row's file is gone from the disk, a sibling row's still-stored zip
+        // must serve rather than 404ing on the first path checked.
+        config(['filesystems.dists' => 's3']);
+        Storage::fake('s3');
+
+        // v1.1.0's archive_path points at a file that was never stored; only
+        // the sibling branch row's archive exists on the disk.
+        $package = $this->makeServedPackage();
+
+        $package->versions()->create([
+            'version' => 'dev-release',
+            'reference' => str_repeat('b', 40),
+            'is_dev' => true,
+            'archive_path' => 'packages/acme/widgets/sibling.zip',
+            'shasum' => sha1('sibling-bytes'),
+            'metadata' => ['name' => 'acme/widgets', 'version' => 'dev-release'],
+        ]);
+
+        Storage::disk('s3')->put('packages/acme/widgets/sibling.zip', 'sibling-bytes');
+
+        $response = $this->get('/dist/acme/widgets/'.str_repeat('b', 40).'.zip')->assertOk();
+
+        $this->assertSame('sibling-bytes', $response->streamedContent());
+    }
+
     public function test_the_dist_endpoint_rejects_unknown_references(): void
     {
         $this->makeServedPackage();

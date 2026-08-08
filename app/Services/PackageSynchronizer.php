@@ -286,6 +286,11 @@ class PackageSynchronizer
      * whole sync. A row missing any piece — date, metadata, or archive — is
      * treated as changed so it is backfilled.
      *
+     * The archive check asks the dist disk, not just the columns: a row can
+     * outlive its file (storage loss, a deploy that wiped archives while the
+     * database survived), and trusting the columns alone would skip the
+     * re-download and leave dist serving 404s that no sync ever repairs.
+     *
      * @param  array{reference: string, is_dev: bool}  $ref
      */
     private function unchanged(?PackageVersion $known, array $ref): bool
@@ -296,7 +301,8 @@ class PackageSynchronizer
             && $known->released_at !== null
             && $known->archive_path !== null
             && $known->shasum !== null
-            && isset($known->metadata['name']);
+            && isset($known->metadata['name'])
+            && $this->archives->disk()->exists($known->archive_path);
     }
 
     /**

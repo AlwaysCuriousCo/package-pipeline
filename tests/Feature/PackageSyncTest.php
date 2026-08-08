@@ -138,6 +138,27 @@ class PackageSyncTest extends TestCase
         Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
     }
 
+    public function test_an_unchanged_version_whose_archive_file_is_gone_is_rebuilt(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // The columns say stored, but the disk lost the file — object storage
+        // loss, or a deploy that wiped archives while the database survived.
+        $version = $package->versions()->where('version', 'v1.1.0')->sole();
+        Storage::disk(config('filesystems.dists'))->delete($version->archive_path);
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $version->refresh();
+
+        $this->assertNotNull($version->archive_path);
+        Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+    }
+
     public function test_a_zipball_that_is_not_a_zip_fails_the_sync(): void
     {
         // A proxy's HTML error page arriving with a 200 must not be stored
