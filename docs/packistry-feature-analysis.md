@@ -11,7 +11,8 @@ independently in package-pipeline (Laravel 13 + Filament v5). Prompts assume the
 - `Package` / `PackageVersion` models, `app/Services/PackageSynchronizer.php`, `app/Services/GitHub/GitHubClient.php`
 - Admin is Filament (`app/Filament/Resources`), no public SPA
 - Migrations `2026_08_03_193140_create_sources_table.php`, `..._193145_create_packages_table.php`,
-  `..._193150_create_package_versions_table.php` define the whole schema (pre-v1: folded in, never altered)
+  `..._193150_create_package_versions_table.php` define the whole schema (pre-v1: folded in, never
+  altered — deployed databases are rebuilt with `migrate:fresh` when the schema moves)
 
 Legend: ✅ already have · 🟡 partial · ❌ missing
 
@@ -82,10 +83,9 @@ sync backfills it. `ComposerRepositoryController::dist()` streams the stored arc
 none is stored — it never reaches for GitHub — and `metadata()` advertises `dist.shasum` so Composer
 verifies downloads. `archives:clean {--dry-run}` prunes files no version references (replaced
 archives get a fresh uuid path rather than an overwrite, so orphans are expected between cleans).
-Two deliberate departures from the prompt: archives live on the existing configurable dist disk
+One deliberate departure from the prompt: archives live on the existing configurable dist disk
 (`filesystems.dists`, `DIST_DISK`) rather than the default disk, since that knob already existed for
-the request-time cache this replaces; and the columns were folded into the create migration per the
-pre-v1 convention above. Covered in `tests/Feature/ComposerRepositoryTest.php`,
+the request-time cache this replaces. Covered in `tests/Feature/ComposerRepositoryTest.php`,
 `tests/Feature/PackageSyncTest.php`, and `tests/Feature/CleanArchivesCommandTest.php`.
 
 ## 3. Version normalization & ordering
