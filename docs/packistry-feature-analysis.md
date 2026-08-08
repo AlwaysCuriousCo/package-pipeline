@@ -27,9 +27,9 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 3 | Version normalization & ordering (composer/semver) | ❌ | — |
 | 4 | Artifact upload endpoint (CI pushes a zip) | ❌ | 2 |
 | 5 | Multiple named repositories (`/r/{path}`, public/private) | ✅ | — |
-| 6 | Token authentication for Composer clients (http-basic) | ❌ | — |
+| 6 | Token authentication for Composer clients (http-basic) | ✅ | — |
 | 7 | Deploy tokens (machine access, repo/package scoped) | ❌ | 6 |
-| 8 | Personal access tokens (per-user) | ❌ | 6 |
+| 8 | Personal access tokens (per-user) | ✅ | 6 |
 | 9 | Roles + granular permissions | ✅ | — |
 | 10 | Per-user repository/package access scoping | ❌ | 5, 9 |
 | 11 | Provider webhooks (auto-sync on push/tag/delete) | ✅ | — |
@@ -174,24 +174,18 @@ soft-delete for revocation, and `last_used_at`. Every Composer query runs throug
 which limits visible packages to public repositories plus whatever the token grants. Consumers
 configure `composer config http-basic.<host> token <plain-token>`.
 
-```text
-In this Laravel app, protect the Composer endpoints with token auth:
-1. Migration: access_tokens table (name, token_prefix, token hash sha256, abilities json,
-   last_used_at, expires_at nullable, soft deletes) with a Token model; generate plain tokens once
-   ("pp_" + 40 random chars), store only the hash, expose plaintext only at creation.
-2. Middleware app/Http/Middleware/AuthenticateComposer.php: accept the token from HTTP Basic
-   password (any username) or Authorization: Bearer; look up by hash; reject 401 with a JSON body
-   telling the user to run `composer config http-basic.<host> token <token>`; touch last_used_at
-   (throttled to once a minute). Read endpoints require ability repository:read, upload requires
-   repository:write.
-3. Apply to all composer.* routes. If a repositories table with a `public` flag exists, let
-   unauthenticated requests through for public repositories only.
-4. Filament: TokenResource — create (shows plaintext once in a modal), list with prefix,
-   abilities, last_used_at, revoke (soft delete) action.
-5. Feature tests: 401 without token, 200 with valid basic auth, revoked/expired tokens rejected,
-   write ability enforced on upload. Verify a real `composer install` flow works against the test
-   server if practical. Run tests.
-```
+**Implemented** as specified: `access_tokens` (morphs to its owning principal, name, prefix, sha256
+hash unique, abilities json, last_used_at, expires_at, soft-deletes) with `Token::issue()` returning
+a `NewToken` value object carrying the only copy of the plain text (`pp_` + 40 chars);
+`AuthenticateComposer` middleware accepts the token as the HTTP Basic password (any username) or a
+bearer token, 401s with the exact `composer config http-basic.<host> token <token>` fix (plus a
+`WWW-Authenticate: Basic` challenge so interactive installs prompt), 403s a token without the
+required ability (`TokenAbility` enum: `repository:read` / `repository:write`), and touches
+`last_used_at` at most once a minute without bumping `updated_at`. Reads on a public repository
+pass without a token, but a *presented* credential is always verified — a CI box with a revoked
+token hears about it as a 401 immediately. One departure: there is no admin-wide TokenResource —
+personal tokens are self-service on the user-menu page (item 8), and machine tokens are item 7's
+DeployTokenResource, matching Packistry's own split. Covered in `tests/Feature/ComposerAuthTest.php`.
 
 ## 7. Deploy tokens (machine access)
 
@@ -221,16 +215,14 @@ AuthenticateComposer middleware), add machine deploy tokens with scoped access:
 (name + abilities + optional expiry) from their profile; the token inherits the *user's* repository and
 package access. Listing shows prefix + last used; delete revokes.
 
-```text
-In this Laravel app with Filament admin and Composer token auth, let each admin user issue personal
-access tokens: tokens table rows are polymorphically owned (tokenable) by User or DeployToken if the
-deploy-token feature exists — otherwise add a user_id owner to the existing tokens table. Build a
-Filament page under the user menu ("API Tokens") where a user creates a token (name, read/write
-abilities, optional expiry), sees it in plaintext once, lists their tokens with prefix/last_used_at,
-and revokes them. Composer endpoints authenticate these tokens through the existing middleware and,
-if per-user access scoping exists, restrict visibility to the owner's accessible packages. Feature
-tests for issue/list/revoke and auth flow. Run tests.
-```
+**Implemented**: `access_tokens.tokenable` is polymorphic from the start, so User and DeployToken
+principals share one issuing/hashing/lookup mechanism. The "API tokens" page hangs off the user
+menu (`app/Filament/Pages/ApiTokens.php`) — create with name, read/write abilities and optional
+expiry (valid through the whole chosen day), the plain text rendered once on the page alongside the
+ready-to-paste `composer config http-basic...` line, a listing showing prefix / abilities /
+last-used / expiry, and revoke (soft delete). The page pins every query to the signed-in user, so
+it needs no Shield permission and every panel user gets it. Per-user package visibility is item
+10's concern. Covered in `tests/Feature/ApiTokensPageTest.php`.
 
 ## 9. Roles + granular permissions
 

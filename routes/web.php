@@ -3,6 +3,7 @@
 use App\Http\Controllers\ComposerRepositoryController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\SourceConnectionController;
+use App\Http\Middleware\AuthenticateComposer;
 use App\Http\Middleware\ResolveComposerRepository;
 use Illuminate\Support\Facades\Route;
 
@@ -33,11 +34,11 @@ $composer = function (): void {
         ->name('dist');
 };
 
-Route::middleware(ResolveComposerRepository::class)
+Route::middleware([ResolveComposerRepository::class, AuthenticateComposer::class])
     ->name('composer.')
     ->group($composer);
 
-Route::middleware(ResolveComposerRepository::class)
+Route::middleware([ResolveComposerRepository::class, AuthenticateComposer::class])
     ->prefix('r/{repositoryPath}')
     ->where(['repositoryPath' => '[a-z0-9-]+'])
     ->name('composer.repository.')

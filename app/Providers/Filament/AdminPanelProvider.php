@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Pages\ApiTokens;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -63,6 +64,13 @@ class AdminPanelProvider extends PanelProvider
                     ->label(fn (): string => auth()->user()->name)
                     ->url(fn (): string => EditProfilePage::getUrl())
                     ->icon('heroicon-m-user-circle'),
+                // Personal Composer credentials, self-service for every
+                // panel user — which is why it lives here and not in the
+                // sidebar with the admin-managed resources.
+                'api-tokens' => MenuItem::make()
+                    ->label('API tokens')
+                    ->url(fn (): string => ApiTokens::getUrl())
+                    ->icon('heroicon-m-key'),
             ])
             // The bell, where a package's own releases and failed syncs land.
             // Syncing happens on a queue in response to a push, so there is
