@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\RepositoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -39,6 +40,29 @@ class Repository extends Model
     public function packages(): HasMany
     {
         return $this->hasMany(Package::class);
+    }
+
+    /**
+     * Narrow to the repositories a panel user may see: everything for a user
+     * holding Unscoped:Package, otherwise public repositories plus the ones
+     * their grants reach — granted wholesale, or holding a granted package.
+     *
+     * The repository-level counterpart of Package::scopeVisibleToUser().
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeVisibleToUser(Builder $query, User $user): Builder
+    {
+        if ($user->hasUnscopedAccess()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($user): void {
+            $query->where('public', true)
+                ->orWhereIn('repositories.id', $user->repositories()->select('repositories.id'))
+                ->orWhereIn('repositories.id', $user->packages()->select('packages.repository_id'));
+        });
     }
 
     /**

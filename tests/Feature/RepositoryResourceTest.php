@@ -32,6 +32,15 @@ class RepositoryResourceTest extends TestCase
             ->assertCanSeeTableRecords($repositories);
     }
 
+    public function test_the_default_repository_lists_the_registry_root_not_a_bare_mount(): void
+    {
+        Repository::default();
+
+        Livewire::test(ListRepositories::class)
+            ->assertSee('/ (registry root)')
+            ->assertDontSee('/r/');
+    }
+
     public function test_a_repository_can_be_created(): void
     {
         Livewire::test(CreateRepository::class)
