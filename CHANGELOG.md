@@ -1,6 +1,15 @@
 # Release Notes
 
-## [Unreleased](https://github.com/laravel/laravel/compare/v0.6.0...main)
+## [Unreleased](https://github.com/laravel/laravel/compare/v0.9.4...main)
+
+## [v0.9.4](https://github.com/laravel/laravel/compare/v0.6.0...v0.9.4) - 2026-08-08
+
+### What's Changed
+
+* Persist archives and queue initial package sync by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/6
+* Polish admin command and panel workflows by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/7
+
+**Full Changelog**: https://github.com/AlwaysCuriousCo/package-pipeline/compare/v0.6.0...v0.9.4
 
 ## [v0.6.0](https://github.com/laravel/laravel/compare/v0.4.0...v0.6.0) - 2026-08-08
 
