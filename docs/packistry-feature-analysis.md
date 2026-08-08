@@ -39,7 +39,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 14 | Source project browser + one-click package onboarding | ❌ | 13 |
 | 15 | Download statistics + dashboard | ✅ | 2 |
 | 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ❌ | 9 |
-| 17 | Operational CLI commands | 🟡 | varies |
+| 17 | Operational CLI commands | ✅ | varies |
 | 18 | Package rebuild & maintenance jobs | 🟡 | 2, 12 |
 
 Suggested independent tracks: **Core registry** (1–4), **Access control** (5–10), **Sync pipeline**
@@ -451,16 +451,18 @@ repository, package, source, deploy-token; `reset:password`; `rebuild:package`;
 `downloads:recalculate`; `archives:clean`. Everything the UI does is scriptable for provisioning and
 recovery (their Docker quickstart creates the first user this way).
 
-```text
-In this Laravel app (private Composer registry, Filament admin), add operational artisan commands
-mirroring the admin UI, using laravel/prompts for interactive input with non-interactive option
-flags for scripting: user:add (name, email, password, role) and user:reset-password;
-package:add (name/repo URL/token) dispatching the existing sync; package:delete (with confirmation,
-also deleting stored archives); token:add / token:revoke for Composer access tokens if that feature
-exists; package:sync {name?} to trigger sync for one or all packages. Reuse existing
-services/actions rather than duplicating logic, register in routes/console.php or via attributes,
-and add a smoke test per command with artisan() test helpers. Run tests.
-```
+**Implemented**: `user:add` (roles validated against what exists, prompts interactively, prints the
+same short-lived signed reset link `admin:create` uses — extracted into the shared
+`IssuesPasswordResetLinks` concern, so a password still never travels through the environment) and
+`user:reset-password`; `package:add` (URL → guessed composer name, `--repo` targets a named
+Composer repository, webhook registration and the first queued sync exactly like the wizard,
+`--no-webhook`/`--no-sync` to opt out) and `package:delete` (confirmation, `--repo` disambiguation
+when a name is served twice, and the stored archives go with the rows); `token:add` (`--user` email
+or `--deploy` name — created on demand as an unscoped principal — abilities `read`/`write`,
+optional expiry, plain text printed once with the `composer config` line) and `token:revoke` by the
+prefix listings show. Syncing was already scriptable as `packages:sync {name?} {--source=}
+{--queue}`, alongside `archives:clean` and `downloads:recalculate`. Covered in
+`tests/Feature/OperationalCommandsTest.php`.
 
 ## 18. Package rebuild & maintenance
 
