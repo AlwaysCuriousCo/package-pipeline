@@ -14,15 +14,22 @@ return new class extends Migration
         Schema::create('packages', function (Blueprint $table) {
             $table->id();
 
+            // The Composer repository this package is served from. Deleting a
+            // repository is refused while it still holds packages — an admin
+            // moves or deletes them first, deliberately.
+            $table->foreignId('repository_id')->constrained()->restrictOnDelete();
+
             // Deleting a source leaves its packages in place; they fall back
             // to their own token or GITHUB_TOKEN until relinked.
             $table->foreignId('source_id')->nullable()->constrained()->nullOnDelete();
 
-            $table->string('repository')->unique();
+            $table->string('repository');
             $table->string('latest_version')->nullable();
 
-            // Composer resolves packages by name, so it must be unique.
-            $table->string('name')->unique();
+            // Composer resolves packages by name, so it must be unique — per
+            // repository, since each repository is its own registry. The same
+            // goes for the VCS repository URL.
+            $table->string('name');
             $table->text('description')->nullable();
             $table->string('type')->nullable()->index();
             $table->text('token')->nullable();
@@ -52,6 +59,9 @@ return new class extends Migration
             $table->timestamp('webhook_received_at')->nullable();
 
             $table->timestamps();
+
+            $table->unique(['repository_id', 'name']);
+            $table->unique(['repository_id', 'repository']);
         });
     }
 

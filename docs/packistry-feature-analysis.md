@@ -26,7 +26,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 2 | Local archive storage + dist serving (zips, sha1, cleanup) | ✅ | — |
 | 3 | Version normalization & ordering (composer/semver) | ❌ | — |
 | 4 | Artifact upload endpoint (CI pushes a zip) | ❌ | 2 |
-| 5 | Multiple named repositories (`/r/{path}`, public/private) | ❌ | — |
+| 5 | Multiple named repositories (`/r/{path}`, public/private) | ✅ | — |
 | 6 | Token authentication for Composer clients (http-basic) | ❌ | — |
 | 7 | Deploy tokens (machine access, repo/package scoped) | ❌ | 6 |
 | 8 | Personal access tokens (per-user) | ❌ | 6 |
@@ -150,22 +150,20 @@ root (default repository, `path = null`) and under `/r/{path}`. Packages belong 
 repository; archives are stored under the repository's path. Public repositories skip auth for reads;
 private ones require a token.
 
-```text
-In this Laravel app, introduce multiple Composer repositories:
-1. Model + migration: repositories table (name unique, path unique nullable slug, description
-   nullable, public boolean default false). Add repository_id FK on packages (nullable during
-   migration; backfill by creating a default repository with path null and assigning all packages
-   to it, then make it non-nullable). Package name uniqueness becomes unique per (repository_id, name).
-2. Routing: extract the composer routes in routes/web.php into a reusable group and mount them both
-   at root (resolving the default repository) and under prefix /r/{repositoryPath}. Resolve the
-   Repository in ComposerRepositoryController via a shared method that 404s on unknown path. All
-   queries (root/search/list/metadata/dist) must scope by the resolved repository, and metadata/list
-   URLs must be generated with the repository prefix.
-3. Filament: a RepositoryResource (list/create/edit; fields name, path, description, public toggle)
-   and a repository select on the existing Package resource form + table filter.
-4. Feature tests: same package name in two repositories resolves independently at / and /r/{path};
-   unknown path 404s. Run tests.
-```
+**Implemented**: a `repositories` table (name unique, path unique nullable slug, description,
+`public` boolean) with the FK folded into the packages create migration (pre-v1); package names and
+VCS URLs are unique per `(repository_id, …)`. The Composer routes are one group mounted twice — at
+the root and under `/r/{path}` — with `ResolveComposerRepository` middleware resolving which
+repository a request addresses (404 on unknown paths) and every controller query scoped to it;
+metadata/search/list/dist URLs are generated inside the resolved mount, and a package's install
+commands point at it (with the path suffixed onto the composer.json config key so two repositories
+never fight over one entry). Departures from Packistry: the model relation is `composerRepository()`
+because `Package::$repository` already means the VCS URL; and the default repository (path null,
+served at the root) is system-owned — created lazily by `Repository::default()`, seeded for fresh
+installs, its path not editable and the row not deletable — and is created **public** so existing
+deployments keep serving openly, while admin-created repositories start **private**. `public` is
+enforced by token auth (item 6). Covered in `tests/Feature/ComposerRepositoryScopingTest.php` and
+`tests/Feature/RepositoryResourceTest.php`.
 
 ## 6. Token authentication for Composer clients
 

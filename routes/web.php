@@ -3,6 +3,7 @@
 use App\Http\Controllers\ComposerRepositoryController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\SourceConnectionController;
+use App\Http\Middleware\ResolveComposerRepository;
 use Illuminate\Support\Facades\Route;
 
 // The app is administered entirely through Filament, so the root URL lands on
@@ -12,18 +13,35 @@ Route::redirect('/', '/admin/login')->name('home');
 
 // The Composer v2 repository API. A consuming project opts in with:
 //   composer config repositories.private composer <this-app's-url>
-Route::get('/packages.json', [ComposerRepositoryController::class, 'root'])
-    ->name('composer.root');
-Route::get('/search.json', [ComposerRepositoryController::class, 'search'])
-    ->name('composer.search');
-Route::get('/list.json', [ComposerRepositoryController::class, 'list'])
-    ->name('composer.list');
-Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
-    // Greedy segment so package names containing dots still match.
-    ->where('package', '[^/]+')
-    ->name('composer.metadata');
-Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
-    ->name('composer.dist');
+//
+// The same endpoints are mounted twice: at the root, serving the default
+// repository, and under /r/{path} for every named repository. The middleware
+// resolves which repository a request addresses; the controller scopes every
+// query to it.
+$composer = function (): void {
+    Route::get('/packages.json', [ComposerRepositoryController::class, 'root'])
+        ->name('root');
+    Route::get('/search.json', [ComposerRepositoryController::class, 'search'])
+        ->name('search');
+    Route::get('/list.json', [ComposerRepositoryController::class, 'list'])
+        ->name('list');
+    Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
+        // Greedy segment so package names containing dots still match.
+        ->where('package', '[^/]+')
+        ->name('metadata');
+    Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
+        ->name('dist');
+};
+
+Route::middleware(ResolveComposerRepository::class)
+    ->name('composer.')
+    ->group($composer);
+
+Route::middleware(ResolveComposerRepository::class)
+    ->prefix('r/{repositoryPath}')
+    ->where(['repositoryPath' => '[a-z0-9-]+'])
+    ->name('composer.repository.')
+    ->group($composer);
 
 // Incoming provider deliveries, which sync a package as soon as a tag or
 // branch moves. Both are unauthenticated by design and verify GitHub's

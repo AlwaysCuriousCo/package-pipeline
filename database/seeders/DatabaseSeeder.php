@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Repository;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -20,5 +21,10 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(ShieldPermissionSeeder::class);
+
+        // The repository served at the registry root. Created lazily wherever
+        // it is first needed, but seeding it means a fresh install shows it in
+        // the panel before any package or Composer request exists.
+        Repository::default();
     }
 }

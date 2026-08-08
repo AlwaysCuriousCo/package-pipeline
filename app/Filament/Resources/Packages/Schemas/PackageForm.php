@@ -4,12 +4,15 @@ namespace App\Filament\Resources\Packages\Schemas;
 
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
+use App\Models\Repository;
 use App\Models\Source;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Illuminate\Validation\Rules\Unique;
 
 /**
  * The flat package form used when editing.
@@ -27,6 +30,7 @@ class PackageForm
             ->components([
                 self::name(),
                 self::repository(),
+                self::composerRepository(),
                 self::source(),
                 self::token(),
                 self::latestVersion(),
@@ -34,6 +38,32 @@ class PackageForm
                 self::webhookEnabled(),
                 self::description(),
             ]);
+    }
+
+    /**
+     * The Composer repository the package is served from. Names and VCS URLs
+     * are unique per repository, so this select is what the two unique rules
+     * below scope themselves by.
+     */
+    public static function composerRepository(): Select
+    {
+        return Select::make('repository_id')
+            ->label('Composer repository')
+            ->relationship('composerRepository', 'name')
+            ->default(fn (): int => Repository::default()->id)
+            ->required()
+            ->selectablePlaceholder(false)
+            ->helperText('Which of this registry\'s repositories serves the package.');
+    }
+
+    /**
+     * Scope a unique rule to the repository chosen in the form, since both
+     * package names and VCS URLs are unique per Composer repository rather
+     * than globally.
+     */
+    private static function uniquePerRepository(Unique $rule, Get $get): Unique
+    {
+        return $rule->where('repository_id', $get('repository_id') ?? Repository::default()->id);
     }
 
     /**
@@ -64,7 +94,10 @@ class PackageForm
         return TextInput::make('name')
             ->required()
             ->maxLength(255)
-            ->unique(ignoreRecord: true)
+            ->unique(
+                ignoreRecord: true,
+                modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
+            )
             ->placeholder('vendor/package')
             ->helperText('Overwritten by the composer.json name on sync.');
     }
@@ -76,7 +109,10 @@ class PackageForm
             ->required()
             ->url()
             ->maxLength(255)
-            ->unique(ignoreRecord: true)
+            ->unique(
+                ignoreRecord: true,
+                modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
+            )
             ->placeholder('https://github.com/vendor/package');
     }
 

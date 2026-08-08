@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Middleware\ResolveComposerRepository;
 use App\Models\Package;
 use App\Models\PackageVersion;
+use App\Models\Repository;
 use App\Services\ArchiveStore;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -13,6 +15,12 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * Serves the app as a Composer v2 repository, so a project can point at it
  * with a `composer config repositories.private composer <app-url>` entry.
+ *
+ * Every action serves one Repository — resolved by the middleware from the
+ * mount the request arrived through — and scopes all of its queries to it,
+ * so /r/internal and the root are entirely separate registries.
+ *
+ * @see ResolveComposerRepository
  */
 class ComposerRepositoryController extends Controller
 {
@@ -21,15 +29,17 @@ class ComposerRepositoryController extends Controller
     /**
      * The repository root that Composer fetches first.
      */
-    public function root(): JsonResponse
+    public function root(Request $request): JsonResponse
     {
+        $repository = $this->repository($request);
+
         // `search` and `list` rather than `available-packages`: inlining every
         // name defeats Composer's lazy metadata loading and hands the full
         // package list to anyone who fetches the root.
         return response()->json([
-            'metadata-url' => '/p2/%package%.json',
-            'search' => url('/search.json').'?q=%query%&type=%type%',
-            'list' => url('/list.json'),
+            'metadata-url' => $repository->pathPrefix().'/p2/%package%.json',
+            'search' => $repository->url('/search.json').'?q=%query%&type=%type%',
+            'list' => $repository->url('/list.json'),
         ]);
     }
 
@@ -43,7 +53,7 @@ class ComposerRepositoryController extends Controller
         // "acme/%" must not enumerate the registry.
         $prefix = addcslashes($request->string('q')->toString(), '\\%_');
 
-        $results = $this->servedPackages()
+        $results = $this->servedPackages($request)
             ->whereLike('name', "{$prefix}%")
             ->when(
                 $request->filled('type'),
@@ -69,35 +79,25 @@ class ComposerRepositoryController extends Controller
     /**
      * Every package name this repository serves.
      */
-    public function list(): JsonResponse
+    public function list(Request $request): JsonResponse
     {
         return response()->json([
-            'packageNames' => $this->servedPackages()->orderBy('name')->pluck('name'),
+            'packageNames' => $this->servedPackages($request)->orderBy('name')->pluck('name'),
         ]);
-    }
-
-    /**
-     * Packages the repository actually serves. A package with no synced
-     * versions resolves to nothing, so advertising it in search or list
-     * results would only produce dead ends.
-     *
-     * @return Builder<Package>
-     */
-    private function servedPackages(): Builder
-    {
-        return Package::query()->has('versions');
     }
 
     /**
      * Version metadata for one package. Composer requests both
      * `vendor/name.json` (releases) and `vendor/name~dev.json` (branches).
      */
-    public function metadata(string $vendor, string $package): JsonResponse
+    public function metadata(Request $request, string $vendor, string $package): JsonResponse
     {
+        $repository = $this->repository($request);
+
         $dev = str_ends_with($package, '~dev');
         $name = "{$vendor}/".($dev ? substr($package, 0, -4) : $package);
 
-        $record = Package::query()->where('name', $name)->first();
+        $record = $repository->packages()->where('name', $name)->first();
 
         abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
 
@@ -115,11 +115,9 @@ class ComposerRepositoryController extends Controller
                 ...($version->released_at ? ['time' => $version->released_at->toIso8601String()] : []),
                 'dist' => [
                     'type' => 'zip',
-                    'url' => route('composer.dist', [
-                        'vendor' => $vendor,
-                        'package' => explode('/', $name)[1],
-                        'reference' => $version->reference,
-                    ]),
+                    'url' => $repository->url(
+                        '/dist/'.$vendor.'/'.explode('/', $name)[1]."/{$version->reference}.zip",
+                    ),
                     'reference' => $version->reference,
                     // Composer verifies the downloaded zip against this. A
                     // version synced before archives were stored has none, and
@@ -138,11 +136,11 @@ class ComposerRepositoryController extends Controller
      * a consumer needs no GitHub credentials, and an archive that was never
      * stored (or has gone missing) is a 404 the next sync repairs.
      */
-    public function dist(string $vendor, string $package, string $reference): StreamedResponse
+    public function dist(Request $request, string $vendor, string $package, string $reference): StreamedResponse
     {
         $name = "{$vendor}/{$package}";
 
-        $record = Package::query()->where('name', $name)->first();
+        $record = $this->repository($request)->packages()->where('name', $name)->first();
 
         abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
 
@@ -165,5 +163,25 @@ class ComposerRepositoryController extends Controller
         return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [
             'Content-Type' => 'application/zip',
         ]);
+    }
+
+    /**
+     * The repository this request is addressed to, resolved by the middleware.
+     */
+    private function repository(Request $request): Repository
+    {
+        return $request->attributes->get('composerRepository');
+    }
+
+    /**
+     * Packages the repository actually serves. A package with no synced
+     * versions resolves to nothing, so advertising it in search or list
+     * results would only produce dead ends.
+     *
+     * @return Builder<Package>
+     */
+    private function servedPackages(Request $request): Builder
+    {
+        return $this->repository($request)->packages()->has('versions')->getQuery();
     }
 }

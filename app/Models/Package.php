@@ -18,7 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -51,7 +51,14 @@ class Package extends Model
 
     protected static function booted(): void
     {
-        static::saving(fn (self $package) => $package->linkSource());
+        static::saving(function (self $package): void {
+            // Every package is served from a repository; anything created
+            // without choosing one lands in the default repository at the
+            // registry root.
+            $package->repository_id ??= Repository::default()->id;
+
+            $package->linkSource();
+        });
 
         // A repository hook left behind on GitHub would keep posting to a URL
         // that resolves to nothing. Removing it is best effort: the package is
@@ -73,6 +80,19 @@ class Package extends Model
     public function source(): BelongsTo
     {
         return $this->belongsTo(Source::class);
+    }
+
+    /**
+     * The Composer repository this package is served from.
+     *
+     * Named for what it is rather than `repository()`, because that name is
+     * taken: the `repository` attribute is the VCS URL the package syncs from.
+     *
+     * @return BelongsTo<Repository, $this>
+     */
+    public function composerRepository(): BelongsTo
+    {
+        return $this->belongsTo(Repository::class, 'repository_id');
     }
 
     /**
@@ -281,8 +301,18 @@ class Package extends Model
      */
     public function installCommands(): array
     {
+        $repository = $this->composerRepository;
+
+        // A package in a named repository is reached through that mount, and
+        // the config key carries the path so two repositories on the same
+        // registry never fight over one entry in the consumer's composer.json.
         $repositoryKey = Str::slug(config('app.name')) ?: 'private';
-        $repositoryUrl = rtrim(url('/'), '/');
+
+        if (! $repository->isDefault()) {
+            $repositoryKey .= "-{$repository->path}";
+        }
+
+        $repositoryUrl = rtrim($repository->url(), '/');
 
         $require = $this->name;
 

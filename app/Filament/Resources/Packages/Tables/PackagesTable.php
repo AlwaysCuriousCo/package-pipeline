@@ -34,6 +34,12 @@ class PackagesTable
                     ->openUrlInNewTab()
                     ->color('primary')
                     ->limit(50),
+                TextColumn::make('composerRepository.name')
+                    ->label('Served in')
+                    ->badge()
+                    ->color('gray')
+                    ->sortable()
+                    ->toggleable(),
                 TextColumn::make('source.name')
                     ->label('Source')
                     ->badge()
@@ -79,6 +85,11 @@ class PackagesTable
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                SelectFilter::make('composerRepository')
+                    ->label('Composer repository')
+                    ->relationship('composerRepository', 'name')
+                    ->multiple()
+                    ->preload(),
                 SelectFilter::make('source')
                     ->relationship('source', 'name')
                     ->multiple()
