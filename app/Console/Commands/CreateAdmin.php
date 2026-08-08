@@ -27,8 +27,8 @@ class CreateAdmin extends Command
     use IssuesPasswordResetLinks;
 
     protected $signature = 'admin:create
-        {email? : The account email address; prompted for when omitted}
-        {--name= : Display name, applied on create and when explicitly passed}
+        {--email= : The account email address; prompted for when omitted}
+        {--name= : Display name; prompted for on create, applied on update when passed}
         {--link : Print a password reset link rather than prompting for a password}';
 
     protected $description = 'Create or update an admin account without a password passing through the environment';
@@ -45,7 +45,7 @@ class CreateAdmin extends Command
         $existed = $user->exists;
 
         if (! $existed) {
-            $user->name = $this->option('name') ?? 'Super Admin';
+            $user->name = $this->resolveName();
 
             // A placeholder nobody ever learns. Either the prompt below
             // replaces it, or it stays unusable until the reset link is
@@ -117,7 +117,7 @@ class CreateAdmin extends Command
      */
     private function resolveEmail(): ?string
     {
-        $email = $this->argument('email');
+        $email = $this->option('email');
 
         if (blank($email) && $this->canPrompt()) {
             $email = text(
@@ -147,6 +147,26 @@ class CreateAdmin extends Command
         return Validator::make(['email' => $email], ['email' => ['required', 'email']])
             ->errors()
             ->first('email') ?: null;
+    }
+
+    /**
+     * The display name for a new account: the option when passed, otherwise a
+     * prompt when somebody is there to answer. A non-interactive run (a deploy
+     * hook) still gets the historical default rather than stopping.
+     */
+    private function resolveName(): string
+    {
+        $name = $this->option('name');
+
+        if (blank($name) && $this->canPrompt()) {
+            $name = text(
+                label: 'Display name',
+                default: 'Super Admin',
+                required: true,
+            );
+        }
+
+        return blank($name) ? 'Super Admin' : $name;
     }
 
     /**

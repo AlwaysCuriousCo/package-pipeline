@@ -8,11 +8,15 @@ use App\Filament\Resources\DeployTokens\Pages\ListDeployTokens;
 use App\Filament\Resources\DeployTokens\Schemas\DeployTokenForm;
 use App\Filament\Resources\DeployTokens\Tables\DeployTokensTable;
 use App\Models\DeployToken;
+use App\Support\NewToken;
 use BackedEnum;
+use Filament\Actions\Action;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Support\Js;
 use UnitEnum;
 
 class DeployTokenResource extends Resource
@@ -20,6 +24,10 @@ class DeployTokenResource extends Resource
     protected static ?string $model = DeployToken::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedKey;
+
+    protected static ?string $modelLabel = 'token';
+
+    protected static ?string $pluralModelLabel = 'tokens';
 
     protected static ?string $recordTitleAttribute = 'name';
 
@@ -35,6 +43,29 @@ class DeployTokenResource extends Resource
     public static function table(Table $table): Table
     {
         return DeployTokensTable::configure($table);
+    }
+
+    /**
+     * The one time the plain text exists: persistent so it survives any
+     * redirect, dismissed only by the admin who copied it.
+     */
+    public static function plainTextTokenNotification(string $title, NewToken $new): Notification
+    {
+        $command = 'composer config http-basic.'.request()->getHost()." token {$new->plainText}";
+
+        return Notification::make()
+            ->success()
+            ->title($title)
+            ->body("It will not be shown again.<br><br><code>{$command}</code>")
+            ->persistent()
+            ->actions([
+                Action::make('copy')
+                    ->label('Copy command')
+                    ->icon(Heroicon::OutlinedClipboard)
+                    // Client-side only: the command ships inside the
+                    // notification, so copying never round-trips the token.
+                    ->alpineClickHandler('window.navigator.clipboard.writeText('.Js::from($command).')'),
+            ]);
     }
 
     public static function getPages(): array

@@ -5,10 +5,6 @@
 --}}
 <x-filament-widgets::widget class="fi-wi-registry-totals">
     <x-filament::section heading="Registry totals">
-        <x-slot name="afterHeader">
-            <x-filament::icon icon="heroicon-o-squares-2x2" class="pp-quad-icon" />
-        </x-slot>
-
         <style>
             .fi-wi-registry-totals {
                 --pp-divider: var(--gray-200);
@@ -18,12 +14,6 @@
             .dark .fi-wi-registry-totals {
                 --pp-divider: var(--gray-800);
                 --pp-label-color: var(--gray-400);
-            }
-
-            .pp-quad-icon {
-                width: 1.25rem;
-                height: 1.25rem;
-                color: var(--pp-label-color);
             }
 
             .pp-quad-grid {
@@ -69,50 +59,43 @@
             .dark .pp-quad-value[data-tone='info'] { color: var(--info-400); }
             .dark .pp-quad-value[data-tone='success'] { color: var(--success-400); }
 
-            .pp-quad-updated {
-                margin: 0.25rem 0 0;
-                padding-top: 0.75rem;
-                border-top: 1px solid var(--pp-divider);
-                font-size: 0.75rem;
-                line-height: 1rem;
-                color: var(--pp-label-color);
+            /* The downloads chart shares this dashboard row. Stretch both
+               cards to the row's height and centre their content, so the
+               pair reads as one band whichever is naturally taller. */
+            .fi-wi-registry-totals,
+            .fi-wi-chart,
+            .fi-wi-registry-totals > .fi-section,
+            .fi-wi-chart > .fi-section {
+                height: 100%;
+            }
+
+            .fi-wi-registry-totals > .fi-section,
+            .fi-wi-chart > .fi-section {
+                display: flex;
+                flex-direction: column;
+            }
+
+            .fi-wi-registry-totals .fi-section-content-ctn,
+            .fi-wi-chart .fi-section-content-ctn {
+                display: flex;
+                flex: 1 1 auto;
+                flex-direction: column;
+                justify-content: center;
             }
         </style>
 
-        <div
-            class="pp-quad"
+        <dl
+            class="pp-quad-grid"
             @if ($pollingInterval)
                 wire:poll.{{ $pollingInterval }}
             @endif
         >
-            <dl class="pp-quad-grid">
-                @foreach ($stats as $stat)
-                    <div class="pp-quad-cell">
-                        <dt class="pp-quad-label">{{ $stat['label'] }}</dt>
-                        <dd class="pp-quad-value" data-tone="{{ $stat['tone'] }}">{{ $stat['value'] }}</dd>
-                    </div>
-                @endforeach
-            </dl>
-
-            {{--
-                Counts up from the last render. The timestamp lives in an
-                attribute rather than Alpine state because each poll morphs the
-                attribute in place, restarting the counter — Alpine state would
-                survive the morph and keep counting from the first page load.
-            --}}
-            <p
-                class="pp-quad-updated"
-                data-rendered-at="{{ now()->getTimestampMs() }}"
-                x-data="{ tick: 0 }"
-                x-init="setInterval(() => tick++, 1000)"
-                x-text="(() => {
-                    tick;
-                    const seconds = Math.max(0, Math.floor((Date.now() - Number($el.dataset.renderedAt)) / 1000));
-                    if (seconds < 60) return `Updated ${seconds} ${seconds === 1 ? 'second' : 'seconds'} ago`;
-                    const minutes = Math.floor(seconds / 60);
-                    return `Updated ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
-                })()"
-            >Updated 0 seconds ago</p>
-        </div>
+            @foreach ($stats as $stat)
+                <div class="pp-quad-cell">
+                    <dt class="pp-quad-label">{{ $stat['label'] }}</dt>
+                    <dd class="pp-quad-value" data-tone="{{ $stat['tone'] }}">{{ $stat['value'] }}</dd>
+                </div>
+            @endforeach
+        </dl>
     </x-filament::section>
 </x-filament-widgets::widget>

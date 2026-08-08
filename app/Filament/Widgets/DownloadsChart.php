@@ -5,22 +5,34 @@ namespace App\Filament\Widgets;
 use App\Models\Download;
 use Carbon\CarbonImmutable;
 use Filament\Widgets\ChartWidget;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Downloads per day over the last 90 days, scoped like everything else on
+ * Downloads per day over the last 30 days, scoped like everything else on
  * the dashboard to the packages the signed-in user may see.
+ *
+ * The window and the query are seams: the package page's chart is this one
+ * with both dials turned.
  */
 class DownloadsChart extends ChartWidget
 {
     protected ?string $heading = 'Downloads';
 
-    protected ?string $description = 'Dist downloads per day, last 90 days.';
+    protected ?string $description = 'Dist downloads per day, last 30 days.';
 
-    protected static ?int $sort = -1;
+    protected static ?int $sort = -3;
 
-    protected int|string|array $columnSpan = 'full';
+    /**
+     * The right half of the quad's row.
+     */
+    protected int|string|array $columnSpan = 1;
 
-    protected ?string $maxHeight = '160px';
+    protected ?string $maxHeight = '180px';
+
+    /**
+     * How many days of history the chart spans.
+     */
+    protected int $days = 30;
 
     protected function getType(): string
     {
@@ -50,25 +62,35 @@ class DownloadsChart extends ChartWidget
     }
 
     /**
+     * The downloads this chart counts: every package the signed-in user may
+     * see.
+     *
+     * @return Builder<Download>
+     */
+    protected function downloads(): Builder
+    {
+        return Download::query()->when(
+            auth()->user(),
+            fn ($query, $user) => $query->whereHas(
+                'package',
+                fn ($packages) => $packages->visibleToUser($user),
+            ),
+        );
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function getData(): array
     {
         $end = CarbonImmutable::now()->endOfDay();
-        $start = $end->subDays(89)->startOfDay();
+        $start = $end->subDays($this->days - 1)->startOfDay();
 
         // Grouped in PHP rather than SQL for the same reason as the release
-        // heatmap: date truncation has no portable spelling, and 90 days of
-        // timestamps is a small set.
-        $byDay = Download::query()
+        // heatmap: date truncation has no portable spelling, and a few months
+        // of timestamps is a small set.
+        $byDay = $this->downloads()
             ->where('created_at', '>=', $start)
-            ->when(
-                auth()->user(),
-                fn ($query, $user) => $query->whereHas(
-                    'package',
-                    fn ($packages) => $packages->visibleToUser($user),
-                ),
-            )
             ->pluck('created_at')
             ->countBy(fn (CarbonImmutable $created): string => $created->toDateString());
 

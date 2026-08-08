@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Auth\SsoProviderFactory;
 use App\Enums\AuthProvider;
 use Database\Factories\AuthenticationSourceFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -19,6 +20,20 @@ class AuthenticationSource extends Model
 {
     /** @use HasFactory<AuthenticationSourceFactory> */
     use HasFactory;
+
+    protected static function booted(): void
+    {
+        // The cached OIDC discovery document derives entirely from the
+        // discovery URL, so a changed URL must drop it — otherwise logins
+        // keep using the old issuer's endpoints until the TTL runs out.
+        static::updated(function (self $source): void {
+            if ($source->wasChanged('discovery_url')) {
+                SsoProviderFactory::forgetDiscovery($source);
+            }
+        });
+
+        static::deleted(fn (self $source) => SsoProviderFactory::forgetDiscovery($source));
+    }
 
     /**
      * @return array<string, string>

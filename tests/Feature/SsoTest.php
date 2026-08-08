@@ -161,6 +161,28 @@ class SsoTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_changing_the_discovery_url_drops_the_cached_discovery_document(): void
+    {
+        cache()->put("oidc-discovery:{$this->source->id}", ['authorization_endpoint' => 'https://old-idp.example/authorize'], 3600);
+
+        $this->source->update(['name' => 'Renamed SSO']);
+
+        $this->assertNotNull(cache()->get("oidc-discovery:{$this->source->id}"), 'An unrelated edit should keep the cache.');
+
+        $this->source->update(['discovery_url' => 'https://new-idp.example/.well-known/openid-configuration']);
+
+        $this->assertNull(cache()->get("oidc-discovery:{$this->source->id}"));
+    }
+
+    public function test_deleting_a_source_drops_the_cached_discovery_document(): void
+    {
+        cache()->put("oidc-discovery:{$this->source->id}", ['authorization_endpoint' => 'https://old-idp.example/authorize'], 3600);
+
+        $this->source->delete();
+
+        $this->assertNull(cache()->get("oidc-discovery:{$this->source->id}"));
+    }
+
     public function test_a_matched_account_without_a_role_is_told_so_rather_than_403ed(): void
     {
         $user = User::factory()->create(['email' => 'dev@example.com']);

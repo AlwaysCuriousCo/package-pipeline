@@ -48,7 +48,7 @@ class ShieldPermissionSeederTest extends TestCase
 
         // And the account command must survive the same staleness: it syncs
         // the freshly seeded permission ids onto the super admin role.
-        Artisan::call('admin:create', ['email' => 'admin@example.com', '--no-interaction' => true]);
+        Artisan::call('admin:create', ['--email' => 'admin@example.com', '--no-interaction' => true]);
 
         $user = User::where('email', 'admin@example.com')->sole();
 
