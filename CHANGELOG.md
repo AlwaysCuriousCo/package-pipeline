@@ -1,6 +1,15 @@
 # Release Notes
 
-## [Unreleased](https://github.com/laravel/laravel/compare/v0.4.0...main)
+## [Unreleased](https://github.com/laravel/laravel/compare/v0.6.0...main)
+
+## [v0.6.0](https://github.com/laravel/laravel/compare/v0.4.0...v0.6.0) - 2026-08-08
+
+### What's Changed
+
+* Fix lock leak and short-lived reset links by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/4
+* Implement Composer search/list endpoints and admin user management by [@codearachnid](https://github.com/codearachnid) in https://github.com/AlwaysCuriousCo/package-pipeline/pull/5
+
+**Full Changelog**: https://github.com/AlwaysCuriousCo/package-pipeline/compare/v0.4.0...v0.6.0
 
 ## [v0.4.0](https://github.com/laravel/laravel/compare/v13.8.0...v0.4.0) - 2026-08-07
 
