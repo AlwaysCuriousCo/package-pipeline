@@ -7,10 +7,13 @@ use App\Models\PackageVersion;
 use App\Services\GitHub\GitHubClient;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Throwable;
 
 class PackageSynchronizer
 {
+    public function __construct(private readonly ArchiveStore $archives) {}
+
     /**
      * Pull tags and branches from GitHub and rebuild the package's stored
      * versions. The failure reason is recorded on the package before the
@@ -45,57 +48,71 @@ class PackageSynchronizer
 
         $known = $package->versions()->get()->keyBy('version');
         $synced = [];
+        $downloads = [];
 
-        foreach ($versions as $version => $ref) {
-            $version = (string) $version;
+        try {
+            foreach ($versions as $version => $ref) {
+                $version = (string) $version;
 
-            if (($unchanged = $this->unchanged($known->get($version), $ref)) !== null) {
-                $synced[$version] = $unchanged;
+                if (($unchanged = $this->unchanged($known->get($version), $ref)) !== null) {
+                    $synced[$version] = $unchanged;
 
-                continue;
+                    continue;
+                }
+
+                $composerJson = $github->composerJson($ref['reference']);
+
+                // A ref without a composer.json (or without a package name) is not
+                // installable, so it is skipped rather than treated as an error.
+                if (! isset($composerJson['name'])) {
+                    continue;
+                }
+
+                $synced[$version] = [
+                    ...$ref,
+                    'released_at' => $github->commitDate($ref['reference']),
+                    'metadata' => [...$composerJson, 'version' => $version],
+                ];
+
+                $downloads[$version] = $this->downloadArchive($github, $ref['reference']);
             }
 
-            $composerJson = $github->composerJson($ref['reference']);
-
-            // A ref without a composer.json (or without a package name) is not
-            // installable, so it is skipped rather than treated as an error.
-            if (! isset($composerJson['name'])) {
-                continue;
+            if ($synced === []) {
+                throw new \RuntimeException('No installable versions found: no tag or branch contains a composer.json with a "name".');
             }
 
-            $synced[$version] = [
-                ...$ref,
-                'released_at' => $github->commitDate($ref['reference']),
-                'metadata' => [...$composerJson, 'version' => $version],
-            ];
+            // The most recently built ref wins; every synced ref of one repository
+            // should agree on the package name anyway.
+            $composerName = end($synced)['metadata']['name'];
+            $latest = $this->latestStableVersion(array_keys(array_filter($synced, fn (array $v): bool => ! $v['is_dev'])));
+            $newest = $synced[$latest ?? array_key_last($synced)]['metadata'];
+
+            DB::transaction(function () use ($package, $synced, $downloads, $composerName, $latest, $newest): void {
+                // The package is renamed before archives are stored, so their
+                // paths carry the composer name rather than the placeholder a
+                // first sync starts from.
+                $package->forceFill([
+                    'name' => $composerName,
+                    'description' => $newest['description'] ?? $package->description,
+                    'type' => $newest['type'] ?? $package->type,
+                    'latest_version' => $latest,
+                    'last_synced_at' => now(),
+                    'sync_error' => null,
+                ])->save();
+
+                $package->versions()->whereNotIn('version', array_keys($synced))->delete();
+
+                foreach ($synced as $version => $data) {
+                    $model = $package->versions()->updateOrCreate(['version' => (string) $version], $data);
+
+                    if (isset($downloads[$version])) {
+                        $this->archives->store($model->setRelation('package', $package), $downloads[$version]);
+                    }
+                }
+            });
+        } finally {
+            File::delete(array_values($downloads));
         }
-
-        if ($synced === []) {
-            throw new \RuntimeException('No installable versions found: no tag or branch contains a composer.json with a "name".');
-        }
-
-        // The most recently built ref wins; every synced ref of one repository
-        // should agree on the package name anyway.
-        $composerName = end($synced)['metadata']['name'];
-        $latest = $this->latestStableVersion(array_keys(array_filter($synced, fn (array $v): bool => ! $v['is_dev'])));
-        $newest = $synced[$latest ?? array_key_last($synced)]['metadata'];
-
-        DB::transaction(function () use ($package, $synced, $composerName, $latest, $newest): void {
-            $package->versions()->whereNotIn('version', array_keys($synced))->delete();
-
-            foreach ($synced as $version => $data) {
-                $package->versions()->updateOrCreate(['version' => (string) $version], $data);
-            }
-
-            $package->forceFill([
-                'name' => $composerName,
-                'description' => $newest['description'] ?? $package->description,
-                'type' => $newest['type'] ?? $package->type,
-                'latest_version' => $latest,
-                'last_synced_at' => now(),
-                'sync_error' => null,
-            ])->save();
-        });
 
         return $this->outcome($known->keys()->all(), $synced);
     }
@@ -139,9 +156,10 @@ class PackageSynchronizer
      *
      * A commit sha names an immutable tree, so a version still pointing at the
      * same sha cannot have a different composer.json or commit date than the
-     * one already stored. Reusing it saves two API calls per version, which
-     * for a repository of any age is nearly the whole sync. A row missing
-     * either piece is treated as changed so it is backfilled.
+     * one already stored. Reusing it saves two API calls and an archive
+     * download per version, which for a repository of any age is nearly the
+     * whole sync. A row missing any piece — date, metadata, or archive — is
+     * treated as changed so it is backfilled.
      *
      * @param  array{reference: string, is_dev: bool}  $ref
      * @return array{reference: string, is_dev: bool, released_at: CarbonImmutable, metadata: array<string, mixed>}|null
@@ -152,6 +170,8 @@ class PackageSynchronizer
             || $known->reference !== $ref['reference']
             || $known->is_dev !== $ref['is_dev']
             || $known->released_at === null
+            || $known->archive_path === null
+            || $known->shasum === null
             || ! isset($known->metadata['name'])) {
             return null;
         }
@@ -161,6 +181,29 @@ class PackageSynchronizer
             'released_at' => $known->released_at,
             'metadata' => $known->metadata,
         ];
+    }
+
+    /**
+     * Download the zipball for a ref to a temporary file, returning its path.
+     *
+     * The caller owns the file's lifetime; refresh() deletes every download
+     * once the sync has stored or abandoned them.
+     */
+    private function downloadArchive(GitHubClient $github, string $reference): string
+    {
+        $temporary = tempnam(sys_get_temp_dir(), 'package-archive-');
+
+        throw_if($temporary === false, new \RuntimeException('Unable to create a temporary file for the archive.'));
+
+        try {
+            $github->downloadZipball($reference, $temporary);
+        } catch (Throwable $exception) {
+            File::delete($temporary);
+
+            throw $exception;
+        }
+
+        return $temporary;
     }
 
     /**

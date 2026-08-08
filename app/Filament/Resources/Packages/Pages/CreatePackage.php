@@ -5,7 +5,9 @@ namespace App\Filament\Resources\Packages\Pages;
 use App\Enums\WebhookCoverage;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Schemas\PackageWizard;
+use App\Jobs\SyncPackageJob;
 use App\Models\Package;
+use App\Models\Source;
 use App\Services\GitHub\WebhookRegistrar;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
@@ -24,6 +26,19 @@ class CreatePackage extends CreateRecord
     public function getSteps(): array
     {
         return PackageWizard::steps();
+    }
+
+    /**
+     * Arriving from a source's packages list pre-selects that source, so the
+     * new package authenticates through it without being told to again.
+     */
+    protected function afterFill(): void
+    {
+        $sourceId = request()->integer('source');
+
+        if ($sourceId && Source::whereKey($sourceId)->exists()) {
+            $this->data['source_id'] = $sourceId;
+        }
     }
 
     /**
@@ -62,5 +77,16 @@ class CreatePackage extends CreateRecord
                 ->persistent()
                 ->send();
         }
+
+        // The package exists but has no versions until something syncs it, and
+        // the next push could be months away — so the first sync runs now,
+        // with everything above already configured.
+        SyncPackageJob::dispatch($package);
+
+        Notification::make()
+            ->success()
+            ->title('First sync queued')
+            ->body("{$package->name} is importing its versions in the background.")
+            ->send();
     }
 }

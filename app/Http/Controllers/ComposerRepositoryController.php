@@ -4,13 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Package;
 use App\Models\PackageVersion;
-use App\Services\GitHub\GitHubClient;
-use Illuminate\Contracts\Filesystem\Filesystem;
+use App\Services\ArchiveStore;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -19,6 +16,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class ComposerRepositoryController extends Controller
 {
+    public function __construct(private readonly ArchiveStore $archives) {}
+
     /**
      * The repository root that Composer fetches first.
      */
@@ -122,6 +121,10 @@ class ComposerRepositoryController extends Controller
                         'reference' => $version->reference,
                     ]),
                     'reference' => $version->reference,
+                    // Composer verifies the downloaded zip against this. A
+                    // version synced before archives were stored has none, and
+                    // omitting the key beats advertising a null.
+                    ...($version->shasum ? ['shasum' => $version->shasum] : []),
                 ],
             ]);
 
@@ -129,8 +132,11 @@ class ComposerRepositoryController extends Controller
     }
 
     /**
-     * Proxy a version's zipball from GitHub, caching it on the dist disk so
-     * each commit is only downloaded once.
+     * Stream a version's stored archive from the dist disk.
+     *
+     * Archives are built at sync time, so serving never reaches for GitHub —
+     * a consumer needs no GitHub credentials, and an archive that was never
+     * stored (or has gone missing) is a 404 the next sync repairs.
      */
     public function dist(string $vendor, string $package, string $reference): StreamedResponse
     {
@@ -139,63 +145,25 @@ class ComposerRepositoryController extends Controller
         $record = Package::query()->where('name', $name)->first();
 
         abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
+
+        $versions = $record->versions()->where('reference', $reference)->get();
+
+        abort_if($versions->isEmpty(), 404, "Reference {$reference} is not a known version of {$name}.");
+
+        // A tag and a branch can share a commit; any row with a stored
+        // archive serves for both.
+        $version = $versions->first(fn (PackageVersion $version): bool => $version->archive_path !== null);
+
+        $disk = $this->archives->disk();
+
         abort_unless(
-            $record->versions()->where('reference', $reference)->exists(),
+            $version instanceof PackageVersion && $disk->exists($version->archive_path),
             404,
-            "Reference {$reference} is not a known version of {$name}.",
+            "No archive is stored for {$name}@{$reference}; syncing the package will build it.",
         );
 
-        $disk = Storage::disk(config('filesystems.dists'));
-        $path = "composer-dists/{$vendor}/{$package}/{$reference}.zip";
-
-        if (! $disk->exists($path)) {
-            $this->cacheZipball($disk, $path, $record, $reference);
-        }
-
-        return $disk->download($path, "{$vendor}-{$package}-{$reference}.zip", [
+        return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [
             'Content-Type' => 'application/zip',
         ]);
-    }
-
-    /**
-     * Download a zipball to a temporary file and stream it onto the dist disk.
-     *
-     * Going via a temporary file keeps the whole archive out of memory and
-     * means a failed download never publishes a partial zip that a later
-     * request would serve as a cache hit.
-     */
-    private function cacheZipball(Filesystem $disk, string $path, Package $record, string $reference): void
-    {
-        $temporary = tempnam(sys_get_temp_dir(), 'composer-dist-');
-
-        throw_if($temporary === false, new \RuntimeException('Unable to create a temporary file for the zipball.'));
-
-        try {
-            GitHubClient::for($record)->downloadZipball($reference, $temporary);
-
-            $stream = fopen($temporary, 'r');
-
-            throw_if($stream === false, new \RuntimeException("Unable to read the downloaded zipball for {$reference}."));
-
-            try {
-                throw_if(
-                    $disk->writeStream($path, $stream) === false,
-                    new \RuntimeException("Unable to write {$path} to the dist disk."),
-                );
-            } catch (\Throwable $exception) {
-                // A write that fails part way through can leave a truncated
-                // object behind, which the next request would serve as a
-                // cache hit.
-                $disk->delete($path);
-
-                throw $exception;
-            } finally {
-                if (is_resource($stream)) {
-                    fclose($stream);
-                }
-            }
-        } finally {
-            File::delete($temporary);
-        }
     }
 }

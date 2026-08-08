@@ -7,12 +7,21 @@ use App\Services\PackageSynchronizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Tests\TestCase;
 
 class PackageSyncTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Syncing stores an archive per version on the dist disk.
+        Storage::fake(config('filesystems.dists'));
+    }
 
     /**
      * Fake the endpoints a sync reads. Overrides are registered ahead of the
@@ -42,6 +51,9 @@ class PackageSyncTest extends TestCase
             'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response($composerJson),
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
+            ]),
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+                'Content-Type' => 'application/zip',
             ]),
         ]);
     }
@@ -83,6 +95,70 @@ class PackageSyncTest extends TestCase
 
         // The malformed tag is ignored rather than served.
         $this->assertNull($package->versions()->where('version', 'not-a-version')->first());
+    }
+
+    public function test_sync_stores_an_archive_with_a_shasum_for_every_version(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $disk = Storage::disk(config('filesystems.dists'));
+
+        foreach ($package->versions()->get() as $version) {
+            $this->assertNotNull($version->archive_path, "{$version->version} has no stored archive.");
+            $this->assertSame(sha1('zip-bytes'), $version->shasum);
+            $disk->assertExists($version->archive_path);
+
+            // Paths carry the composer name, not the pre-sync placeholder.
+            $this->assertStringStartsWith('packages/acme/widgets/', $version->archive_path);
+        }
+    }
+
+    public function test_an_unchanged_version_missing_its_archive_is_backfilled(): void
+    {
+        $this->fakeGitHub();
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // A row from before archives were stored: same ref, no archive.
+        $version = $package->versions()->where('version', 'v1.1.0')->sole();
+        $version->forceFill(['archive_path' => null, 'shasum' => null])->save();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $version->refresh();
+
+        $this->assertNotNull($version->archive_path);
+        $this->assertSame(sha1('zip-bytes'), $version->shasum);
+        Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+    }
+
+    public function test_a_zipball_that_is_not_a_zip_fails_the_sync(): void
+    {
+        // A proxy's HTML error page arriving with a 200 must not be stored
+        // and served to Composer as an archive.
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('<html>maintenance</html>', 200, [
+                'Content-Type' => 'text/html',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('Expected the sync to reject the non-zip download.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('instead of a zip archive', $exception->getMessage());
+        }
+
+        $this->assertStringContainsString('instead of a zip archive', (string) $package->refresh()->sync_error);
+        $this->assertSame(0, $package->versions()->count());
     }
 
     public function test_sync_records_the_commit_date_of_each_version(): void
@@ -130,8 +206,8 @@ class PackageSyncTest extends TestCase
         app(PackageSynchronizer::class)->sync($package);
 
         // The second sync still lists tags and branches — it cannot know what
-        // moved otherwise — but reads no composer.json or commit for the four
-        // unchanged refs.
+        // moved otherwise — but reads no composer.json, commit, or zipball
+        // for the four unchanged refs.
         $refListings = 2;
 
         $this->assertSame($requestsAfterFirstSync + $refListings, count(Http::recorded()));

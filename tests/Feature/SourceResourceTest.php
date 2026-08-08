@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\SourceProvider;
 use App\Enums\WebhookState;
+use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Sources\Pages\CreateSource;
 use App\Filament\Resources\Sources\Pages\EditSource;
@@ -332,6 +333,20 @@ class SourceResourceTest extends TestCase
         ])
             ->assertCanSeeTableRecords([$mine])
             ->assertCanNotSeeTableRecords([$theirs]);
+    }
+
+    public function test_the_packages_list_links_to_creating_a_package_for_the_source(): void
+    {
+        $source = Source::factory()->create(['account' => 'acme']);
+
+        Livewire::test(PackagesRelationManager::class, [
+            'ownerRecord' => $source,
+            'pageClass' => ViewSource::class,
+        ])
+            ->assertActionHasUrl(
+                TestAction::make('createPackage')->table(),
+                PackageResource::getUrl('create', ['source' => $source->getKey()]),
+            );
     }
 
     public function test_the_test_connection_action_records_the_result(): void

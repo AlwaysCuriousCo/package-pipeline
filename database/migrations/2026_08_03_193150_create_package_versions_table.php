@@ -18,6 +18,12 @@ return new class extends Migration
             $table->string('reference');
             $table->boolean('is_dev')->default(false);
 
+            // Where this version's zip lives on the dist disk, and the sha1
+            // Composer verifies downloads against. Null only for a row whose
+            // archive has not been stored yet; the next sync backfills it.
+            $table->string('archive_path')->nullable();
+            $table->string('shasum', 40)->nullable();
+
             // Nullable because a ref may resolve before its date is known; the
             // next sync backfills it, since a null date is what looks stale.
             $table->timestamp('released_at')->nullable()->index();

@@ -15,6 +15,7 @@ use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use RuntimeException;
 use Tests\TestCase;
@@ -37,6 +38,9 @@ class SyncPackageJobTest extends TestCase
      */
     private function fakeGitHub(): void
     {
+        // A successful sync stores each version's archive on the dist disk.
+        Storage::fake(config('filesystems.dists'));
+
         Http::fake([
             'api.github.com/repos/acme/widgets/tags*' => Http::response([
                 ['name' => 'v1.0.0', 'commit' => ['sha' => str_repeat('a', 40)]],
@@ -48,6 +52,9 @@ class SyncPackageJobTest extends TestCase
             ]),
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
+            ]),
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+                'Content-Type' => 'application/zip',
             ]),
         ]);
     }

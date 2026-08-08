@@ -22,7 +22,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | # | Feature | Status | Depends on |
 |---|---------|--------|------------|
 | 1 | Composer v2 API completeness (search.json, list.json, stable/dev split) | ✅ | — |
-| 2 | Local archive storage + dist serving (zips, sha1, cleanup) | 🟡 | — |
+| 2 | Local archive storage + dist serving (zips, sha1, cleanup) | ✅ | — |
 | 3 | Version normalization & ordering (composer/semver) | ❌ | — |
 | 4 | Artifact upload endpoint (CI pushes a zip) | ❌ | 2 |
 | 5 | Multiple named repositories (`/r/{path}`, public/private) | ❌ | — |
@@ -72,24 +72,21 @@ records `shasum` (sha1 of the file), and serves downloads via `Storage::download
 archive is missing. `archives:clean` command prunes orphaned files. Dist URLs in metadata point at the
 app, never at GitHub, so consumers never need GitHub credentials.
 
-**Gap**: package-pipeline builds dist zips at request time by proxying GitHub (check
-`ComposerRepositoryController::dist()`); no shasum, no persistent archives, no pruning.
-
-```text
-In this Laravel app, make package version archives first-class:
-1. Migration: add nullable `archive_path` (string) and `shasum` (string, sha1) to package_versions.
-2. Create app/Services/ArchiveStore.php: given a PackageVersion and a local zip path, store it on the
-   default Storage disk at "packages/{vendor}/{name}/{uuid}.zip", record archive_path + sha1 shasum.
-3. During sync (app/Services/PackageSynchronizer.php), download the GitHub zipball for each new
-   reference (reuse app/Services/GitHub/GitHubClient.php; validate content-type is zip), pass it
-   through ArchiveStore, and skip re-downloading versions whose reference is unchanged.
-4. Update ComposerRepositoryController::dist() to stream the stored archive
-   (Storage::download) and 404 when archive_path is null/missing; update metadata() to include
-   dist.shasum. Keep dist URL shape unchanged.
-5. Add artisan command archives:clean {--dry-run} that deletes stored files not referenced by any
-   PackageVersion, printing each removal.
-6. Feature tests with Storage::fake and Http::fake covering store, serve, 404, and clean. Run tests.
-```
+**Implemented**: `package_versions` carries nullable `archive_path` + `shasum` (folded into the
+create migration, pre-v1). `PackageSynchronizer` downloads the zipball for every new or moved
+reference during sync — `GitHubClient::downloadZipball()` rejects a 200 whose content-type is not a
+zip — and `app/Services/ArchiveStore.php` stores it at `packages/{vendor}/{name}/{uuid7}.zip`,
+recording the path and the file's sha1. Unchanged refs skip the download entirely, and a row missing
+its archive (synced before this feature, or a file gone missing) is treated as changed so the next
+sync backfills it. `ComposerRepositoryController::dist()` streams the stored archive and 404s when
+none is stored — it never reaches for GitHub — and `metadata()` advertises `dist.shasum` so Composer
+verifies downloads. `archives:clean {--dry-run}` prunes files no version references (replaced
+archives get a fresh uuid path rather than an overwrite, so orphans are expected between cleans).
+Two deliberate departures from the prompt: archives live on the existing configurable dist disk
+(`filesystems.dists`, `DIST_DISK`) rather than the default disk, since that knob already existed for
+the request-time cache this replaces; and the columns were folded into the create migration per the
+pre-v1 convention above. Covered in `tests/Feature/ComposerRepositoryTest.php`,
+`tests/Feature/PackageSyncTest.php`, and `tests/Feature/CleanArchivesCommandTest.php`.
 
 ## 3. Version normalization & ordering
 
