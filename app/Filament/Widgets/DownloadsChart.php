@@ -20,9 +20,33 @@ class DownloadsChart extends ChartWidget
 
     protected int|string|array $columnSpan = 'full';
 
+    protected ?string $maxHeight = '160px';
+
     protected function getType(): string
     {
         return 'line';
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function getOptions(): array
+    {
+        return [
+            'plugins' => [
+                'legend' => ['display' => false],
+            ],
+            'scales' => [
+                'y' => [
+                    // Counts can't go negative, and suggestedMax keeps the
+                    // axis from collapsing to a flat band when every day is
+                    // zero (Chart.js otherwise pads the scale to [-1, 1]).
+                    'min' => 0,
+                    'suggestedMax' => 5,
+                    'ticks' => ['precision' => 0],
+                ],
+            ],
+        ];
     }
 
     /**
