@@ -36,7 +36,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 12 | Queued batch imports with progress | ✅ | — |
 | 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | ✅ | — |
 | 13a | Sources with GitHub App auth + package bridging | ✅ | — |
-| 14 | Source project browser + one-click package onboarding | ❌ | 13 |
+| 14 | Source project browser + one-click package onboarding | ✅ | 13 |
 | 15 | Download statistics + dashboard | ✅ | 2 |
 | 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ✅ | 9 |
 | 17 | Operational CLI commands | ✅ | varies |
@@ -375,16 +375,15 @@ projects available to a source token (`GET /sources/{id}/projects?search=`), let
 optionally auto-creates the provider webhook per project, creates each package linked by
 `(source_id, provider_id)`, and kicks off the import batch — packages onboard in one step.
 
-```text
-In this Laravel + Filament app (sources table + SourceClient contract + batch sync exist), build
-package onboarding from a source: a Filament page or PackageResource "Import from source" action
-where the user picks a Source, searches its projects live (SourceClient::projects), multi-selects
-projects, and toggles "create webhook". On submit: for each project, firstOrCreate the Package
-(source_id + provider_id + name from project fullName), optionally call createWebhook (surface
-per-project failures as validation errors without aborting the rest), and dispatch the sync batch.
-Show created packages with links. Tests: onboarding two fake projects creates packages and
-dispatches batches (Bus::fake, Http::fake). Run tests.
-```
+**Implemented**: an "Import from source" header action on the package list (visible once a source
+exists). Pick a source, live-search its projects through `SourceClient::projects()` (the select's
+options *are* the provider listing, keyed by web URL — exactly what the `repository` column
+stores), choose the target Composer repository, and toggle auto-sync. On submit each project is
+`firstOrCreate`d by `(repository_id, repository URL)` with the source attached and a name guessed
+from the URL (the first sync replaces it with composer.json's word); already-onboarded projects are
+counted and skipped, a refused project (name collision, webhook failure) lands in a persistent
+warning without aborting the rest, and every new package gets the same webhook registration and
+queued first sync the create wizard arranges. Covered in `tests/Feature/ImportFromSourceTest.php`.
 
 ## 15. Download statistics + dashboard
 
