@@ -25,7 +25,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 1 | Composer v2 API completeness (search.json, list.json, stable/dev split) | ✅ | — |
 | 2 | Local archive storage + dist serving (zips, sha1, cleanup) | ✅ | — |
 | 3 | Version normalization & ordering (composer/semver) | ❌ | — |
-| 4 | Artifact upload endpoint (CI pushes a zip) | ❌ | 2 |
+| 4 | Artifact upload endpoint (CI pushes a zip) | ✅ | 2 |
 | 5 | Multiple named repositories (`/r/{path}`, public/private) | ✅ | — |
 | 6 | Token authentication for Composer clients (http-basic) | ✅ | — |
 | 7 | Deploy tokens (machine access, repo/package scoped) | ✅ | 6 |
@@ -124,23 +124,20 @@ fly and a version from the zip's `composer.json` (name/description/type extracte
 composer.json keys — require, autoload, scripts, license, authors, etc. — stored as version metadata).
 Requires a write-ability token. This enables "build artifact → publish" pipelines with no VCS source.
 
-```text
-In this Laravel app (private Composer repository, Filament admin), add an artifact upload endpoint:
-1. Route: POST /{vendor}/{package} (name it composer.upload) accepting multipart `file` (required,
-   zip) and optional `version` string. Guard it with the app's Composer token auth if present,
-   otherwise a config('services.composer.upload_token') bearer check as a stopgap.
-2. Create app/Services/CreateVersionFromZip.php: open the zip (ZipArchive), locate composer.json at
-   any top-level folder depth, decode it; resolve version from input or composer.json version key
-   (error 422 if neither); firstOrCreate the Package by "{vendor}/{package}"; upsert a
-   PackageVersion with metadata limited to keys Composer needs (description, license, authors,
-   keywords, homepage, support, bin, autoload, autoload-dev, require, require-dev, conflict,
-   provide, replace, suggest, minimum-stability, prefer-stable, scripts, extra); store the zip via
-   the archive storage service if present (app/Services/ArchiveStore.php), else under
-   storage/app/packages, recording sha1.
-3. Return 201 with the version JSON; 422 with validation-style errors for bad zip / missing name.
-4. Feature tests: successful upload creates package+version+archive; re-upload same version
-   overwrites; missing composer.json rejected. Run tests.
-```
+**Implemented**: `POST /upload/{vendor}/{package}` (and `/r/{path}/upload/...` per repository) —
+one deliberate departure from Packistry's bare `POST /{vendor}/{package}`, which would collide with
+the `/incoming` webhook paths and force a wildcard CSRF exemption; the `/upload` segment gets its
+own narrow exemption and always renders errors as JSON, since CI curls rarely send an Accept
+header. Requires `repository:write`, and the principal's *scope* must reach the addressed
+repository — a scoped deploy token publishes only into granted repositories (or onto its granted
+packages); public means readable, never writable. `CreateVersionFromZip` finds composer.json at the
+top level or one folder deep, 422s a manifest naming a different package than the URL, resolves the
+version from input else manifest (422 when neither), stores the curated metadata subset, and stores
+the zip through `ArchiveStore` in one transaction; the version's dist reference is the file's own
+sha1, so a re-published version is a new URL rather than a silently different file. Uploaded
+packages carry a null VCS `repository` (column made nullable, pre-v1), webhooks off, and no sync
+action; `Package::refreshLatestVersion()` keeps `latest_version` honest. Covered in
+`tests/Feature/ArtifactUploadTest.php`.
 
 ## 5. Multiple named repositories
 

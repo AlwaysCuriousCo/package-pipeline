@@ -241,7 +241,13 @@ class Package extends Model
      */
     public function repositoryPath(): string
     {
-        $repository = trim($this->repository);
+        $repository = trim((string) $this->repository);
+
+        if ($repository === '') {
+            throw new InvalidArgumentException(
+                'This package has no VCS repository URL; it is published by artifact upload.',
+            );
+        }
 
         if (preg_match('#github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$#i', $repository, $matches)) {
             return "{$matches[1]}/{$matches[2]}";
@@ -405,6 +411,26 @@ class Package extends Model
         }
 
         return $devVersions->first();
+    }
+
+    /**
+     * Recompute latest_version from the versions actually stored: the highest
+     * stable tag, or null when only pre-releases and branches exist.
+     *
+     * The synchronizer maintains the column during syncs; this is for the
+     * paths that change versions without one — artifact uploads, rebuilds.
+     */
+    public function refreshLatestVersion(): void
+    {
+        $latest = $this->versions()
+            ->where('is_dev', false)
+            ->pluck('version')
+            ->map(strval(...))
+            ->reject(fn (string $version): bool => (bool) preg_match('/(alpha|beta|rc|dev)/i', $version))
+            ->sort(fn (string $a, string $b): int => version_compare(ltrim($a, 'vV'), ltrim($b, 'vV')))
+            ->last();
+
+        $this->forceFill(['latest_version' => $latest])->save();
     }
 
     /**

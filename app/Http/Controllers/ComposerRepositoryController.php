@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Http\Middleware\ResolveComposerRepository;
+use App\Models\DeployToken;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Models\Repository;
 use App\Models\Token;
+use App\Models\User;
 use App\Services\ArchiveStore;
+use App\Services\CreateVersionFromZip;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -175,6 +178,72 @@ class ComposerRepositoryController extends Controller
         return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [
             'Content-Type' => 'application/zip',
         ]);
+    }
+
+    /**
+     * Publish a version from an uploaded zip — CI pushing what it built.
+     *
+     * Requires a token with the write ability; the middleware never lets an
+     * unauthenticated request through to here.
+     */
+    public function upload(Request $request, CreateVersionFromZip $creator, string $vendor, string $package): JsonResponse
+    {
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:zip'],
+            'version' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $repository = $this->repository($request);
+        $name = mb_strtolower("{$vendor}/{$package}");
+
+        abort_unless(
+            $this->mayUploadTo($request, $repository, $name),
+            403,
+            'This token may not publish into this repository.',
+        );
+
+        $version = $creator->create(
+            $repository,
+            $name,
+            $validated['file']->getRealPath(),
+            $validated['version'] ?? null,
+        );
+
+        return response()->json([
+            'name' => $name,
+            'version' => $version->version,
+            'shasum' => $version->shasum,
+        ], 201);
+    }
+
+    /**
+     * Whether the authenticated principal's scope reaches this repository.
+     *
+     * The write ability says "may publish"; the scope says where. A scoped
+     * principal needs the repository itself granted — or the existing package
+     * when only packages were granted. A public repository is readable by
+     * anyone, which grants nothing about writing into it.
+     */
+    private function mayUploadTo(Request $request, Repository $repository, string $name): bool
+    {
+        $principal = $this->token($request)?->tokenable;
+
+        $existingPackageGranted = fn ($grants): bool => ($existing = $repository->packages()->where('name', $name)->first())
+            && $grants->whereKey($existing->id)->exists();
+
+        if ($principal instanceof User) {
+            return $principal->hasUnscopedAccess()
+                || $principal->repositories()->whereKey($repository->id)->exists()
+                || $existingPackageGranted($principal->packages());
+        }
+
+        if ($principal instanceof DeployToken) {
+            return ! $principal->isScoped()
+                || $principal->repositories()->whereKey($repository->id)->exists()
+                || $existingPackageGranted($principal->packages());
+        }
+
+        return false;
     }
 
     /**

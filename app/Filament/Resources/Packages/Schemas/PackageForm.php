@@ -106,14 +106,20 @@ class PackageForm
     {
         return TextInput::make('repository')
             ->label('Repository URL')
-            ->required()
+            // Required for a synced package; a package published by artifact
+            // upload legitimately has none. The create wizard, whose whole
+            // point is deciphering a repository, re-requires it.
+            ->required(fn (?Package $record): bool => $record === null || filled($record->repository))
             ->url()
             ->maxLength(255)
             ->unique(
                 ignoreRecord: true,
                 modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
             )
-            ->placeholder('https://github.com/vendor/package');
+            ->placeholder('https://github.com/vendor/package')
+            ->helperText(fn (?Package $record): ?string => $record !== null && blank($record->repository)
+                ? 'This package is published by artifact upload; setting a repository URL turns syncing on.'
+                : null);
     }
 
     public static function source(): Select

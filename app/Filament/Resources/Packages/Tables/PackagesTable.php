@@ -30,10 +30,11 @@ class PackagesTable
                 TextColumn::make('repository')
                     ->label('Repository')
                     ->searchable()
-                    ->url(fn (Package $record): string => $record->repository)
+                    ->url(fn (Package $record): ?string => $record->repository)
                     ->openUrlInNewTab()
                     ->color('primary')
-                    ->limit(50),
+                    ->limit(50)
+                    ->placeholder('Uploaded artifacts'),
                 TextColumn::make('composerRepository.name')
                     ->label('Served in')
                     ->badge()

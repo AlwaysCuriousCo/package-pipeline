@@ -23,7 +23,9 @@ return new class extends Migration
             // to their own token or GITHUB_TOKEN until relinked.
             $table->foreignId('source_id')->nullable()->constrained()->nullOnDelete();
 
-            $table->string('repository');
+            // Null for packages published by artifact upload, which have no
+            // VCS repository behind them.
+            $table->string('repository')->nullable();
             $table->string('latest_version')->nullable();
 
             // Composer resolves packages by name, so it must be unique — per

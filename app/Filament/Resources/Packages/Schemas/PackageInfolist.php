@@ -21,9 +21,10 @@ class PackageInfolist
                 TextEntry::make('name'),
                 TextEntry::make('repository')
                     ->label('Repository URL')
-                    ->url(fn (Package $record): string => $record->repository)
+                    ->url(fn (Package $record): ?string => $record->repository)
                     ->openUrlInNewTab()
-                    ->color('primary'),
+                    ->color('primary')
+                    ->placeholder('None — published by artifact upload'),
                 TextEntry::make('latest_version')
                     ->label('Latest version')
                     ->badge()

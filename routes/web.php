@@ -20,25 +20,36 @@ Route::redirect('/', '/admin/login')->name('home');
 // resolves which repository a request addresses; the controller scopes every
 // query to it.
 $composer = function (): void {
-    Route::get('/packages.json', [ComposerRepositoryController::class, 'root'])
-        ->name('root');
-    Route::get('/search.json', [ComposerRepositoryController::class, 'search'])
-        ->name('search');
-    Route::get('/list.json', [ComposerRepositoryController::class, 'list'])
-        ->name('list');
-    Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
-        // Greedy segment so package names containing dots still match.
+    Route::middleware(AuthenticateComposer::class)->group(function (): void {
+        Route::get('/packages.json', [ComposerRepositoryController::class, 'root'])
+            ->name('root');
+        Route::get('/search.json', [ComposerRepositoryController::class, 'search'])
+            ->name('search');
+        Route::get('/list.json', [ComposerRepositoryController::class, 'list'])
+            ->name('list');
+        Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
+            // Greedy segment so package names containing dots still match.
+            ->where('package', '[^/]+')
+            ->name('metadata');
+        Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
+            ->name('dist');
+    });
+
+    // CI publishing a built artifact: multipart `file` (zip) and optional
+    // `version`. Under its own /upload segment rather than Packistry's bare
+    // POST /{vendor}/{package}, which would collide with the /incoming
+    // webhook paths and force a wildcard CSRF exemption.
+    Route::post('/upload/{vendor}/{package}', [ComposerRepositoryController::class, 'upload'])
         ->where('package', '[^/]+')
-        ->name('metadata');
-    Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
-        ->name('dist');
+        ->middleware(AuthenticateComposer::class.':write')
+        ->name('upload');
 };
 
-Route::middleware([ResolveComposerRepository::class, AuthenticateComposer::class])
+Route::middleware(ResolveComposerRepository::class)
     ->name('composer.')
     ->group($composer);
 
-Route::middleware([ResolveComposerRepository::class, AuthenticateComposer::class])
+Route::middleware(ResolveComposerRepository::class)
     ->prefix('r/{repositoryPath}')
     ->where(['repositoryPath' => '[a-z0-9-]+'])
     ->name('composer.repository.')
