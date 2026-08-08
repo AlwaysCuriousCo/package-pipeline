@@ -7,6 +7,7 @@ use BezhanSalleh\FilamentShield\Support\Utils;
 use Filament\Facades\Filament;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
@@ -30,6 +31,14 @@ class CreateAdmin extends Command
         {--link : Print a password reset link rather than prompting for a password}';
 
     protected $description = 'Create or update an admin account without a password passing through the environment';
+
+    /**
+     * How long a printed reset link stays usable. Deliberately much shorter
+     * than the password broker's expiry: the URL lands in consoles and deploy
+     * logs, so it must go stale quickly. The `signed` middleware on the reset
+     * route enforces this, making the token unreachable once the URL expires.
+     */
+    private const LINK_TTL_MINUTES = 5;
 
     public function handle(): int
     {
@@ -112,7 +121,7 @@ class CreateAdmin extends Command
     {
         $email = $this->argument('email');
 
-        if (blank($email) && $this->input->isInteractive()) {
+        if (blank($email) && $this->canPrompt()) {
             $email = text(
                 label: 'Email address',
                 required: true,
@@ -148,7 +157,19 @@ class CreateAdmin extends Command
      */
     private function wantsResetLink(): bool
     {
-        return $this->option('link') || ! $this->input->isInteractive();
+        return $this->option('link') || ! $this->canPrompt();
+    }
+
+    /**
+     * Whether Laravel Prompts would actually accept input, which is stricter
+     * than Symfony's notion of interactive: some command runners (Laravel
+     * Cloud's among them) leave the input flagged interactive while STDIN is
+     * not a TTY, and a required prompt then aborts instead of asking.
+     */
+    private function canPrompt(): bool
+    {
+        return $this->input->isInteractive()
+            && ((defined('STDIN') && stream_isatty(STDIN)) || $this->laravel->runningUnitTests());
     }
 
     private function promptForPassword(): string
@@ -171,15 +192,21 @@ class CreateAdmin extends Command
      */
     private function outputResetLink(User $user): void
     {
-        $url = Filament::getPanel('admin')->getResetPasswordUrl(
-            Password::broker()->createToken($user),
-            $user,
+        // Filament's own getResetPasswordUrl() signs without an expiry,
+        // leaving the link alive as long as the token (an hour by default).
+        $url = URL::temporarySignedRoute(
+            Filament::getPanel('admin')->generateRouteName('auth.password-reset.reset'),
+            now()->addMinutes(self::LINK_TTL_MINUTES),
+            [
+                'email' => $user->getEmailForPasswordReset(),
+                'token' => Password::broker()->createToken($user),
+            ],
         );
 
         $this->newLine();
         $this->components->warn(sprintf(
             'Set a password with this single-use link, which expires in %d minutes:',
-            config('auth.passwords.users.expire'),
+            self::LINK_TTL_MINUTES,
         ));
         $this->line($url);
         $this->newLine();

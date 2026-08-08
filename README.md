@@ -142,10 +142,43 @@ The short version for production:
   ```
 
 - **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
-- **Create the first admin account** with `php artisan admin:create you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a signed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires in an hour; re-run the command for a fresh one. It needs no mail configuration.
+- **Create the first admin account** with `php artisan admin:create you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a signed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same zipball cache. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
 - A health check endpoint is available at `/up`.
+
+### Deploying on Laravel Cloud
+
+[Laravel Cloud](https://cloud.laravel.com) runs this app well with almost no configuration. Create the application from your fork of this repository, then:
+
+1. **Attach a database.** App containers are ephemeral, so the SQLite default won't survive a deploy — attach a Cloud database (MySQL or Postgres) from the environment's **Resources** and let Cloud inject the `DB_*` variables.
+2. **Attach an object storage bucket** and set `DIST_DISK=s3`. Cloud injects the `AWS_*` variables when the bucket is attached; without it, cached zipballs vanish on every deploy and each instance keeps its own cache.
+3. **Add the deploy commands** so migrations and Shield's permission rows are in place before anyone logs in:
+
+   ```bash
+   php artisan migrate --force
+   php artisan db:seed --force
+   ```
+
+4. **Add a queue worker** to the environment (Resources → Queue Worker, default queue). Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
+5. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
+
+#### Create your super admin
+
+Once the first deploy is green, open the environment's **Commands** panel and run:
+
+```bash
+php artisan admin:create you@example.com
+```
+
+Cloud's command runner has no terminal attached, so the command doesn't prompt for a password. Instead it prints a signed, single-use link to the panel's password-reset screen — open it in your browser and set the password there. The password never passes through Cloud's environment variables or command log, and no mail configuration is needed.
+
+Two things to know about the link:
+
+- **It expires 5 minutes after being printed** (deliberately short, since the URL lands in the command log). If it goes stale, just re-run the command — it updates the existing account and prints a fresh link, which also makes it the recovery path for a forgotten password.
+- **It is single-use** — once the password is set, the link is dead.
+
+After adding new Filament resources, re-run both `php artisan shield:generate --all --panel=admin` (locally, committing the generated policies) and `php artisan admin:create you@example.com` (on Cloud) so the `super_admin` role picks up the new permissions — see [Roles and permissions](#roles-and-permissions).
 
 ## Further reading
 

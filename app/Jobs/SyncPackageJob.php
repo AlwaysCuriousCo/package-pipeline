@@ -124,12 +124,22 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
     public static function dispatchUnlessPending(Package $package): bool
     {
         $job = new self($package);
+        $lock = new UniqueLock(app(Cache::class));
 
-        if (! (new UniqueLock(app(Cache::class)))->acquire($job)) {
+        if (! $lock->acquire($job)) {
             return false;
         }
 
-        app(Dispatcher::class)->dispatch($job);
+        try {
+            app(Dispatcher::class)->dispatch($job);
+        } catch (Throwable $exception) {
+            // No job made it onto the queue, so nothing downstream will ever
+            // release the lock — held, it would answer every sync for the
+            // next hour with "already queued".
+            $lock->release($job);
+
+            throw $exception;
+        }
 
         return true;
     }
