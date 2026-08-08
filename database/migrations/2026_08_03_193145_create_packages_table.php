@@ -33,6 +33,11 @@ return new class extends Migration
             // exists as the fallback for repositories the GitHub App's own
             // webhook does not deliver for. Packages under an installed app
             // leave all three null and are covered account-wide.
+            // Whether this package should sync itself when its repository is
+            // pushed to. On by default — a package is added to be published,
+            // and publishing it late is the surprising behaviour.
+            $table->boolean('webhook_enabled')->default(true);
+
             $table->unsignedBigInteger('webhook_id')->nullable();
             $table->text('webhook_secret')->nullable();
             $table->text('webhook_error')->nullable();

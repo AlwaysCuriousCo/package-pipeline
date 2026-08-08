@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\WebhookCoverage;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
+use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Models\Package;
 use App\Models\Source;
@@ -26,6 +27,20 @@ class PackageWebhookRegistrationTest extends TestCase
         parent::setUp();
 
         config(['services.github.app.webhook_secret' => 'the-app-webhook-secret']);
+
+        // Without app credentials there is nothing to ask GitHub with, so the
+        // configured secret is taken at its word. Stated rather than inherited
+        // from whatever .env happens to hold, since it decides whether these
+        // tests reach for the network at all.
+        config(['services.github.app.id' => null, 'services.github.app.private_key' => null]);
+    }
+
+    /**
+     * An app whose webhook GitHub confirms posts to this registry.
+     */
+    private function fakeDeliveringAppWebhook(): void
+    {
+        Http::fake(['api.github.com/app/hook/config' => Http::response(['url' => route('webhooks.github')])]);
     }
 
     /**
@@ -40,6 +55,10 @@ class PackageWebhookRegistrationTest extends TestCase
                 'description' => 'Widgets, assembled.',
             ]),
             'api.github.com/repos/*/hooks' => Http::response(['id' => 8675309], 201),
+            'api.github.com/app/installations/*/access_tokens' => Http::response([
+                'token' => 'ghs_installation',
+                'expires_at' => '2099-01-01T00:00:00Z',
+            ]),
         ]);
     }
 
@@ -48,9 +67,29 @@ class PackageWebhookRegistrationTest extends TestCase
         return Source::factory()->withToken()->create(['account' => $account]);
     }
 
+    /**
+     * A source authenticating as an installed GitHub App, which has to be able
+     * to mint a token before it can create anything on a repository.
+     */
+    private function installedSource(string $account = 'acme'): Source
+    {
+        openssl_pkey_export(openssl_pkey_new([
+            'private_key_bits' => 2048,
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+        ]), $privateKey);
+
+        config([
+            'services.github.app.id' => '123456',
+            'services.github.app.slug' => 'acme-pipeline',
+            'services.github.app.private_key' => $privateKey,
+        ]);
+
+        return Source::factory()->create(['account' => $account]);
+    }
+
     public function test_a_package_under_an_installed_app_needs_no_webhook_of_its_own(): void
     {
-        Http::fake();
+        $this->fakeDeliveringAppWebhook();
 
         $package = Package::factory()->create([
             'repository' => 'https://github.com/acme/widgets',
@@ -62,7 +101,30 @@ class PackageWebhookRegistrationTest extends TestCase
         $this->assertNull($package->refresh()->webhook_id);
 
         // Creating a second hook on the repository would only sync it twice.
-        Http::assertNothingSent();
+        Http::assertNotSent(fn ($request): bool => str_contains($request->url(), '/hooks'));
+    }
+
+    /**
+     * The app's webhook is only coverage if GitHub says it delivers here. An
+     * app registered with Webhook → Active unchecked delivers nothing, and a
+     * package told it was covered would never get the repository hook that
+     * would have worked — silently, which is the one thing auto-sync must not
+     * do.
+     */
+    public function test_a_package_is_not_called_covered_by_an_app_webhook_that_was_never_switched_on(): void
+    {
+        $this->fakeGitHub();
+
+        Http::fake(['api.github.com/app/hook/config' => Http::response(['message' => 'Not Found'], 404)]);
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->installedSource()->id,
+        ]);
+
+        $this->assertSame(WebhookCoverage::None, $package->webhookCoverage());
+        $this->assertSame(WebhookCoverage::Repository, app(WebhookRegistrar::class)->register($package));
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
     }
 
     public function test_a_package_the_app_does_not_cover_gets_a_repository_webhook(): void
@@ -173,20 +235,198 @@ class PackageWebhookRegistrationTest extends TestCase
         $this->assertStringContainsString('database went away', (string) $package->webhook_error);
     }
 
-    public function test_an_app_covered_package_is_flagged_when_no_secret_is_configured_here(): void
+    /**
+     * A registry that has not set the app's webhook up is not a registry
+     * whose packages should sit there waiting to be told about it.
+     */
+    public function test_an_app_installed_package_falls_back_to_its_own_webhook_when_no_secret_is_configured(): void
     {
         config(['services.github.app.webhook_secret' => null]);
 
+        $this->fakeGitHub();
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->installedSource()->id,
+        ]);
+
+        $this->assertSame(WebhookCoverage::Repository, app(WebhookRegistrar::class)->register($package));
+
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+        $this->assertNull(app(WebhookRegistrar::class)->unmetRequirement($package));
+    }
+
+    /**
+     * That fallback needs a permission the app may not have been given, and
+     * the way out of it is the app's own webhook rather than the repository's.
+     */
+    public function test_an_app_installed_package_is_told_both_ways_out_when_the_fallback_is_refused(): void
+    {
+        config(['services.github.app.webhook_secret' => null]);
+
+        Http::fake([
+            'api.github.com/repos/*/hooks' => Http::response(['message' => 'Resource not accessible by integration'], 403),
+            'api.github.com/app/installations/*/access_tokens' => Http::response([
+                'token' => 'ghs_installation',
+                'expires_at' => '2099-01-01T00:00:00Z',
+            ]),
+        ]);
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->installedSource()->id,
+        ]);
+
+        $this->assertSame(WebhookCoverage::Failed, app(WebhookRegistrar::class)->register($package));
+
+        $requirement = (string) app(WebhookRegistrar::class)->unmetRequirement($package);
+
+        $this->assertStringContainsString('GITHUB_APP_WEBHOOK_SECRET', $requirement);
+        $this->assertStringContainsString('Webhooks: Read and write', $requirement);
+    }
+
+    /**
+     * A hook that already exists keeps delivering whatever else is configured
+     * later, so it must not be described as covered by something it is not.
+     */
+    public function test_a_package_with_its_own_hook_keeps_it_once_the_app_webhook_is_set_up(): void
+    {
         $package = Package::factory()->create([
             'repository' => 'https://github.com/acme/widgets',
             'source_id' => Source::factory()->create(['account' => 'acme'])->id,
         ]);
 
-        $this->assertSame(WebhookCoverage::Unconfigured, $package->webhookCoverage());
-        $this->assertStringContainsString(
-            'GITHUB_APP_WEBHOOK_SECRET',
-            (string) app(WebhookRegistrar::class)->unmetRequirement($package),
-        );
+        $package->forceFill(['webhook_id' => 8675309, 'webhook_secret' => 'secret'])->save();
+
+        $this->assertSame(WebhookCoverage::Repository, $package->webhookCoverage());
+    }
+
+    public function test_a_new_package_syncs_on_push_unless_it_is_told_otherwise(): void
+    {
+        $this->assertTrue((new Package)->webhook_enabled);
+        $this->assertTrue(Package::factory()->create()->webhook_enabled);
+    }
+
+    public function test_a_package_with_auto_sync_switched_off_has_no_webhook_arranged(): void
+    {
+        Http::fake();
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->tokenSource()->id,
+            'webhook_enabled' => false,
+        ]);
+
+        $this->assertSame(WebhookCoverage::Disabled, $package->webhookCoverage());
+        $this->assertSame(WebhookCoverage::Disabled, app(WebhookRegistrar::class)->reconcile($package));
+        $this->assertNull($package->refresh()->webhook_id);
+
+        // Off is off, not "left undone".
+        $this->assertNull(app(WebhookRegistrar::class)->unmetRequirement($package));
+
+        Http::assertNothingSent();
+    }
+
+    public function test_switching_auto_sync_off_removes_the_webhook_from_github(): void
+    {
+        $this->fakeGitHub();
+        Http::fake(['api.github.com/repos/*/hooks/8675309' => Http::response(status: 204)]);
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->tokenSource()->id,
+        ]);
+
+        app(WebhookRegistrar::class)->reconcile($package);
+
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+
+        $package->forceFill(['webhook_enabled' => false])->save();
+
+        $this->assertSame(WebhookCoverage::Disabled, app(WebhookRegistrar::class)->reconcile($package));
+
+        Http::assertSent(fn ($request): bool => $request->method() === 'DELETE'
+            && $request->url() === 'https://api.github.com/repos/acme/widgets/hooks/8675309');
+
+        $package->refresh();
+
+        $this->assertNull($package->webhook_id);
+        $this->assertNull($package->webhook_secret);
+    }
+
+    public function test_switching_auto_sync_on_again_sets_the_webhook_back_up(): void
+    {
+        $this->fakeGitHub();
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->tokenSource()->id,
+            'webhook_enabled' => false,
+        ]);
+
+        $package->forceFill(['webhook_enabled' => true])->save();
+
+        $this->assertSame(WebhookCoverage::Repository, app(WebhookRegistrar::class)->reconcile($package));
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+    }
+
+    public function test_the_toggle_on_the_edit_page_creates_and_removes_the_webhook(): void
+    {
+        $this->fakeGitHub();
+        Http::fake(['api.github.com/repos/*/hooks/8675309' => Http::response(status: 204)]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->tokenSource()->id,
+            'webhook_enabled' => false,
+        ]);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getKey()])
+            ->fillForm(['webhook_enabled' => true])
+            ->call('save')
+            ->assertHasNoFormErrors()
+            ->assertNotified();
+
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getKey()])
+            ->fillForm(['webhook_enabled' => false])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $package->refresh();
+
+        $this->assertFalse($package->webhook_enabled);
+        $this->assertNull($package->webhook_id);
+
+        Http::assertSent(fn ($request): bool => $request->method() === 'DELETE');
+    }
+
+    /**
+     * Editing anything else must not cost an API call, nor quietly retry a
+     * webhook that failed for a reason nobody has fixed yet.
+     */
+    public function test_an_edit_that_leaves_the_toggle_alone_does_not_touch_github(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/acme/widgets',
+            'source_id' => $this->tokenSource()->id,
+        ]);
+
+        Http::fake();
+
+        Livewire::test(EditPackage::class, ['record' => $package->getKey()])
+            ->fillForm(['description' => 'A better description.'])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('A better description.', $package->refresh()->description);
+
+        Http::assertNothingSent();
     }
 
     public function test_creating_a_package_through_the_wizard_registers_its_webhook(): void

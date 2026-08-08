@@ -6,7 +6,9 @@ use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Services\GitHub\GitHubClient;
 use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -22,10 +24,69 @@ class ComposerRepositoryController extends Controller
      */
     public function root(): JsonResponse
     {
+        // `search` and `list` rather than `available-packages`: inlining every
+        // name defeats Composer's lazy metadata loading and hands the full
+        // package list to anyone who fetches the root.
         return response()->json([
             'metadata-url' => '/p2/%package%.json',
-            'available-packages' => Package::query()->has('versions')->orderBy('name')->pluck('name'),
+            'search' => url('/search.json').'?q=%query%&type=%type%',
+            'list' => url('/list.json'),
         ]);
+    }
+
+    /**
+     * Search served packages by name prefix and optional Composer type,
+     * mirroring packagist.org's search.json shape.
+     */
+    public function search(Request $request): JsonResponse
+    {
+        // `%` and `_` in the query are literals, not wildcards — a search for
+        // "acme/%" must not enumerate the registry.
+        $prefix = addcslashes($request->string('q')->toString(), '\\%_');
+
+        $results = $this->servedPackages()
+            ->whereLike('name', "{$prefix}%")
+            ->when(
+                $request->filled('type'),
+                fn (Builder $query) => $query->where('type', $request->string('type')->toString()),
+            )
+            ->orderBy('name')
+            ->get(['name', 'description'])
+            ->map(fn (Package $package): array => [
+                'name' => $package->name,
+                'description' => (string) $package->description,
+                // Downloads are not tracked yet; the key is part of the
+                // packagist.org response shape, so it is served as zero
+                // rather than omitted.
+                'downloads' => 0,
+            ]);
+
+        return response()->json([
+            'total' => $results->count(),
+            'results' => $results,
+        ]);
+    }
+
+    /**
+     * Every package name this repository serves.
+     */
+    public function list(): JsonResponse
+    {
+        return response()->json([
+            'packageNames' => $this->servedPackages()->orderBy('name')->pluck('name'),
+        ]);
+    }
+
+    /**
+     * Packages the repository actually serves. A package with no synced
+     * versions resolves to nothing, so advertising it in search or list
+     * results would only produce dead ends.
+     *
+     * @return Builder<Package>
+     */
+    private function servedPackages(): Builder
+    {
+        return Package::query()->has('versions');
     }
 
     /**

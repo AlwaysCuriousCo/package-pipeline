@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\SourceProvider;
+use App\Enums\WebhookState;
 use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Sources\Pages\CreateSource;
 use App\Filament\Resources\Sources\Pages\EditSource;
@@ -12,6 +13,8 @@ use App\Filament\Resources\Sources\RelationManagers\PackagesRelationManager;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
+use App\Services\GitHub\GitHubApp;
+use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
@@ -39,6 +42,17 @@ class SourceResourceTest extends TestCase
             'private_key' => $pem,
             'api_url' => 'https://api.github.com',
         ]);
+    }
+
+    /**
+     * An app that can be asked about its webhook, and a secret to verify the
+     * deliveries it would send.
+     */
+    private function configureGitHubAppWebhook(): void
+    {
+        $this->configureGitHubApp();
+
+        config()->set('services.github.app.webhook_secret', 'the-app-webhook-secret');
     }
 
     public function test_the_index_offers_connecting_without_creating_a_record_first(): void
@@ -176,6 +190,134 @@ class SourceResourceTest extends TestCase
             ->assertOk()
             ->assertSee($source->account)
             ->assertSee('GitHub App installation #'.$source->installation_id);
+    }
+
+    /**
+     * The app's webhook is set up once and covers every repository under every
+     * source, so the source page is where an admin is told how — with the
+     * secret generated for them rather than asked for.
+     */
+    public function test_the_view_page_offers_the_webhook_settings_when_none_is_configured(): void
+    {
+        config(['services.github.app.webhook_secret' => null]);
+
+        $source = Source::factory()->create(['account' => 'acme']);
+
+        Livewire::test(ViewSource::class, ['record' => $source->getKey()])
+            ->assertOk()
+            ->assertSee('No secret set')
+            ->assertSee(route('webhooks.github'))
+            ->assertSee('GITHUB_APP_WEBHOOK_SECRET')
+            ->assertSee(app(GitHubApp::class)->suggestedWebhookSecret());
+    }
+
+    /**
+     * A secret in the environment says nothing about whether the app was ever
+     * given a webhook to sign with it, so GitHub is asked.
+     */
+    public function test_an_app_with_no_webhook_of_its_own_is_reported_as_not_switched_on(): void
+    {
+        $this->configureGitHubAppWebhook();
+
+        Http::fake(['api.github.com/app/hook/config' => Http::response(['message' => 'Not Found'], 404)]);
+
+        $this->assertSame(WebhookState::Absent, app(GitHubApp::class)->webhookState());
+        $this->assertFalse(app(GitHubApp::class)->hasWebhook());
+
+        Livewire::test(ViewSource::class, ['record' => Source::factory()->create()->getKey()])
+            ->assertOk()
+            ->assertSee('Not switched on');
+    }
+
+    public function test_an_app_webhook_pointing_at_another_environment_is_not_counted_as_coverage(): void
+    {
+        $this->configureGitHubAppWebhook();
+
+        Http::fake(['api.github.com/app/hook/config' => Http::response([
+            'url' => 'https://packages.example.com/incoming/github',
+            'content_type' => 'json',
+        ])]);
+
+        $this->assertSame(WebhookState::Elsewhere, app(GitHubApp::class)->webhookState());
+        $this->assertFalse(app(GitHubApp::class)->hasWebhook());
+        $this->assertSame('https://packages.example.com/incoming/github', app(GitHubApp::class)->deliveringTo());
+    }
+
+    public function test_an_app_webhook_posting_here_is_confirmed(): void
+    {
+        $this->configureGitHubAppWebhook();
+
+        Http::fake(['api.github.com/app/hook/config' => Http::response([
+            'url' => route('webhooks.github'),
+            'content_type' => 'json',
+        ])]);
+
+        $this->assertSame(WebhookState::Delivering, app(GitHubApp::class)->webhookState());
+        $this->assertTrue(app(GitHubApp::class)->hasWebhook());
+    }
+
+    /**
+     * GitHub being unreachable is not evidence that the webhook is gone, and
+     * treating it as such would grow a repository hook on every package
+     * created during an outage.
+     */
+    public function test_github_being_unreachable_leaves_the_configured_secret_its_benefit_of_the_doubt(): void
+    {
+        $this->configureGitHubAppWebhook();
+
+        Http::fake(['api.github.com/app/hook/config' => Http::response(['message' => 'Bad gateway'], 502)]);
+
+        $this->assertSame(WebhookState::Unverifiable, app(GitHubApp::class)->webhookState());
+        $this->assertTrue(app(GitHubApp::class)->hasWebhook());
+    }
+
+    public function test_rechecking_asks_github_again_rather_than_the_cache(): void
+    {
+        $this->configureGitHubAppWebhook();
+
+        // The webhook is switched on between the two checks, which the cached
+        // answer would go on denying for another five minutes.
+        Http::fakeSequence('api.github.com/app/hook/config')
+            ->push(['message' => 'Not Found'], 404)
+            ->push(['url' => route('webhooks.github')]);
+
+        $this->assertFalse(app(GitHubApp::class)->hasWebhook());
+
+        Livewire::test(ViewSource::class, ['record' => Source::factory()->create()->getKey()])
+            ->callAction(TestAction::make('recheckWebhook')->schemaComponent('webhook'))
+            ->assertNotified();
+
+        $this->assertTrue(app(GitHubApp::class)->hasWebhook());
+    }
+
+    public function test_the_view_page_stops_offering_a_secret_once_one_is_set(): void
+    {
+        config(['services.github.app.webhook_secret' => 'already-set']);
+
+        $source = Source::factory()->create(['account' => 'acme']);
+
+        Livewire::test(ViewSource::class, ['record' => $source->getKey()])
+            ->assertOk()
+            ->assertSee('Configured')
+            // The configured secret lives in the environment and is never read
+            // back out to a browser.
+            ->assertDontSee('already-set')
+            ->assertDontSee(app(GitHubApp::class)->suggestedWebhookSecret());
+    }
+
+    /**
+     * A token-based source does not authenticate as the app, so the app's
+     * webhook has nothing to do with its repositories.
+     */
+    public function test_a_token_source_is_not_offered_the_app_webhook_settings(): void
+    {
+        config(['services.github.app.webhook_secret' => null]);
+
+        $source = Source::factory()->withToken()->create(['account' => 'acme']);
+
+        Livewire::test(ViewSource::class, ['record' => $source->getKey()])
+            ->assertOk()
+            ->assertDontSee('GITHUB_APP_WEBHOOK_SECRET');
     }
 
     public function test_the_view_page_lists_the_packages_bridged_through_the_source(): void

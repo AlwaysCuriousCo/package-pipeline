@@ -21,7 +21,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 
 | # | Feature | Status | Depends on |
 |---|---------|--------|------------|
-| 1 | Composer v2 API completeness (search.json, list.json, stable/dev split) | 🟡 | — |
+| 1 | Composer v2 API completeness (search.json, list.json, stable/dev split) | ✅ | — |
 | 2 | Local archive storage + dist serving (zips, sha1, cleanup) | 🟡 | — |
 | 3 | Version normalization & ordering (composer/semver) | ❌ | — |
 | 4 | Artifact upload endpoint (CI pushes a zip) | ❌ | 2 |
@@ -56,20 +56,13 @@ serves only stable versions; `/p2/{vendor}/{name}~dev.json` serves only `dev-*` 
 Packistry does **not** use `available-packages` (which package-pipeline currently emits — it defeats
 lazy loading and leaks the package list).
 
-**Gap**: package-pipeline lacks `search.json`/`list.json`, and exposes all names via `available-packages`.
-
-```text
-In this Laravel app (a private Composer v2 repository), extend app/Http/Controllers/ComposerRepositoryController.php:
-1. Replace the `available-packages` key in root() with `list` and `search` keys pointing to new
-   routes /list.json and /search.json?q=%query%&type=%type% (absolute URLs via url()).
-2. Add search(): filter Package by name prefix (LIKE "q%") and optional composer `type` column,
-   return {total, results: [{name, description, downloads}]} (downloads 0 if not tracked yet).
-3. Add list(): return {packageNames: [...]} sorted by name.
-4. Keep the existing /p2 metadata behavior (stable vs ~dev split already implemented).
-5. Register routes in routes/web.php next to the existing composer.* routes and add feature tests
-   covering root/search/list JSON shapes, verifying Composer v2 spec compliance
-   (https://repo.packagist.org/packages.json format). Run the full test suite.
-```
+**Implemented**: `root()` now advertises `search` and `list` instead of `available-packages`;
+`/search.json` filters served packages by name prefix (LIKE wildcards in the query are escaped) and
+optional `type`, returning `{total, results:[{name, description, downloads}]}` with `downloads: 0`
+until download tracking (item 15) exists; `/list.json` returns `{packageNames:[...]}` sorted. Both
+endpoints only advertise packages that have at least one synced version — an unsynced package
+resolves to nothing, so listing it would be a dead end. Covered in
+`tests/Feature/ComposerRepositoryTest.php`.
 
 ## 2. Local archive storage + dist serving
 
@@ -301,14 +294,16 @@ onboarded (`Client::createWebhook`).
 **Implemented**, with three deliberate departures from Packistry's design — see
 [webhooks.md](webhooks.md):
 
-- **One app-level webhook, not one per package.** Sources authenticate as a GitHub App, and an App
-  has a single webhook covering every repository in every installation (`POST /incoming/github`,
-  signed with `GITHUB_APP_WEBHOOK_SECRET`). Nothing is created per package, repositories added to an
-  installation later are covered for free, and no new repository permission is requested —
-  per-repository hooks need **Repository webhooks: write**, which every installation owner would
-  have to re-approve. Packistry has no App path, so per-repo hooks are its only option.
-  `POST /incoming/github/{package}` remains as exactly that fallback, for token-based sources, and
-  `WebhookRegistrar` creates one on package create.
+- **An app-level webhook in front of Packistry's per-package one.** Packistry only has token auth,
+  so a hook on each repository is its only option. Sources here can authenticate as a GitHub App,
+  which has a single webhook covering every repository in every installation
+  (`POST /incoming/github`, signed with `GITHUB_APP_WEBHOOK_SECRET`) — nothing per package, new
+  repositories covered for free, and no permission beyond the read-only ones syncing already needs.
+  Packistry's approach remains as the fallback and the general case: `WebhookRegistrar` creates a
+  hook on the repository at package-create time (`POST /incoming/github/{package}`, its own
+  encrypted secret) whenever the app webhook is not covering it — including on a registry that has
+  simply not set the app webhook up. Configuring it is offered on the source page, where the payload
+  URL and a generated secret are shown, rather than left to this document.
 - **A full sync per delivery, not a single-ref import.** `PackageSynchronizer::unchanged()` already
   skips refs whose sha has not moved, so a delivery costs two API calls when nothing changed;
   a separate surgical import path would be a second implementation of version building to keep

@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\WebhookCoverage;
 use App\Models\Package;
 use App\Models\Source;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 
 /**
@@ -29,8 +31,32 @@ class PackageForm
                 self::token(),
                 self::latestVersion(),
                 self::type(),
+                self::webhookEnabled(),
                 self::description(),
             ]);
+    }
+
+    /**
+     * Whether pushes to the repository sync this package.
+     *
+     * Saving this on decides how the package is reached — a hook is created on
+     * the repository unless the GitHub App's webhook already covers it —
+     * and saving it off takes that hook back down. Deliveries that arrive
+     * anyway, through the app's account-wide webhook, are ignored for this
+     * package, so the switch means the same thing either way.
+     */
+    public static function webhookEnabled(): Toggle
+    {
+        return Toggle::make('webhook_enabled')
+            ->label('Sync automatically on push')
+            ->default(true)
+            ->helperText(fn (?Package $record): string => match (true) {
+                ! $record instanceof Package => 'A webhook is set up on the repository when the package is created, unless the GitHub App\'s webhook already covers it.',
+                $record->webhook_enabled => 'On. '.($record->webhookCoverage() === WebhookCoverage::Application
+                    ? 'Delivered through the GitHub App\'s webhook; turning this off stops this package syncing on push, and leaves the app\'s webhook alone.'
+                    : 'Turning this off removes the webhook from the repository.'),
+                default => 'Off — this package only syncs when asked. Turning it on sets the webhook up again.',
+            });
     }
 
     public static function name(): TextInput

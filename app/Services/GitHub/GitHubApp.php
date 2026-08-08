@@ -2,12 +2,15 @@
 
 namespace App\Services\GitHub;
 
+use App\Enums\WebhookState;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 /**
  * The registered GitHub App, which is how this registry authenticates against
@@ -47,6 +50,149 @@ class GitHubApp
     {
         return filled(config('services.github.app.id'))
             && filled(config('services.github.app.private_key'));
+    }
+
+    /**
+     * Whether the app's own webhook actually delivers to this registry.
+     *
+     * A secret in the environment is necessary — it is what proves a delivery
+     * came from GitHub — but it is not evidence of anything on GitHub's side.
+     * An app whose webhook was never switched on, or whose payload URL points
+     * at another environment, will happily let a registry believe it is
+     * covered while nothing is ever delivered, which is the one failure this
+     * feature must not have. So GitHub is asked.
+     *
+     * A false answer is not a fault: it means packages fall back to a webhook
+     * on their own repository, which is the general case anyway.
+     */
+    public function hasWebhook(): bool
+    {
+        return match ($this->webhookState()) {
+            WebhookState::Delivering => true,
+            // Nothing to ask GitHub with, or GitHub could not be reached. The
+            // configured secret keeps its benefit of the doubt: an outage is
+            // not evidence the webhook is gone, and treating it as such would
+            // grow a repository hook on every package created during one.
+            WebhookState::Unverifiable => true,
+            WebhookState::NoSecret, WebhookState::Absent, WebhookState::Elsewhere => false,
+        };
+    }
+
+    /**
+     * What GitHub says about the app's webhook, which is not always what the
+     * environment implies.
+     */
+    public function webhookState(): WebhookState
+    {
+        if (blank(config('services.github.app.webhook_secret'))) {
+            return WebhookState::NoSecret;
+        }
+
+        if (! $this->isConfigured()) {
+            return WebhookState::Unverifiable;
+        }
+
+        try {
+            $configured = $this->webhookConfiguration();
+        } catch (Throwable) {
+            // GitHub being unreachable is not evidence that the webhook is
+            // gone, and treating it as such would have every package created
+            // during an outage grow a repository hook it does not need. The
+            // configured secret keeps its benefit of the doubt.
+            return WebhookState::Unverifiable;
+        }
+
+        return match (true) {
+            $configured === null => WebhookState::Absent,
+            ($configured['url'] ?? null) === $this->webhookUrl() => WebhookState::Delivering,
+            default => WebhookState::Elsewhere,
+        };
+    }
+
+    /**
+     * Where the app's webhook actually posts, when that is knowable and is
+     * somewhere other than here — the detail that turns "pointing elsewhere"
+     * into something an admin can act on.
+     */
+    public function deliveringTo(): ?string
+    {
+        try {
+            $url = $this->isConfigured() ? ($this->webhookConfiguration()['url'] ?? null) : null;
+        } catch (Throwable) {
+            return null;
+        }
+
+        return is_string($url) ? $url : null;
+    }
+
+    /**
+     * The app's webhook configuration as GitHub holds it, or null when the app
+     * has no webhook — which is what a 404 on this endpoint means.
+     *
+     * Cached briefly: it is read on every page that reports coverage, and it
+     * changes only when someone edits the app's settings.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function webhookConfiguration(): ?array
+    {
+        $this->ensureConfigured();
+
+        // "No webhook" is cached as false rather than null, because a null is
+        // indistinguishable from a cache miss and would put this request back
+        // on GitHub for every page that asks.
+        $configured = Cache::remember(
+            'github-app.webhook-config.'.config('services.github.app.id'),
+            now()->addMinutes(5),
+            function (): array|false {
+                $response = $this->request()->withToken($this->jwt())->get('/app/hook/config');
+
+                // GitHub answers 404 here when the app has no webhook at all,
+                // which is what an app registered with "Active" unchecked has.
+                if ($response->status() === 404) {
+                    return false;
+                }
+
+                return $response->throw()->json();
+            },
+        );
+
+        return $configured === false ? null : $configured;
+    }
+
+    /**
+     * Drop the cached answer, so a webhook just switched on is seen now rather
+     * than in five minutes.
+     */
+    public function forgetWebhookConfiguration(): void
+    {
+        Cache::forget('github-app.webhook-config.'.config('services.github.app.id'));
+    }
+
+    /**
+     * The payload URL to set on the app's webhook. One URL for every
+     * repository in every installation.
+     */
+    public function webhookUrl(): string
+    {
+        return route('webhooks.github');
+    }
+
+    /**
+     * A secret to offer an admin who has not set one, so that configuring the
+     * webhook is copying two values rather than inventing one.
+     *
+     * It is remembered for a day because it is shown in two places that have
+     * to agree — GitHub's settings page and an `.env` file — and a suggestion
+     * that changed on every page load could not be used for either.
+     */
+    public function suggestedWebhookSecret(): string
+    {
+        return Cache::remember(
+            'github-app.suggested-webhook-secret',
+            now()->addDay(),
+            fn (): string => Str::random(40),
+        );
     }
 
     /**

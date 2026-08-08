@@ -14,6 +14,10 @@ Route::redirect('/', '/admin/login')->name('home');
 //   composer config repositories.private composer <this-app's-url>
 Route::get('/packages.json', [ComposerRepositoryController::class, 'root'])
     ->name('composer.root');
+Route::get('/search.json', [ComposerRepositoryController::class, 'search'])
+    ->name('composer.search');
+Route::get('/list.json', [ComposerRepositoryController::class, 'list'])
+    ->name('composer.list');
 Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
     // Greedy segment so package names containing dots still match.
     ->where('package', '[^/]+')
