@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\PackageDownloaded;
 use App\Http\Middleware\ResolveComposerRepository;
 use App\Models\DeployToken;
 use App\Models\Package;
@@ -64,14 +65,11 @@ class ComposerRepositoryController extends Controller
                 fn (Builder $query) => $query->where('type', $request->string('type')->toString()),
             )
             ->orderBy('name')
-            ->get(['name', 'description'])
+            ->get(['name', 'description', 'total_downloads'])
             ->map(fn (Package $package): array => [
                 'name' => $package->name,
                 'description' => (string) $package->description,
-                // Downloads are not tracked yet; the key is part of the
-                // packagist.org response shape, so it is served as zero
-                // rather than omitted.
-                'downloads' => 0,
+                'downloads' => $package->total_downloads,
             ]);
 
         return response()->json([
@@ -173,6 +171,16 @@ class ComposerRepositoryController extends Controller
             $version instanceof PackageVersion,
             404,
             "No archive is stored for {$name}@{$reference}; syncing the package will build it.",
+        );
+
+        // Only an archive actually being served counts; every 404 above
+        // returned before reaching this line.
+        PackageDownloaded::dispatch(
+            $record->id,
+            $version->id,
+            $version->version,
+            $request->ip(),
+            $this->token($request)?->token_prefix,
         );
 
         return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [

@@ -24,6 +24,10 @@ return new class extends Migration
             $table->string('archive_path')->nullable();
             $table->string('shasum', 40)->nullable();
 
+            // Denormalized from the downloads table, kept by the download
+            // listener and downloads:recalculate.
+            $table->unsignedBigInteger('total_downloads')->default(0);
+
             // Nullable because a ref may resolve before its date is known; the
             // next sync backfills it, since a null date is what looks stale.
             $table->timestamp('released_at')->nullable()->index();

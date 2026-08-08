@@ -38,6 +38,11 @@ return new class extends Migration
             $table->timestamp('last_synced_at')->nullable();
             $table->text('sync_error')->nullable();
 
+            // Denormalized from the downloads table so search results and
+            // sortable listings never need a count over it;
+            // `downloads:recalculate` rebuilds it from the source of truth.
+            $table->unsignedBigInteger('total_downloads')->default(0);
+
             // The job batch currently (or last) rebuilding this package's
             // versions, so the panel can show the imports' progress.
             $table->string('sync_batch_id')->nullable();

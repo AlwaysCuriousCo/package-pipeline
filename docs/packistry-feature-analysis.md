@@ -37,7 +37,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | 🟡 | — |
 | 13a | Sources with GitHub App auth + package bridging | ✅ | — |
 | 14 | Source project browser + one-click package onboarding | ❌ | 13 |
-| 15 | Download statistics + dashboard | ❌ | 2 |
+| 15 | Download statistics + dashboard | ✅ | 2 |
 | 16 | SSO / authentication sources (OIDC, GitHub, Google…) | ❌ | 9 |
 | 17 | Operational CLI commands | 🟡 | varies |
 | 18 | Package rebuild & maintenance jobs | 🟡 | 2, 12 |
@@ -403,19 +403,19 @@ a 90-day per-day chart; denormalized `total_downloads` on packages/versions feed
 lists. The dashboard shows permission-gated counts (packages, repos, users, tokens, sources) plus the
 chart.
 
-```text
-In this Laravel + Filament app, add download analytics:
-1. Migration: downloads table (package_id FK, package_version_id FK nullable, ip string nullable,
-   token identifier nullable, created_at indexed) + total_downloads unsignedBigInteger default 0 on
-   packages and package_versions.
-2. Fire an event from ComposerRepositoryController::dist() after a successful archive response; a
-   queued listener inserts the Download row and increments both counters.
-3. Artisan command downloads:recalculate to rebuild counters from the table.
-4. Filament dashboard widgets: StatsOverview (package count, version count, downloads last 30 days)
-   and a per-day downloads chart for the last 90 days (single grouped query on created_at date).
-   Add a total_downloads column to the PackageResource table, sortable.
-5. Tests: downloading dist creates a row and bumps counters; chart query groups correctly. Run tests.
-```
+**Implemented** as specified: a `downloads` table (package FK, nullable version FK *plus* the
+version string so history survives pruned branches, ip, the fetching token's prefix, indexed
+created_at) and `total_downloads` counters folded into the packages/package_versions create
+migrations (pre-v1). `dist()` dispatches `PackageDownloaded` — scalars, not models, so the queued
+`RecordDownload` listener still counts a download whose version row was pruned before the job ran —
+only after every 404 check has passed; the listener writes the row and bumps both counters.
+`downloads:recalculate` rebuilds the counters with two correlated-subquery updates (portable across
+SQLite/MySQL/Postgres). Dashboard: `RegistryStatsOverview` (packages, versions, downloads over 30
+days / all time) and a 90-day per-day `DownloadsChart`, both scoped through `visibleToUser()` like
+the release heatmap — a granted user reads a dashboard about *their* packages; `search.json` serves
+the real counter, and the package table gains a sortable Downloads column. Grouping happens in PHP
+(same reasoning as the heatmap: date truncation has no portable SQL spelling). Covered in
+`tests/Feature/DownloadStatsTest.php`.
 
 ## 16. SSO / authentication sources
 

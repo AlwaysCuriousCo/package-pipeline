@@ -64,6 +64,11 @@ class PackagesTable
                     ->label('Versions')
                     ->counts('versions')
                     ->sortable(),
+                TextColumn::make('total_downloads')
+                    ->label('Downloads')
+                    ->numeric()
+                    ->sortable()
+                    ->toggleable(),
                 TextColumn::make('last_synced_at')
                     ->label('Last synced')
                     ->since()
