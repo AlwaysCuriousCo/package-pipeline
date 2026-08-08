@@ -10,6 +10,7 @@ use Database\Factories\PackageFactory;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchRepository;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -93,6 +94,40 @@ class Package extends Model
     public function composerRepository(): BelongsTo
     {
         return $this->belongsTo(Repository::class, 'repository_id');
+    }
+
+    /**
+     * Narrow to the packages the presenting token may see — the one place
+     * the Composer endpoints' access control lives.
+     *
+     * No token sees public repositories only. A user's personal token sees
+     * everything its owner does. A deploy token sees public repositories
+     * plus whatever it was granted — or everything, when it holds no grants.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeVisibleTo(Builder $query, ?Token $token): Builder
+    {
+        $principal = $token?->tokenable;
+
+        if ($principal instanceof User) {
+            return $query;
+        }
+
+        if ($principal instanceof DeployToken && ! $principal->isScoped()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($principal): void {
+            $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true));
+
+            if ($principal instanceof DeployToken) {
+                $query
+                    ->orWhereIn('packages.id', $principal->packages()->select('packages.id'))
+                    ->orWhereIn('packages.repository_id', $principal->repositories()->select('repositories.id'));
+            }
+        });
     }
 
     /**

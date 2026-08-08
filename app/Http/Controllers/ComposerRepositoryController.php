@@ -6,6 +6,7 @@ use App\Http\Middleware\ResolveComposerRepository;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Models\Repository;
+use App\Models\Token;
 use App\Services\ArchiveStore;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -97,7 +98,10 @@ class ComposerRepositoryController extends Controller
         $dev = str_ends_with($package, '~dev');
         $name = "{$vendor}/".($dev ? substr($package, 0, -4) : $package);
 
-        $record = $repository->packages()->where('name', $name)->first();
+        $record = $repository->packages()
+            ->visibleTo($this->token($request))
+            ->where('name', $name)
+            ->first();
 
         abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
 
@@ -140,7 +144,10 @@ class ComposerRepositoryController extends Controller
     {
         $name = "{$vendor}/{$package}";
 
-        $record = $this->repository($request)->packages()->where('name', $name)->first();
+        $record = $this->repository($request)->packages()
+            ->visibleTo($this->token($request))
+            ->where('name', $name)
+            ->first();
 
         abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
 
@@ -179,14 +186,25 @@ class ComposerRepositoryController extends Controller
     }
 
     /**
-     * Packages the repository actually serves. A package with no synced
-     * versions resolves to nothing, so advertising it in search or list
-     * results would only produce dead ends.
+     * The access token the request authenticated with, if any.
+     */
+    private function token(Request $request): ?Token
+    {
+        return $request->attributes->get('composerToken');
+    }
+
+    /**
+     * Packages the repository actually serves to this request's principal.
+     * A package with no synced versions resolves to nothing, so advertising
+     * it in search or list results would only produce dead ends.
      *
      * @return Builder<Package>
      */
     private function servedPackages(Request $request): Builder
     {
-        return $this->repository($request)->packages()->has('versions')->getQuery();
+        return $this->repository($request)->packages()
+            ->visibleTo($this->token($request))
+            ->has('versions')
+            ->getQuery();
     }
 }

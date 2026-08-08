@@ -28,7 +28,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 4 | Artifact upload endpoint (CI pushes a zip) | ❌ | 2 |
 | 5 | Multiple named repositories (`/r/{path}`, public/private) | ✅ | — |
 | 6 | Token authentication for Composer clients (http-basic) | ✅ | — |
-| 7 | Deploy tokens (machine access, repo/package scoped) | ❌ | 6 |
+| 7 | Deploy tokens (machine access, repo/package scoped) | ✅ | 6 |
 | 8 | Personal access tokens (per-user) | ✅ | 6 |
 | 9 | Roles + granular permissions | ✅ | — |
 | 10 | Per-user repository/package access scoping | ❌ | 5, 9 |
@@ -194,20 +194,17 @@ DeployTokenResource, matching Packistry's own split. Covered in `tests/Feature/C
 repositories and/or individual packages (or unscoped = everything); `tokenScoped()` unions those
 grants. They authenticate exactly like user tokens and appear in download stats.
 
-```text
-In this Laravel app (which already has Composer token auth — see the Token model and
-AuthenticateComposer middleware), add machine deploy tokens with scoped access:
-1. Model + migration: deploy_tokens (name, timestamps) with one access token each (reuse the
-   token issuing/hashing mechanics), plus pivots deploy_token_package (and deploy_token_repository
-   if a repositories table exists). An empty scope set means "all packages".
-2. Extend the Composer auth layer: when the authenticated principal is a deploy token, scope every
-   package query (root/search/list/metadata/dist) to its granted packages/repositories. Extract a
-   query scope like Package::visibleTo($principal) used by all endpoints.
-3. Filament: DeployTokenResource — create with multi-select of packages (and repositories),
-   plaintext token shown once, revoke action, last_used_at column.
-4. Feature tests: scoped token sees only granted packages in list/search/metadata and gets 404 on
-   others' dist; unscoped token sees all. Run tests.
-```
+**Implemented** as specified: `deploy_tokens` (name) with `deploy_token_package` /
+`deploy_token_repository` pivots, its access token issued through the shared polymorphic `Token`
+mechanics (deleting the deploy token soft-deletes — revokes — its tokens; the pivots cascade).
+`Package::visibleTo(?Token)` is the single access-control scope every Composer endpoint
+(search/list/metadata/dist) runs through: no token → public repositories only; user token → the
+owner's reach; scoped deploy token → public repositories ∪ granted packages ∪ packages in granted
+repositories; unscoped deploy token → everything. `DeployTokenResource` sits in the Access
+Management group — create shows the plain text once (persistent notification with the ready-made
+`composer config` line) and issues **read** ability only; write is granted deliberately through the
+edit page's "Regenerate token" action, which also serves as rotation (old token dies the moment the
+new one exists). Covered in `tests/Feature/DeployTokenTest.php`.
 
 ## 8. Personal access tokens (per-user)
 
