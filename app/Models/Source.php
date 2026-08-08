@@ -4,6 +4,10 @@ namespace App\Models;
 
 use App\Enums\SourceProvider;
 use App\Services\GitHub\GitHubApp;
+use App\Services\GitHub\GitHubSourceClient;
+use App\Services\GitLab\GitLabSourceClient;
+use App\Sources\SourceClient;
+use App\Sources\StubClient;
 use Database\Factories\SourceFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -50,10 +54,10 @@ class Source extends Model
     }
 
     /**
-     * The source that owns a given "owner/repo" path, or null when that owner
-     * has not been connected.
+     * The source that owns a given "owner/repo" path on a provider, or null
+     * when that owner has not been connected.
      */
-    public static function forRepositoryPath(string $repositoryPath): ?self
+    public static function forRepositoryPath(string $repositoryPath, SourceProvider $provider = SourceProvider::Github): ?self
     {
         $owner = strtok($repositoryPath, '/');
 
@@ -62,9 +66,21 @@ class Source extends Model
         }
 
         return static::query()
-            ->where('provider', SourceProvider::Github)
+            ->where('provider', $provider)
             ->forAccount($owner)
             ->first();
+    }
+
+    /**
+     * The client that browses this source's projects, for onboarding.
+     */
+    public function client(): SourceClient
+    {
+        return match ($this->provider) {
+            SourceProvider::Github => new GitHubSourceClient($this),
+            SourceProvider::Gitlab => new GitLabSourceClient($this),
+            default => new StubClient($this->provider),
+        };
     }
 
     /**
@@ -354,6 +370,15 @@ class Source extends Model
             'This source has neither a GitHub App installation nor an access token.'
         ));
 
+        if ($this->provider === SourceProvider::Gitlab) {
+            // GitLab tokens are personal; membership is the account scope.
+            return count($this->get('/projects', ['membership' => 'true', 'per_page' => 100]));
+        }
+
+        throw_unless($this->provider === SourceProvider::Github, new RuntimeException(
+            "{$this->provider->getLabel()} sources are not supported yet."
+        ));
+
         throw_unless($this->account, new RuntimeException(
             'Set the account (the GitHub organisation or user) before testing a token-based source.'
         ));
@@ -375,7 +400,10 @@ class Source extends Model
     private function get(string $path, array $query = [], bool $allowMissing = false): ?array
     {
         $response = Http::baseUrl($this->apiUrl())
-            ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
+            ->when(
+                $this->provider === SourceProvider::Github,
+                fn ($request) => $request->withHeaders(['X-GitHub-Api-Version' => '2022-11-28']),
+            )
             ->withToken($this->accessToken())
             ->acceptJson()
             ->get($path, $query);

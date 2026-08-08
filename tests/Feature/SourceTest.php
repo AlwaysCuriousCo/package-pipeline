@@ -165,8 +165,9 @@ class SourceTest extends TestCase
 
     public function test_a_package_without_a_source_uses_its_own_token_then_the_env_fallback(): void
     {
+        // No source exists for this owner, so the package stands alone.
         $package = Package::factory()->create([
-            'repository' => 'https://gitlab.com/acme/widgets',
+            'repository' => 'https://github.com/acme/widgets',
             'token' => 'ghp_package_level',
         ]);
 
@@ -177,6 +178,12 @@ class SourceTest extends TestCase
         $package->forceFill(['token' => null])->save();
 
         $this->assertSame('ghp_env', $package->fresh()->accessToken());
+
+        // The environment fallback is a GitHub credential; a package on any
+        // other host never sees it.
+        $gitlab = Package::factory()->create(['repository' => 'https://gitlab.com/acme/widgets']);
+
+        $this->assertNull($gitlab->accessToken());
     }
 
     public function test_a_new_package_is_linked_to_the_source_owning_its_repository(): void

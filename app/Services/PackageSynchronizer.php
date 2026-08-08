@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\Package;
 use App\Models\PackageVersion;
-use App\Services\GitHub\GitHubClient;
+use App\Sources\RepositoryClient;
 use App\Support\VersionNormalizer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -81,11 +81,11 @@ class PackageSynchronizer
      */
     public function discover(Package $package): array
     {
-        $github = GitHubClient::for($package);
+        $client = $package->client();
 
         $versions = [];
 
-        foreach ($github->tags() as $tag => $sha) {
+        foreach ($client->tags() as $tag => $sha) {
             if (! $this->isVersionLikeTag($tag)) {
                 continue;
             }
@@ -95,7 +95,7 @@ class PackageSynchronizer
             $versions[$this->normalizer->version($tag)] = ['reference' => $sha, 'is_dev' => false];
         }
 
-        foreach ($github->branches() as $branch => $sha) {
+        foreach ($client->branches() as $branch => $sha) {
             $versions[$this->normalizer->devVersion($branch)] = ['reference' => $sha, 'is_dev' => true];
         }
 
@@ -114,7 +114,7 @@ class PackageSynchronizer
             return;
         }
 
-        $name = GitHubClient::for($package)->composerJson()['name'] ?? null;
+        $name = $package->client()->composerJson()['name'] ?? null;
 
         if (is_string($name) && $name !== '' && $name !== $package->name) {
             $package->forceFill(['name' => $name])->save();
@@ -173,9 +173,9 @@ class PackageSynchronizer
             return true;
         }
 
-        $github = GitHubClient::for($package);
+        $client = $package->client();
 
-        $composerJson = $github->composerJson($ref['reference']);
+        $composerJson = $client->composerJson($ref['reference']);
 
         if (! isset($composerJson['name'])) {
             $existing?->delete();
@@ -186,11 +186,11 @@ class PackageSynchronizer
         $data = [
             ...$ref,
             'order' => $this->normalizer->order($version),
-            'released_at' => $github->commitDate($ref['reference']),
+            'released_at' => $client->commitDate($ref['reference']),
             'metadata' => [...$composerJson, 'version' => $version],
         ];
 
-        $zip = $this->downloadArchive($github, $ref['reference']);
+        $zip = $this->downloadArchive($client, $ref['reference']);
 
         try {
             // Row and archive columns land together, so a version is never
@@ -318,14 +318,14 @@ class PackageSynchronizer
      * The caller owns the file's lifetime; import() deletes the download once
      * the archive is stored or abandoned.
      */
-    private function downloadArchive(GitHubClient $github, string $reference): string
+    private function downloadArchive(RepositoryClient $client, string $reference): string
     {
         $temporary = tempnam(sys_get_temp_dir(), 'package-archive-');
 
         throw_if($temporary === false, new \RuntimeException('Unable to create a temporary file for the archive.'));
 
         try {
-            $github->downloadZipball($reference, $temporary);
+            $client->downloadZipball($reference, $temporary);
         } catch (Throwable $exception) {
             File::delete($temporary);
 

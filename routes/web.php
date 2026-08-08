@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ComposerRepositoryController;
 use App\Http\Controllers\GitHubWebhookController;
+use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\SourceConnectionController;
 use App\Http\Controllers\SsoController;
 use App\Http\Middleware\AuthenticateComposer;
@@ -68,6 +69,12 @@ Route::post('/incoming/github', [GitHubWebhookController::class, 'app'])
     ->name('webhooks.github');
 Route::post('/incoming/github/{package}', [GitHubWebhookController::class, 'repository'])
     ->name('webhooks.github.package');
+
+// GitLab's per-repository leg. GitLab has no account-wide webhook to mirror
+// the GitHub App's, and it authenticates by replaying the hook's secret in a
+// header rather than signing the body.
+Route::post('/incoming/gitlab/{package}', [GitLabWebhookController::class, 'repository'])
+    ->name('webhooks.gitlab.package');
 
 // The SSO round trip for runtime-configured login providers. The login page
 // renders one button per active authentication source; the callback signs

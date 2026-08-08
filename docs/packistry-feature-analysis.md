@@ -34,7 +34,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 10 | Per-user repository/package access scoping | ✅ | 5, 9 |
 | 11 | Provider webhooks (auto-sync on push/tag/delete) | ✅ | — |
 | 12 | Queued batch imports with progress | ✅ | — |
-| 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | 🟡 | — |
+| 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | ✅ | — |
 | 13a | Sources with GitHub App auth + package bridging | ✅ | — |
 | 14 | Source project browser + one-click package onboarding | ❌ | 13 |
 | 15 | Download statistics + dashboard | ✅ | 2 |
@@ -349,26 +349,24 @@ token (+ metadata). The abstract client exposes `projects(search)`, `project(id)
 download; the rest of the app is provider-agnostic (webhook event classes per provider adapt payloads
 to shared `Importable`/`Deletable` interfaces). Supports self-hosted instances via custom base URLs.
 
-```text
-In this Laravel app (GitHub-only sync via app/Services/GitHub/GitHubClient.php), introduce a
-provider-agnostic source layer:
-1. Model + migration: sources table (name, provider enum string [github, gitlab, gitea, bitbucket],
-   base_url, token encrypted cast, metadata json nullable). Add nullable source_id +
-   provider_id (external project id) on packages; keep the per-package token column working as a
-   legacy fallback during transition.
-2. Contract app/Sources/SourceClient.php: projects(?string search): array{id, fullName, webUrl},
-   tags(project) and branches(project) as lazy iterables of {name, sha, zipUrl}, composerJson(ref),
-   downloadZip(url), createWebhook(package), validateToken(). Port GitHubClient to implement it;
-   add GitLabClient (API v4: /projects, /repository/tags, /repository/branches, archive.zip
-   endpoints, PRIVATE-TOKEN header). Stub Gitea/Bitbucket classes behind the same contract (throw
-   UnsupportedProviderException until implemented) so adding them later is mechanical.
-3. Source::client() factory resolves the right implementation; PackageSynchronizer (and jobs, if
-   batch sync exists) depend only on the contract.
-4. Filament: SourceResource (provider select, base_url, token, "validate token" action calling
-   validateToken()).
-5. Tests with Http::fake per provider fixture covering tags/branches pagination and composer.json
-   fetch. Run tests.
-```
+**Implemented**, shaped to fit what 13a already built: the contract splits in two rather than
+Packistry's one-class-does-both. `App\Sources\RepositoryClient` (tags, branches, composerJson,
+commitDate, downloadZipball, create/deleteWebhook) is what syncing, the webhook registrar and the
+create wizard depend on — resolved by `Package::client()` from the package's provider (the source's
+word for it, else the URL's host) — and `App\Sources\SourceClient` (`projects(?search)` returning
+`Project` DTOs) is the browsing side behind `Source::client()`, ready for item 14.
+`GitLabClient`/`GitLabSourceClient` implement both against API v4 (URL-encoded namespace paths,
+PRIVATE-TOKEN, X-Next-Page pagination with the same loud upper bound as GitHub, archive.zip with
+the content-type guard); Gitea/Bitbucket resolve to a shared `StubClient` throwing
+`UnsupportedProviderException`. `Package::repositoryPath()` now parses any provider's URL (nested
+GitLab namespaces included, GitHub paths truncated to owner/repo so pasted /tree/main URLs still
+work), the `GITHUB_TOKEN` env fallback is deliberately withheld from non-GitHub hosts, and GitLab
+gets its own per-repository webhook leg — `POST /incoming/gitlab/{package}`, verified by
+constant-time comparison of `X-Gitlab-Token` since GitLab replays the secret rather than signing
+the body; there is no GitLab equivalent of the GitHub App's account-wide webhook. `Source::verify()`
+speaks GitLab (`/projects?membership`). No `provider_id` column: packages here are keyed by
+repository URL, which webhook resolution already handles. Covered in
+`tests/Feature/GitLabProviderTest.php`.
 
 ## 14. Source project browser + one-click onboarding
 

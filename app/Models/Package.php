@@ -5,7 +5,11 @@ namespace App\Models;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Services\GitHub\GitHubApp;
+use App\Services\GitHub\GitHubClient;
 use App\Services\GitHub\WebhookRegistrar;
+use App\Services\GitLab\GitLabClient;
+use App\Sources\RepositoryClient;
+use App\Sources\StubClient;
 use Database\Factories\PackageFactory;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchRepository;
@@ -206,7 +210,41 @@ class Package extends Model
             return;
         }
 
-        $this->source_id = Source::forRepositoryPath($path)?->id;
+        $this->source_id = Source::forRepositoryPath($path, $this->provider())?->id;
+
+        // Anything resolved through the relation from here on must see the
+        // source just linked, not a null cached while it was being decided.
+        $this->unsetRelation('source');
+    }
+
+    /**
+     * The provider this package's repository lives on: the connected source's
+     * word for it, or the repository URL's host as the honest guess.
+     *
+     * The relation is only touched when a source is actually linked: this
+     * runs inside linkSource() itself (via repositoryPath), and lazy-loading
+     * there would cache the relation as null before source_id is decided.
+     */
+    public function provider(): SourceProvider
+    {
+        if ($this->source_id !== null && $this->source instanceof Source) {
+            return $this->source->provider;
+        }
+
+        return SourceProvider::forHost($this->parsedRepository()['host']);
+    }
+
+    /**
+     * The client that speaks this package's provider — the one seam through
+     * which syncing, webhooks and the wizard reach any VCS API.
+     */
+    public function client(): RepositoryClient
+    {
+        return match ($provider = $this->provider()) {
+            SourceProvider::Github => GitHubClient::for($this),
+            SourceProvider::Gitlab => GitLabClient::for($this),
+            default => new StubClient($provider),
+        };
     }
 
     /**
@@ -221,7 +259,9 @@ class Package extends Model
     {
         return $this->source?->accessToken()
             ?? $this->token
-            ?? config('services.github.token');
+            // The environment fallback is a GitHub credential; handing it to
+            // another provider's API would only leak it.
+            ?? ($this->provider() === SourceProvider::Github ? config('services.github.token') : null);
     }
 
     /**
@@ -230,34 +270,61 @@ class Package extends Model
      */
     public function apiUrl(): string
     {
-        return $this->source?->apiUrl() ?? SourceProvider::Github->defaultApiUrl();
+        return $this->source?->apiUrl() ?? $this->provider()->defaultApiUrl();
     }
 
     /**
-     * The "owner/repo" path of the GitHub repository.
+     * The provider-side path of the repository: "owner/repo" on GitHub,
+     * the full (possibly nested) namespace path on GitLab.
      *
-     * Accepts a full GitHub URL (https or git@, with or without .git) as well
-     * as a bare "owner/repo" value.
+     * Accepts a full URL (https, ssh, or git@, with or without .git) from
+     * any provider, as well as a bare path.
      */
     public function repositoryPath(): string
     {
+        $parsed = $this->parsedRepository();
+
+        $path = $parsed['path'];
+
+        if ($path === null) {
+            throw new InvalidArgumentException(blank($this->repository)
+                ? 'This package has no VCS repository URL; it is published by artifact upload.'
+                : "Unable to determine the repository path from [{$this->repository}].");
+        }
+
+        // GitHub repositories are exactly owner/repo; anything after that in
+        // a pasted URL (/tree/main, /issues) is browser chrome, not path.
+        if ($this->provider() === SourceProvider::Github) {
+            return implode('/', array_slice(explode('/', $path), 0, 2));
+        }
+
+        return $path;
+    }
+
+    /**
+     * The host and repository path the stored URL names, each null when the
+     * URL does not yield one.
+     *
+     * @return array{host: ?string, path: ?string}
+     */
+    private function parsedRepository(): array
+    {
         $repository = trim((string) $this->repository);
 
-        if ($repository === '') {
-            throw new InvalidArgumentException(
-                'This package has no VCS repository URL; it is published by artifact upload.',
-            );
+        if (preg_match('#^(?:https?://|ssh://git@|git@)([^/:]+)[:/](.+?)(?:\.git)?/?$#i', $repository, $matches)) {
+            $path = trim($matches[2], '/');
+
+            return [
+                'host' => $matches[1],
+                'path' => str_contains($path, '/') ? $path : null,
+            ];
         }
 
-        if (preg_match('#github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$#i', $repository, $matches)) {
-            return "{$matches[1]}/{$matches[2]}";
+        if (preg_match('#^[\w.-]+(?:/[\w.-]+)+$#', $repository)) {
+            return ['host' => null, 'path' => preg_replace('/\.git$/i', '', $repository)];
         }
 
-        if (preg_match('#^([\w.-]+)/([\w.-]+?)(?:\.git)?$#', $repository, $matches)) {
-            return "{$matches[1]}/{$matches[2]}";
-        }
-
-        throw new InvalidArgumentException("Unable to determine the GitHub repository from [{$repository}].");
+        return ['host' => null, 'path' => null];
     }
 
     /**
@@ -332,13 +399,15 @@ class Package extends Model
     }
 
     /**
-     * Where GitHub posts this package's own deliveries. Only meaningful for a
-     * package carrying a repository hook — an app-covered one is delivered to
-     * the account-wide URL instead.
+     * Where the provider posts this package's own deliveries. Only meaningful
+     * for a package carrying a repository hook — an app-covered one is
+     * delivered to the account-wide URL instead.
      */
     public function webhookUrl(): string
     {
-        return route('webhooks.github.package', $this);
+        return $this->provider() === SourceProvider::Gitlab
+            ? route('webhooks.gitlab.package', $this)
+            : route('webhooks.github.package', $this);
     }
 
     /**

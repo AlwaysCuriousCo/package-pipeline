@@ -3,13 +3,14 @@
 namespace App\Services\GitHub;
 
 use App\Models\Package;
+use App\Sources\RepositoryClient;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
-class GitHubClient
+class GitHubClient implements RepositoryClient
 {
     private const PER_PAGE = 100;
 

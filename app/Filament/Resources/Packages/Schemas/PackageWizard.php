@@ -4,7 +4,6 @@ namespace App\Filament\Resources\Packages\Schemas;
 
 use App\Models\Package;
 use App\Models\Source;
-use App\Services\GitHub\GitHubClient;
 use Filament\Forms\Components\Hidden;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
@@ -90,7 +89,7 @@ class PackageWizard
         $failure = null;
 
         try {
-            $composerJson = GitHubClient::for($package)->composerJson();
+            $composerJson = $package->client()->composerJson();
         } catch (Throwable $exception) {
             $composerJson = null;
             $failure = $exception->getMessage();
