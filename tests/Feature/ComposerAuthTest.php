@@ -39,7 +39,10 @@ class ComposerAuthTest extends TestCase
 
     private function issueToken(array $abilities = [TokenAbility::RepositoryRead]): NewToken
     {
-        return Token::issue(User::factory()->create(), 'test token', $abilities);
+        // A personal token reaches what its owner can see; these tests are
+        // about authentication, so the owner is someone who sees everything.
+        // Row-level scoping has its own coverage in UserAccessScopingTest.
+        return Token::issue(User::factory()->superAdmin()->create(), 'test token', $abilities);
     }
 
     public function test_a_private_repository_rejects_unauthenticated_reads(): void
@@ -114,7 +117,7 @@ class ComposerAuthTest extends TestCase
 
     public function test_an_expired_token_stops_authenticating(): void
     {
-        $new = Token::issue(User::factory()->create(), 'expired', [TokenAbility::RepositoryRead], now()->subDay());
+        $new = Token::issue(User::factory()->superAdmin()->create(), 'expired', [TokenAbility::RepositoryRead], now()->subDay());
 
         $this->withBasicAuth('token', $new->plainText)
             ->getJson('/r/internal/list.json')

@@ -9,6 +9,7 @@ use Filament\Panel;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -41,6 +42,40 @@ class User extends Authenticatable implements FilamentUser
     public function tokens(): MorphMany
     {
         return $this->morphMany(Token::class, 'tokenable');
+    }
+
+    /**
+     * Individual packages this user has been granted, over and above the
+     * public repositories everyone sees.
+     *
+     * @return BelongsToMany<Package, $this>
+     */
+    public function packages(): BelongsToMany
+    {
+        return $this->belongsToMany(Package::class);
+    }
+
+    /**
+     * Private repositories this user has been granted wholesale.
+     *
+     * @return BelongsToMany<Repository, $this>
+     */
+    public function repositories(): BelongsToMany
+    {
+        return $this->belongsToMany(Repository::class);
+    }
+
+    /**
+     * Whether row-level package scoping applies to this user at all.
+     *
+     * Packistry's `unscoped`: a permission any role can carry (the super
+     * admin's carries everything), checked wherever package visibility is
+     * narrowed — not a role name, so custom roles can be given full sight
+     * without inheriting administration.
+     */
+    public function hasUnscopedAccess(): bool
+    {
+        return $this->can('Unscoped:Package');
     }
 
     /**

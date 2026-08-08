@@ -101,7 +101,7 @@ class Package extends Model
      * the Composer endpoints' access control lives.
      *
      * No token sees public repositories only. A user's personal token sees
-     * everything its owner does. A deploy token sees public repositories
+     * exactly what its owner does. A deploy token sees public repositories
      * plus whatever it was granted — or everything, when it holds no grants.
      *
      * @param  Builder<self>  $query
@@ -112,7 +112,7 @@ class Package extends Model
         $principal = $token?->tokenable;
 
         if ($principal instanceof User) {
-            return $query;
+            return $query->visibleToUser($principal);
         }
 
         if ($principal instanceof DeployToken && ! $principal->isScoped()) {
@@ -127,6 +127,30 @@ class Package extends Model
                     ->orWhereIn('packages.id', $principal->packages()->select('packages.id'))
                     ->orWhereIn('packages.repository_id', $principal->repositories()->select('repositories.id'));
             }
+        });
+    }
+
+    /**
+     * Narrow to the packages a panel user may see: everything for a user
+     * holding Unscoped:Package, otherwise public repositories plus their
+     * explicit package and repository grants.
+     *
+     * Applied by the package table, the dashboard widgets, and — through
+     * visibleTo() — the user's own personal access tokens.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeVisibleToUser(Builder $query, User $user): Builder
+    {
+        if ($user->hasUnscopedAccess()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($user): void {
+            $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true))
+                ->orWhereIn('packages.id', $user->packages()->select('packages.id'))
+                ->orWhereIn('packages.repository_id', $user->repositories()->select('repositories.id'));
         });
     }
 

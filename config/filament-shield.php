@@ -27,7 +27,9 @@ return [
             'pages' => true,
             'widgets' => true,
             'resources' => true,
-            'custom_permissions' => false,
+            // Surfaces hand-declared permissions — Unscoped:Package, seeded
+            // by ShieldPermissionSeeder — so any role can be granted them.
+            'custom_permissions' => true,
         ],
     ],
 

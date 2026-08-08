@@ -46,6 +46,19 @@ class UserForm
                     ->helperText(fn (?User $record): string => $record !== null && $record->is(auth()->user())
                         ? 'You cannot change your own roles — ask another admin.'
                         : 'Without a role the account cannot sign in to the panel. What a role may do is defined under Roles.'),
+                Select::make('repositories')
+                    ->label('Granted repositories')
+                    ->relationship('repositories', 'name')
+                    ->multiple()
+                    ->preload()
+                    ->helperText('Every package in the chosen repositories, for accounts whose role lacks Unscoped:Package. Public repositories are visible to everyone.'),
+                Select::make('packages')
+                    ->label('Granted packages')
+                    ->relationship('packages', 'name')
+                    ->multiple()
+                    ->searchable()
+                    ->preload()
+                    ->helperText('Individual packages, wherever they are served. Ignored for accounts that can already see everything.'),
             ]);
     }
 }

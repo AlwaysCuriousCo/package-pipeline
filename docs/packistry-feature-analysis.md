@@ -31,7 +31,7 @@ Legend: ✅ already have · 🟡 partial · ❌ missing
 | 7 | Deploy tokens (machine access, repo/package scoped) | ✅ | 6 |
 | 8 | Personal access tokens (per-user) | ✅ | 6 |
 | 9 | Roles + granular permissions | ✅ | — |
-| 10 | Per-user repository/package access scoping | ❌ | 5, 9 |
+| 10 | Per-user repository/package access scoping | ✅ | 5, 9 |
 | 11 | Provider webhooks (auto-sync on push/tag/delete) | ✅ | — |
 | 12 | Queued batch imports with progress | ✅ | — |
 | 13 | Multi-provider source abstraction (GitLab, Gitea, Bitbucket) | 🟡 | — |
@@ -248,17 +248,17 @@ dashboard counts, download stats) funnels through `userScoped()`: public repos �
 granted packages, with `unscoped` permission bypassing. Authentication sources can also auto-grant
 package access (`authentication_source_package`).
 
-```text
-In this Laravel + Filament app (roles already exist), add row-level access for non-admin users:
-1. Pivot migrations package_user (and repository_user if repositories exist) with unique indexes.
-2. Package::visibleToUser(User) query scope: admins/unscoped see all; others see packages in public
-   repositories plus explicitly granted packages/repositories.
-3. Apply the scope in the Filament PackageResource table query, any version listings, and (if
-   present) dashboard counts and download stats.
-4. Filament: on the User form, multi-selects for granted packages/repositories; on the Package
-   form, an inverse users multi-select.
-5. Tests: granted user sees only their packages in the Filament table query; admin sees all. Run tests.
-```
+**Implemented**: `package_user` / `repository_user` pivots; `Package::visibleToUser(User)` returns
+everything for holders of the **`Unscoped:Package`** permission (Packistry's `unscoped`, declared in
+`ShieldPermissionSeeder` since Shield only derives CRUD permissions, and grantable to any role on
+the Roles screen's custom-permissions tab — the super admin holds it like everything else) and
+public repositories ∪ granted packages ∪ granted repositories for everyone else. Applied on
+`PackageResource::getEloquentQuery()` — so the table *and* record pages 404 out-of-reach packages —
+on the release heatmap widget, and, through `visibleTo()`, on the user's personal access tokens:
+a token reaches exactly what its owner can see. Grants are edited as two multi-selects on the User
+form; the inverse users-select on the Package form was skipped deliberately — grants are a
+user-management concern and one place to edit them keeps the story straight. Covered in
+`tests/Feature/UserAccessScopingTest.php`.
 
 ## 11. Provider webhooks (auto-sync on push)
 
