@@ -20,6 +20,8 @@ class ComposerRepositoryTest extends TestCase
             'name' => 'acme/widgets',
             'repository' => 'https://github.com/acme/widgets',
             'token' => 'ghp_secret',
+            'description' => 'Widgets for Acme.',
+            'type' => 'library',
         ]);
 
         $package->versions()->create([
@@ -45,17 +47,98 @@ class ComposerRepositoryTest extends TestCase
         return $package;
     }
 
-    public function test_the_repository_root_advertises_metadata_and_packages(): void
+    private function makeServedPackageNamed(string $name, string $type = 'library'): Package
+    {
+        $package = Package::factory()->create(['name' => $name, 'type' => $type]);
+
+        $package->versions()->create([
+            'version' => 'v1.0.0',
+            'reference' => str_repeat('a', 40),
+            'is_dev' => false,
+            'metadata' => ['name' => $name, 'version' => 'v1.0.0'],
+        ]);
+
+        return $package;
+    }
+
+    public function test_the_repository_root_advertises_metadata_search_and_list(): void
     {
         $this->makeServedPackage();
-        Package::factory()->create(['name' => 'acme/unsynced']);
 
         $this->get('/packages.json')
             ->assertOk()
             ->assertJson([
                 'metadata-url' => '/p2/%package%.json',
-                'available-packages' => ['acme/widgets'],
+                'search' => url('/search.json').'?q=%query%&type=%type%',
+                'list' => url('/list.json'),
+            ])
+            // Inlining every name would defeat Composer's lazy loading and
+            // publish the package list to anyone fetching the root.
+            ->assertJsonMissingPath('available-packages');
+    }
+
+    public function test_search_filters_by_name_prefix(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('acme/gadgets');
+        $this->makeServedPackageNamed('other/widgets');
+
+        $this->get('/search.json?q=acme/w')
+            ->assertOk()
+            ->assertExactJson([
+                'total' => 1,
+                'results' => [
+                    [
+                        'name' => 'acme/widgets',
+                        'description' => 'Widgets for Acme.',
+                        'downloads' => 0,
+                    ],
+                ],
             ]);
+    }
+
+    public function test_search_without_a_query_returns_every_served_package(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('other/widgets');
+        Package::factory()->create(['name' => 'acme/unsynced']);
+
+        $response = $this->get('/search.json')->assertOk();
+
+        $this->assertSame(2, $response->json('total'));
+        $this->assertSame(['acme/widgets', 'other/widgets'], collect($response->json('results'))->pluck('name')->all());
+    }
+
+    public function test_search_filters_by_package_type(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('acme/theme', type: 'wordpress-theme');
+
+        $response = $this->get('/search.json?q=acme/&type=wordpress-theme')->assertOk();
+
+        $this->assertSame(1, $response->json('total'));
+        $this->assertSame('acme/theme', $response->json('results.0.name'));
+    }
+
+    public function test_search_treats_like_wildcards_as_literals(): void
+    {
+        // A query of "%" must not enumerate the registry.
+        $this->makeServedPackage();
+
+        $this->get('/search.json?q=%25')
+            ->assertOk()
+            ->assertExactJson(['total' => 0, 'results' => []]);
+    }
+
+    public function test_list_returns_served_package_names_sorted(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('aaa/first');
+        Package::factory()->create(['name' => 'acme/unsynced']);
+
+        $this->get('/list.json')
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['aaa/first', 'acme/widgets']]);
     }
 
     public function test_stable_metadata_lists_tagged_versions_with_proxied_dists(): void
