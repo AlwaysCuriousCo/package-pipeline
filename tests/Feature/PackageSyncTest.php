@@ -118,6 +118,39 @@ class PackageSyncTest extends TestCase
         }
     }
 
+    /**
+     * The (repository_id, name) unique index would reject the first-sync
+     * rename with a bare query error; the conflict must fail the sync with a
+     * reason a human can act on instead.
+     */
+    public function test_a_composer_name_already_published_in_the_repository_fails_the_sync_clearly(): void
+    {
+        $this->fakeGitHub();
+
+        // Another package in the same (default) Composer repository already
+        // publishes the name this repository's composer.json declares.
+        Package::factory()->create([
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/widgets-fork',
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('The name conflict should have failed the sync.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('acme/widgets', $exception->getMessage());
+        }
+
+        $package->refresh();
+
+        // The reason lands where the panel reads it, and the placeholder name
+        // survives — the row was never renamed into the collision.
+        $this->assertStringContainsString('already publishes', (string) $package->sync_error);
+        $this->assertSame('acme/widgets-placeholder', $package->name);
+    }
+
     public function test_an_unchanged_version_missing_its_archive_is_backfilled(): void
     {
         $this->fakeGitHub();

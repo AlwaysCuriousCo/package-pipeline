@@ -160,12 +160,17 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         // progress, and must not wedge the package forever.
         $batch = $this->package->syncBatch();
 
-        if ($batch !== null
-            && $this->package->syncRunning()
-            && $batch->createdAt->gt(now()->subHours(self::STALE_BATCH_HOURS))) {
-            self::dispatch($this->package, $this->force)->delay(now()->addSeconds(30));
+        if ($batch !== null && $this->package->syncRunning()) {
+            if ($batch->createdAt->gt(now()->subHours(self::STALE_BATCH_HOURS))) {
+                self::dispatch($this->package, $this->force)->delay(now()->addSeconds(30));
 
-            return;
+                return;
+            }
+
+            // Presumed lost, but its import jobs may still be sitting on the
+            // queue; cancelled, they no-op instead of racing the new batch's
+            // prune and imports.
+            $batch->cancel();
         }
 
         PackageSyncBatch::dispatchFor($this->package, $this->force);

@@ -116,9 +116,26 @@ class PackageSynchronizer
 
         $name = $package->client()->composerJson()['name'] ?? null;
 
-        if (is_string($name) && $name !== '' && $name !== $package->name) {
-            $package->forceFill(['name' => $name])->save();
+        if (! is_string($name) || $name === '' || $name === $package->name) {
+            return;
         }
+
+        // The (repository_id, name) unique index would reject the rename with
+        // a bare query error; asked first, the conflict reads as what it is —
+        // one Composer repository cannot serve two packages under one name.
+        $taken = Package::query()
+            ->where('repository_id', $package->repository_id)
+            ->whereKeyNot($package->getKey())
+            ->where('name', $name)
+            ->exists();
+
+        throw_if($taken, new \RuntimeException(
+            "The repository's composer.json is named \"{$name}\", which another package"
+            .' in this Composer repository already publishes. Move one of them to a'
+            .' different repository, or fix the composer.json name.',
+        ));
+
+        $package->forceFill(['name' => $name])->save();
     }
 
     /**

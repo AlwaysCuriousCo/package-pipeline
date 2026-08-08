@@ -283,13 +283,17 @@ class PackageSyncBatchTest extends TestCase
         Bus::fake();
 
         $package = $this->makePackage();
-        $package->forceFill(['sync_batch_id' => $this->storedBatch([
+        $package->forceFill(['sync_batch_id' => $lost = $this->storedBatch([
             'created_at' => now()->subHours(3)->getTimestamp(),
         ])])->save();
 
         (new SyncPackageJob($package))->handle();
 
         Bus::assertBatched(fn (PendingBatch $batch): bool => $batch->jobs->first() instanceof DiscoverVersions);
+
+        // The lost batch may still hold queued import jobs; cancelled, they
+        // no-op instead of racing the new sync's prune and imports.
+        $this->assertNotNull(DB::table('job_batches')->where('id', $lost)->value('cancelled_at'));
     }
 
     public function test_the_view_page_widget_shows_the_running_import(): void
