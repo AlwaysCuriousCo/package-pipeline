@@ -9,7 +9,6 @@ use App\Models\Token;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\CheckboxList;
-use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Icons\Heroicon;
 
@@ -41,15 +40,7 @@ class EditDeployToken extends EditRecord
 
                     $new = Token::issue($record, $record->name, $data['abilities']);
 
-                    Notification::make()
-                        ->success()
-                        ->title('Token regenerated — copy it now')
-                        ->body(
-                            'It will not be shown again.<br><br><code>composer config http-basic.'.request()->getHost()
-                            ." token {$new->plainText}</code>"
-                        )
-                        ->persistent()
-                        ->send();
+                    DeployTokenResource::plainTextTokenNotification('Token regenerated — copy it now', $new)->send();
                 }),
             DeleteAction::make()
                 ->modalDescription('Its access token stops authenticating immediately.'),

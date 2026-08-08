@@ -36,7 +36,7 @@ class CreateAdminCommandTest extends TestCase
 
     public function test_it_creates_an_account_and_prints_a_working_reset_link(): void
     {
-        $output = $this->runNonInteractively(['email' => 'admin@example.com']);
+        $output = $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $this->assertDatabaseHas('users', ['email' => 'admin@example.com', 'name' => 'Super Admin']);
         $this->assertDatabaseHas('password_reset_tokens', ['email' => 'admin@example.com']);
@@ -48,7 +48,7 @@ class CreateAdminCommandTest extends TestCase
 
     public function test_it_grants_the_super_admin_role(): void
     {
-        $this->runNonInteractively(['email' => 'admin@example.com']);
+        $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $user = User::where('email', 'admin@example.com')->sole();
 
@@ -69,7 +69,7 @@ class CreateAdminCommandTest extends TestCase
         // role was first handed out.
         Permission::create(['name' => 'View:SomethingNew', 'guard_name' => 'web']);
 
-        $this->runNonInteractively(['email' => 'admin@example.com']);
+        $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $role = Role::where('name', 'super_admin')->sole();
 
@@ -78,14 +78,14 @@ class CreateAdminCommandTest extends TestCase
 
     public function test_a_permission_added_later_is_picked_up_on_a_second_run(): void
     {
-        $this->runNonInteractively(['email' => 'admin@example.com']);
+        $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         Permission::create(['name' => 'View:AddedAfterwards', 'guard_name' => 'web']);
 
         $role = Role::where('name', 'super_admin')->sole();
         $this->assertFalse($role->hasPermissionTo('View:AddedAfterwards'));
 
-        $output = $this->runNonInteractively(['email' => 'admin@example.com']);
+        $output = $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $this->assertTrue($role->fresh()->hasPermissionTo('View:AddedAfterwards'));
         $this->assertStringContainsString(Permission::count().' permissions', $output);
@@ -97,14 +97,14 @@ class CreateAdminCommandTest extends TestCase
 
         $this->assertFalse($user->hasRole('super_admin'));
 
-        $this->runNonInteractively(['email' => 'admin@example.com']);
+        $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $this->assertTrue($user->fresh()->hasRole('super_admin'));
     }
 
     public function test_the_new_account_has_no_guessable_password(): void
     {
-        $this->runNonInteractively(['email' => 'admin@example.com']);
+        $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $user = User::where('email', 'admin@example.com')->sole();
 
@@ -115,7 +115,7 @@ class CreateAdminCommandTest extends TestCase
 
     public function test_a_name_can_be_given_on_create(): void
     {
-        $this->runNonInteractively(['email' => 'admin@example.com', '--name' => 'Ada Lovelace']);
+        $this->runNonInteractively(['--email' => 'admin@example.com', '--name' => 'Ada Lovelace']);
 
         $this->assertDatabaseHas('users', ['email' => 'admin@example.com', 'name' => 'Ada Lovelace']);
     }
@@ -124,7 +124,7 @@ class CreateAdminCommandTest extends TestCase
     {
         $user = User::factory()->create(['email' => 'admin@example.com', 'name' => 'Ada Lovelace']);
 
-        $output = $this->runNonInteractively(['email' => 'admin@example.com']);
+        $output = $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $this->assertDatabaseCount('users', 1);
         $this->assertSame('Ada Lovelace', $user->fresh()->name);
@@ -139,21 +139,44 @@ class CreateAdminCommandTest extends TestCase
     {
         User::factory()->create(['email' => 'admin@example.com', 'name' => 'Ada Lovelace']);
 
-        $this->runNonInteractively(['email' => 'admin@example.com', '--name' => 'Grace Hopper']);
+        $this->runNonInteractively(['--email' => 'admin@example.com', '--name' => 'Grace Hopper']);
 
         $this->assertDatabaseHas('users', ['email' => 'admin@example.com', 'name' => 'Grace Hopper']);
     }
 
+    public function test_it_prompts_for_email_and_name_when_neither_is_passed(): void
+    {
+        $this->artisan('admin:create')
+            ->expectsQuestion('Email address', 'admin@example.com')
+            ->expectsQuestion('Display name', 'Ada Lovelace')
+            ->expectsQuestion('Password', 'a-strong-enough-password')
+            ->assertSuccessful();
+
+        $this->assertDatabaseHas('users', ['email' => 'admin@example.com', 'name' => 'Ada Lovelace']);
+    }
+
+    public function test_an_existing_account_is_not_prompted_for_a_name(): void
+    {
+        User::factory()->create(['email' => 'admin@example.com', 'name' => 'Ada Lovelace']);
+
+        $this->artisan('admin:create', ['--email' => 'admin@example.com'])
+            ->expectsQuestion('Password', 'a-strong-enough-password')
+            ->assertSuccessful();
+
+        $this->assertDatabaseHas('users', ['email' => 'admin@example.com', 'name' => 'Ada Lovelace']);
+    }
+
     public function test_it_rejects_an_invalid_email_address(): void
     {
-        $this->artisan('admin:create', ['email' => 'not-an-address'])->assertFailed();
+        $this->artisan('admin:create', ['--email' => 'not-an-address'])->assertFailed();
 
         $this->assertDatabaseCount('users', 0);
     }
 
     public function test_it_prompts_for_a_password_when_run_interactively(): void
     {
-        $this->artisan('admin:create', ['email' => 'admin@example.com'])
+        $this->artisan('admin:create', ['--email' => 'admin@example.com'])
+            ->expectsQuestion('Display name', 'Super Admin')
             ->expectsQuestion('Password', 'a-strong-enough-password')
             ->assertSuccessful();
 
@@ -167,7 +190,7 @@ class CreateAdminCommandTest extends TestCase
 
     public function test_the_reset_link_goes_stale_after_five_minutes(): void
     {
-        $output = $this->runNonInteractively(['email' => 'admin@example.com']);
+        $output = $this->runNonInteractively(['--email' => 'admin@example.com']);
 
         $link = $this->linkFrom($output);
 
@@ -182,7 +205,7 @@ class CreateAdminCommandTest extends TestCase
 
     public function test_the_link_flag_skips_the_password_prompt(): void
     {
-        $output = $this->runNonInteractively(['email' => 'admin@example.com', '--link' => true]);
+        $output = $this->runNonInteractively(['--email' => 'admin@example.com', '--link' => true]);
 
         $this->assertDatabaseHas('password_reset_tokens', ['email' => 'admin@example.com']);
         $this->get($this->linkFrom($output))->assertOk();

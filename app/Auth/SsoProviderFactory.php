@@ -42,6 +42,21 @@ class SsoProviderFactory
     }
 
     /**
+     * Drop a source's cached discovery document, so the next login reads the
+     * endpoints from the current discovery URL rather than a cached copy of
+     * whatever the URL pointed at before.
+     */
+    public static function forgetDiscovery(AuthenticationSource $source): void
+    {
+        cache()->forget(self::discoveryCacheKey($source));
+    }
+
+    private static function discoveryCacheKey(AuthenticationSource $source): string
+    {
+        return "oidc-discovery:{$source->id}";
+    }
+
+    /**
      * The issuer's endpoints, read from its discovery document and cached —
      * the document moves at the speed of infrastructure, not of logins.
      *
@@ -54,7 +69,7 @@ class SsoProviderFactory
         ));
 
         return cache()->remember(
-            "oidc-discovery:{$source->id}",
+            self::discoveryCacheKey($source),
             now()->addHour(),
             function () use ($source): array {
                 $document = Http::acceptJson()->get($source->discovery_url)->throw()->json();

@@ -32,7 +32,7 @@ composer run setup
 Create your admin login. The command prompts for a password, so it never lands in `.env`, in your shell history, or in version control:
 
 ```bash
-php artisan admin:create you@example.com
+php artisan admin:create --email=you@example.com
 ```
 
 Re-running it against the same address is safe — it updates that account rather than creating a second one, which also makes it the way to reset a forgotten password. The account is granted the `super_admin` role, which is what gets it into the panel; see [Roles and permissions](#roles-and-permissions).
@@ -87,7 +87,7 @@ When you add a resource, page, or widget, generate its permissions and hand them
 
 ```bash
 php artisan shield:generate --all --panel=admin   # permissions + a policy per model
-php artisan admin:create you@example.com          # re-syncs the role to every permission
+php artisan admin:create --email=you@example.com          # re-syncs the role to every permission
 ```
 
 Skip the second command and you will find yourself locked out of the resource you just added. Other roles keep whatever they had — tick the new permissions for each role that should have them.
@@ -142,7 +142,7 @@ The short version for production:
   ```
 
 - **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
-- **Create the first admin account** with `php artisan admin:create you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a signed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
+- **Create the first admin account** with `php artisan admin:create --email=you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a signed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same stored archives. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically.
 - **Prune orphaned archives occasionally** with `php artisan archives:clean` (`--dry-run` to preview) — re-synced versions write fresh files and leave their old ones behind by design. It's a fine candidate for the scheduler alongside `packages:sync`.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
@@ -169,7 +169,7 @@ The short version for production:
 Once the first deploy is green, open the environment's **Commands** panel and run:
 
 ```bash
-php artisan admin:create you@example.com
+php artisan admin:create --email=you@example.com
 ```
 
 Cloud's command runner has no terminal attached, so the command doesn't prompt for a password. Instead it prints a signed, single-use link to the panel's password-reset screen — open it in your browser and set the password there. The password never passes through Cloud's environment variables or command log, and no mail configuration is needed.
@@ -179,7 +179,7 @@ Two things to know about the link:
 - **It expires 5 minutes after being printed** (deliberately short, since the URL lands in the command log). If it goes stale, just re-run the command — it updates the existing account and prints a fresh link, which also makes it the recovery path for a forgotten password.
 - **It is single-use** — once the password is set, the link is dead.
 
-After adding new Filament resources, re-run both `php artisan shield:generate --all --panel=admin` (locally, committing the generated policies) and `php artisan admin:create you@example.com` (on Cloud) so the `super_admin` role picks up the new permissions — see [Roles and permissions](#roles-and-permissions).
+After adding new Filament resources, re-run both `php artisan shield:generate --all --panel=admin` (locally, committing the generated policies) and `php artisan admin:create --email=you@example.com` (on Cloud) so the `super_admin` role picks up the new permissions — see [Roles and permissions](#roles-and-permissions).
 
 ## Further reading
 

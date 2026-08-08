@@ -6,7 +6,6 @@ use App\Enums\TokenAbility;
 use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Models\DeployToken;
 use App\Models\Token;
-use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 
 class CreateDeployToken extends CreateRecord
@@ -26,16 +25,6 @@ class CreateDeployToken extends CreateRecord
 
         $new = Token::issue($deployToken, $deployToken->name, [TokenAbility::RepositoryRead]);
 
-        // The one time the plain text exists: persistent so it survives the
-        // redirect to the index, dismissed only by the admin who copied it.
-        Notification::make()
-            ->success()
-            ->title('Deploy token created — copy it now')
-            ->body(
-                'It will not be shown again.<br><br><code>composer config http-basic.'.request()->getHost()
-                ." token {$new->plainText}</code>"
-            )
-            ->persistent()
-            ->send();
+        DeployTokenResource::plainTextTokenNotification('Token created — copy it now', $new)->send();
     }
 }

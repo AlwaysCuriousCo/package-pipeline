@@ -78,7 +78,7 @@ return [
     | (see the "Roles and permissions" section of the README):
     |
     |     php artisan shield:generate --all --panel=admin
-    |     php artisan admin:create <the admin's email>
+    |     php artisan admin:create --email=<the admin's email>
     |
     */
 

@@ -3,8 +3,9 @@
 namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
+use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
 use App\Filament\Widgets\DownloadsChart;
-use App\Filament\Widgets\RegistryStatsOverview;
+use App\Filament\Widgets\RegistryTotals;
 use App\Models\Download;
 use App\Models\Package;
 use App\Models\Token;
@@ -114,11 +115,27 @@ class DownloadStatsTest extends TestCase
 
         $this->actingAs(User::factory()->superAdmin()->create());
 
-        Livewire::test(RegistryStatsOverview::class)
+        Livewire::test(RegistryTotals::class)
             ->assertOk()
-            ->assertSee('Downloads · 30 days');
+            ->assertSee('Downloads');
 
         Livewire::test(DownloadsChart::class)->assertOk();
+    }
+
+    public function test_the_package_page_charts_only_its_own_downloads(): void
+    {
+        $this->download();
+
+        $other = Package::factory()->create();
+        Download::create(['package_id' => $other->id, 'version' => 'v1.0.0']);
+
+        $widget = new PackageDownloadsChart;
+        $widget->record = $this->package;
+
+        $data = (fn (): array => $this->getData())->call($widget);
+
+        $this->assertCount(90, $data['labels']);
+        $this->assertSame(1, array_sum($data['datasets'][0]['data']));
     }
 
     public function test_the_download_history_survives_pruning_the_version(): void
