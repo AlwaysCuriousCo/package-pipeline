@@ -60,7 +60,7 @@ class DeployTokensTable
                     ->modalHeading('Roll the access token')
                     ->modalDescription('The current token stops authenticating immediately; whatever machine uses it needs the new one.')
                     ->action(function (DeployToken $record): void {
-                        $abilities = $record->token?->abilities ?? [TokenAbility::RepositoryRead];
+                        $abilities = $record->token->abilities ?? [TokenAbility::RepositoryRead];
 
                         $record->tokens()->delete();
 

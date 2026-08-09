@@ -82,7 +82,7 @@ class Repository extends Model
         }
 
         return static::create([
-            'name' => static::availableName('Default'),
+            'name' => self::availableName('Default'),
             'path' => null,
             'description' => 'The repository served at the registry root.',
             'public' => true,

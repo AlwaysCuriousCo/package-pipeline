@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\RelationManagers;
 
+use App\Models\Package;
 use App\Models\PackageVersion;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Icons\Heroicon;
@@ -70,7 +71,10 @@ class VersionsRelationManager extends RelationManager
      */
     private function isLatestRelease(PackageVersion $record): bool
     {
-        $latest = $this->getOwnerRecord()->latest_version;
+        /** @var Package $package */
+        $package = $this->getOwnerRecord();
+
+        $latest = $package->latest_version;
 
         return $latest !== null && $record->version === $latest;
     }

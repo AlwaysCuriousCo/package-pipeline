@@ -28,8 +28,6 @@ class DeployTokenTest extends TestCase
 
     private Package $widgets;
 
-    private Package $gadgets;
-
     private Package $secret;
 
     protected function setUp(): void
@@ -40,7 +38,9 @@ class DeployTokenTest extends TestCase
         $this->other = Repository::factory()->create(['path' => 'other', 'public' => false]);
 
         $this->widgets = $this->makeServedPackage('acme/widgets', $this->internal);
-        $this->gadgets = $this->makeServedPackage('acme/gadgets', $this->internal);
+        // A second package in the same repository, so a repository-wide grant
+        // is visibly wider than a package one. Only ever named in a URL.
+        $this->makeServedPackage('acme/gadgets', $this->internal);
         $this->secret = $this->makeServedPackage('acme/secret', $this->other);
     }
 

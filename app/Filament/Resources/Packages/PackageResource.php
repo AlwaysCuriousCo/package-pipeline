@@ -17,6 +17,12 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
+/**
+ * Spelled out rather than imported: Pint's phpdoc_types fixer reads a bare
+ * `Resource` as PHP's `resource` pseudo-type and lowercases it.
+ *
+ * @extends \Filament\Resources\Resource<Package>
+ */
 class PackageResource extends Resource
 {
     protected static ?string $model = Package::class;

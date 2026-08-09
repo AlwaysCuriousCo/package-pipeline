@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Auth\ResetPassword;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -21,6 +22,8 @@ class CreateAdminCommandTest extends TestCase
     /**
      * Run the command the way a deploy hook or a hosting provider's command
      * runner would, and hand back everything it printed.
+     *
+     * @param  array<string, mixed>  $arguments
      */
     private function runNonInteractively(array $arguments = []): string
     {
@@ -41,6 +44,8 @@ class CreateAdminCommandTest extends TestCase
     /**
      * Follow a printed link the way a browser would: it hands its claim to
      * the session and redirects to the panel's reset form.
+     *
+     * @return TestResponse<Response>
      */
     private function openLink(string $link): TestResponse
     {
@@ -100,12 +105,12 @@ class CreateAdminCommandTest extends TestCase
 
         $this->assertTrue($user->hasRole('super_admin'));
 
+        /** @var Role $role */
+        $role = $user->roles()->sole();
+
         // The role is exactly its permissions — nothing is granted by a gate
         // bypass — so the seeded permission set has to be on it.
-        $this->assertSame(
-            Permission::count(),
-            $user->roles()->sole()->permissions()->count(),
-        );
+        $this->assertSame(Permission::count(), $role->permissions()->count());
         $this->assertTrue($user->can('View:Package'));
     }
 

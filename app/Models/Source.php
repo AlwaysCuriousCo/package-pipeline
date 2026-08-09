@@ -62,7 +62,7 @@ class Source extends Model
     {
         $owner = strtok($repositoryPath, '/');
 
-        if ($owner === false || $owner === '') {
+        if ($owner === false) {
             return null;
         }
 
@@ -124,7 +124,7 @@ class Source extends Model
             ->first();
 
         return $existing ?? new self([
-            'name' => static::availableName($login ?? "GitHub installation {$installationId}"),
+            'name' => self::availableName($login ?? "GitHub installation {$installationId}"),
             'provider' => SourceProvider::Github,
             'account' => $login,
         ]);

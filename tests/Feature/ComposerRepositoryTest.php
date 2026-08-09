@@ -107,7 +107,7 @@ class ComposerRepositoryTest extends TestCase
         $response = $this->get('/search.json')->assertOk();
 
         $this->assertSame(2, $response->json('total'));
-        $this->assertSame(['acme/widgets', 'other/widgets'], collect($response->json('results'))->pluck('name')->all());
+        $this->assertSame(['acme/widgets', 'other/widgets'], $response->json('results.*.name'));
     }
 
     public function test_search_filters_by_package_type(): void

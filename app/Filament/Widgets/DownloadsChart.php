@@ -3,6 +3,8 @@
 namespace App\Filament\Widgets;
 
 use App\Models\Download;
+use App\Models\Package;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use Filament\Widgets\ChartWidget;
 use Illuminate\Database\Eloquent\Builder;
@@ -69,13 +71,20 @@ class DownloadsChart extends ChartWidget
      */
     protected function downloads(): Builder
     {
-        return Download::query()->when(
-            auth()->user(),
-            fn ($query, $user) => $query->whereHas(
-                'package',
-                fn ($packages) => $packages->visibleToUser($user),
-            ),
-        );
+        $downloads = Download::query();
+        $user = auth()->user();
+
+        // visibleToUser() is a Package scope, so it runs as a subquery over
+        // packages rather than inside whereHas(), which would hand it an
+        // untyped relation builder instead.
+        if ($user instanceof User) {
+            $downloads->whereIn(
+                'package_id',
+                Package::query()->visibleToUser($user)->select('packages.id'),
+            );
+        }
+
+        return $downloads;
     }
 
     /**

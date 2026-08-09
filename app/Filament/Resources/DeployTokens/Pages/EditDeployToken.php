@@ -31,7 +31,7 @@ class EditDeployToken extends EditRecord
                 ->schema([
                     CheckboxList::make('abilities')
                         ->options(TokenAbility::class)
-                        ->default(fn (DeployToken $record): array => $record->token?->abilities
+                        ->default(fn (DeployToken $record): array => $record->token->abilities
                             ?? [TokenAbility::RepositoryRead->value])
                         ->required(),
                 ])

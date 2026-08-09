@@ -79,15 +79,17 @@ class PackageResourceTest extends TestCase
     {
         $source = Source::factory()->create();
 
-        Livewire::withQueryParams(['source' => $source->getKey()])
-            ->test(CreatePackage::class)
+        Livewire::withQueryParams(['source' => $source->getKey()]);
+
+        Livewire::test(CreatePackage::class)
             ->assertSchemaStateSet(['source_id' => $source->getKey()]);
     }
 
     public function test_an_unknown_source_in_the_url_is_ignored(): void
     {
-        Livewire::withQueryParams(['source' => 999])
-            ->test(CreatePackage::class)
+        Livewire::withQueryParams(['source' => 999]);
+
+        Livewire::test(CreatePackage::class)
             ->assertSchemaStateSet(['source_id' => null]);
     }
 

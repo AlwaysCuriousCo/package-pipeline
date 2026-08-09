@@ -37,6 +37,9 @@ class ComposerAuthTest extends TestCase
             ]);
     }
 
+    /**
+     * @param  list<TokenAbility|string>  $abilities
+     */
     private function issueToken(array $abilities = [TokenAbility::RepositoryRead]): NewToken
     {
         // A personal token reaches what its owner can see; these tests are

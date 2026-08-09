@@ -350,7 +350,7 @@ class Package extends Model
             return new Collection;
         }
 
-        return static::query()
+        return self::query()
             ->whereLike('repository', "%{$path}%", caseSensitive: false)
             ->get()
             ->filter(function (self $package) use ($path): bool {

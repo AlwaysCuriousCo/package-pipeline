@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
+use Spatie\Permission\Contracts\Role as RoleContract;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -26,7 +27,7 @@ class UserResourceTest extends TestCase
         $this->actingAs($this->admin);
     }
 
-    private function role(string $name): Role
+    private function role(string $name): RoleContract
     {
         return Role::findOrCreate($name, 'web');
     }

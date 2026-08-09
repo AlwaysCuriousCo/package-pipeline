@@ -7,6 +7,7 @@ use App\Models\Package;
 use App\Models\Source;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -40,6 +41,7 @@ class GitHubWebhookTest extends TestCase
      * and a signature over exactly the bytes sent.
      *
      * @param  array<string, mixed>  $payload
+     * @return TestResponse<Response>
      */
     private function deliver(string $event, array $payload = [], ?string $secret = self::APP_SECRET, ?string $url = null): TestResponse
     {

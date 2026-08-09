@@ -45,6 +45,9 @@ class OidcProvider extends AbstractProvider
         return $this->endpoints['token_endpoint'];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     protected function getUserByToken($token): array
     {
         // Also inside the login round trip, and not retried: unlike the
@@ -60,6 +63,9 @@ class OidcProvider extends AbstractProvider
             ->json();
     }
 
+    /**
+     * @param  array<string, mixed>  $user
+     */
     protected function mapUserToObject(array $user): User
     {
         return (new User)->setRaw($user)->map([

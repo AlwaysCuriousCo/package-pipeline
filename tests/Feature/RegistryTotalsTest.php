@@ -95,8 +95,8 @@ class RegistryTotalsTest extends TestCase
     {
         $widget = new RegistryTotals;
 
-        $data = (fn (): array => $this->getViewData())->call($widget);
+        $stats = (fn (): array => $this->getViewData()['stats'])->call($widget);
 
-        return collect($data['stats'])->pluck('value', 'label');
+        return collect($stats)->pluck('value', 'label');
     }
 }

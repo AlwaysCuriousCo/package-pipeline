@@ -57,7 +57,12 @@ class EditPackage extends EditRecord
                 WebhookCoverage::Failed => (string) app(WebhookRegistrar::class)->unmetRequirement($package),
                 WebhookCoverage::None => 'No webhook covers this repository yet.',
             })
-            ->persistent($coverage === WebhookCoverage::Failed)
+            // persistent() takes no argument, so passing the condition to it
+            // pinned every one of these notifications open, success included.
+            ->when(
+                $coverage === WebhookCoverage::Failed,
+                fn (Notification $notification): Notification => $notification->persistent(),
+            )
             ->send();
     }
 }

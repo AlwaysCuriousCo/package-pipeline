@@ -2,7 +2,9 @@
 
 namespace App\Filament\Widgets;
 
+use App\Models\Package;
 use App\Models\PackageVersion;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Filament\Widgets\Widget;
@@ -85,18 +87,24 @@ class VersionReleaseHeatmap extends Widget
      */
     protected function releasedDuring(CarbonImmutable $start, CarbonImmutable $end): Collection
     {
-        return PackageVersion::query()
+        $versions = PackageVersion::query()
             ->where('is_dev', false)
-            ->whereBetween('released_at', [$start, $end])
-            // A user with row-level scoping sees their packages' history, not
-            // the whole registry's.
-            ->when(
-                auth()->user(),
-                fn ($query, $user) => $query->whereHas(
-                    'package',
-                    fn ($packages) => $packages->visibleToUser($user),
-                ),
-            )
+            ->whereBetween('released_at', [$start, $end]);
+
+        $user = auth()->user();
+
+        // A user with row-level scoping sees their packages' history, not the
+        // whole registry's. visibleToUser() is a Package scope, so it runs as
+        // a subquery over packages rather than inside whereHas(), which would
+        // hand it an untyped relation builder instead.
+        if ($user instanceof User) {
+            $versions->whereIn(
+                'package_id',
+                Package::query()->visibleToUser($user)->select('packages.id'),
+            );
+        }
+
+        return $versions
             ->with('package:id,name')
             ->get(['id', 'package_id', 'version', 'released_at']);
     }
@@ -119,7 +127,7 @@ class VersionReleaseHeatmap extends Widget
                 'count' => $released->count(),
                 'releases' => $released
                     ->map(fn (PackageVersion $version): string => trim(
-                        ($version->package?->name ?? 'Unknown package').' '.$version->version
+                        ($version->package->name ?? 'Unknown package').' '.$version->version
                     ))
                     ->sort()
                     ->values()

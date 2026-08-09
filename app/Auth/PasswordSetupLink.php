@@ -47,10 +47,10 @@ class PasswordSetupLink
     public static function for(User $user): string
     {
         return route('password-setup', [
-            'payload' => static::seal([
+            'payload' => self::seal([
                 'email' => $user->getEmailForPasswordReset(),
                 'token' => Password::broker()->createToken($user),
-                'expires' => now()->addMinutes(static::TTL_MINUTES)->getTimestamp(),
+                'expires' => now()->addMinutes(self::TTL_MINUTES)->getTimestamp(),
             ]),
         ]);
     }
@@ -63,7 +63,7 @@ class PasswordSetupLink
      */
     public static function open(string $payload): ?array
     {
-        $claim = static::unseal($payload);
+        $claim = self::unseal($payload);
 
         if ($claim === null) {
             return null;

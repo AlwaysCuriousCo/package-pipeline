@@ -36,7 +36,12 @@ class RecheckWebhookAction
                     ->title($state->getLabel())
                     ->body($state->remedy((string) ($app->deliveringTo() ?? ''))
                         ?? 'GitHub confirms the app posts to this registry. Pushes to any repository in this installation will sync their packages.')
-                    ->persistent($state !== WebhookState::Delivering)
+                    // persistent() takes no argument, so passing the condition
+                    // to it left even the healthy answer pinned open.
+                    ->when(
+                        $state !== WebhookState::Delivering,
+                        fn (Notification $notification): Notification => $notification->persistent(),
+                    )
                     ->send();
             });
     }

@@ -54,9 +54,10 @@ class GitHubSourceClient implements SourceClient
             );
         }
 
+        // usort() reindexes, so the filtered array is a list again.
         usort($projects, fn (Project $a, Project $b): int => strcasecmp($a->fullName, $b->fullName));
 
-        return array_values($projects);
+        return $projects;
     }
 
     /**
