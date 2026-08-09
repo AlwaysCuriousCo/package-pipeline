@@ -12,6 +12,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // TLS ends at the platform's load balancer, so without this the app
+        // sees every request as http and signed URLs (the password reset
+        // link admin:create prints) fail their signature check. Traffic only
+        // reaches the app through that balancer, so trusting all proxies is
+        // safe here.
+        $middleware->trustProxies(at: '*');
+
         // The admin-only routes outside the Filament panel (the GitHub App
         // connect handshake) use the plain "auth" middleware, which has no
         // login route of its own to fall back on. Keep this in sync with the

@@ -3,6 +3,7 @@
 use App\Http\Controllers\ComposerRepositoryController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
+use App\Http\Controllers\PasswordSetupController;
 use App\Http\Controllers\SourceConnectionController;
 use App\Http\Controllers\SsoController;
 use App\Http\Middleware\AuthenticateComposer;
@@ -13,6 +14,15 @@ use Illuminate\Support\Facades\Route;
 // the panel's login page. Keep this in sync with the admin panel's path()
 // in App\Providers\Filament\AdminPanelProvider.
 Route::redirect('/', '/admin/login')->name('home');
+
+// The landing point for the password link `admin:create`, `user:add` and
+// `user:reset-password` print. One opaque segment and no query string, so the
+// URL a new admin is asked to open carries neither their address nor a token
+// — see App\Auth\PasswordSetupLink for why that matters. Outside the panel's
+// own /admin paths so it cannot race Filament's route registration.
+Route::get('/password-setup/{payload}', PasswordSetupController::class)
+    ->where('payload', '[A-Za-z0-9\-_]+')
+    ->name('password-setup');
 
 // The Composer v2 repository API. A consuming project opts in with:
 //   composer config repositories.private composer <this-app's-url>
