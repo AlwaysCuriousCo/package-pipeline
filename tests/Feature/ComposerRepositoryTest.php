@@ -125,9 +125,26 @@ class ComposerRepositoryTest extends TestCase
                 'search' => url('/search.json').'?q=%query%&type=%type%',
                 'list' => url('/list.json'),
             ])
-            // Inlining every name would defeat Composer's lazy loading and
-            // publish the package list to anyone fetching the root.
-            ->assertJsonMissingPath('available-packages');
+            // Patterns bound what Composer will ask about without inlining
+            // every name, which would defeat lazy loading and hand the whole
+            // package list to anyone who fetches the root.
+            ->assertJsonMissingPath('available-packages')
+            ->assertJsonPath('available-package-patterns', ['acme/*']);
+    }
+
+    public function test_the_root_advertises_one_pattern_per_served_vendor(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('acme/gadgets');
+        $this->makeServedPackageNamed('other/widgets');
+
+        // A package with no versions resolves to nothing, so naming its vendor
+        // would only send Composer somewhere that answers 404.
+        Package::factory()->create(['name' => 'unsynced/thing']);
+
+        $this->get('/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*', 'other/*']);
     }
 
     public function test_search_filters_by_name_prefix(): void

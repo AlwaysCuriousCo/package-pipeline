@@ -135,6 +135,28 @@ class UserAccessScopingTest extends TestCase
             ->assertExactJson(['packageNames' => ['acme/open']]);
     }
 
+    public function test_vendor_patterns_name_only_vendors_the_token_can_reach(): void
+    {
+        $user = $this->makeScopedUser();
+        $user->packages()->attach($this->makeServedPackage('granted/widgets', $this->internal));
+        $this->makeServedPackage('hidden/widgets', $this->other);
+
+        $new = Token::issue($user, 'laptop', [TokenAbility::RepositoryRead]);
+
+        $this->withBasicAuth('token', $new->plainText)
+            ->getJson('/r/internal/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['granted/*']);
+
+        // A vendor in a repository this token was never granted must not
+        // surface even as a prefix — the root would otherwise disclose who
+        // publishes here to anyone holding any token at all.
+        $this->withBasicAuth('token', $new->plainText)
+            ->getJson('/r/other/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', []);
+    }
+
     public function test_a_users_token_without_grants_still_reads_public_repositories(): void
     {
         $new = Token::issue($this->makeScopedUser(), 'laptop', [TokenAbility::RepositoryRead]);

@@ -20,6 +20,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -52,14 +53,52 @@ class ComposerRepositoryController extends Controller
     {
         $repository = $this->repository($request);
 
-        // `search` and `list` rather than `available-packages`: inlining every
-        // name defeats Composer's lazy metadata loading and hands the full
-        // package list to anyone who fetches the root.
         return response()->json([
             'metadata-url' => $repository->pathPrefix().'/p2/%package%.json',
+            // Without some statement of what this repository could possibly
+            // answer for, Composer has to assume the answer is "anything" and
+            // asks about every package in the consuming project's dependency
+            // graph — twice each, releases and branches — on every cold
+            // update. A project with a few hundred transitive dependencies
+            // turns one `composer update` into a few hundred authenticated
+            // 404s here, which costs more than serving the real packages does.
+            //
+            // Vendor patterns rather than `available-packages`: an inline list
+            // of every name would have to be rebuilt and re-sent on each root
+            // fetch, and it is the one document Composer cannot lazily skip.
+            'available-package-patterns' => $this->servedVendorPatterns($request),
             'search' => $repository->url('/search.json').'?q=%query%&type=%type%',
             'list' => $repository->url('/list.json'),
         ]);
+    }
+
+    /**
+     * The vendor prefixes this request's principal may be served, written as
+     * Composer name patterns.
+     *
+     * Scoped through the same visibility every other endpoint uses, so two
+     * tokens with different grants are told about different vendors and
+     * neither hears of one it could not have fetched anyway. That is also why
+     * this leaks nothing new: list.json already enumerates whole names to
+     * exactly the principals who can reach this document, and a vendor prefix
+     * is strictly less than a name.
+     *
+     * Split in PHP rather than by a SQL substring because "everything before
+     * the first slash" is spelled differently on each of the three databases
+     * this supports, and the set being split is the one list.json already
+     * plucks whole.
+     *
+     * @return list<string>
+     */
+    private function servedVendorPatterns(Request $request): array
+    {
+        return $this->servedPackages($request)
+            ->pluck('name')
+            ->map(fn (string $name): string => Str::before($name, '/').'/*')
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
     }
 
     /**
