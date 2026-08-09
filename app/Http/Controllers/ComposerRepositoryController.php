@@ -395,12 +395,19 @@ class ComposerRepositoryController extends Controller
         // Only an archive actually being served counts; every 404 above
         // returned before reaching this line. Both ways of serving one are
         // below, and a request takes exactly one of them.
-        PackageDownloaded::dispatch(
-            $record->id,
-            $version->id,
-            $version->version,
-            $this->token($request)?->token_prefix,
-        );
+        //
+        // A HEAD is not one of them. Laravel answers HEAD on every GET route
+        // and the body is dropped far below this method, so a `curl -I`, an
+        // uptime check or a proxy probing the URL would otherwise land in
+        // total_downloads as an install that took no bytes.
+        if ($request->isMethod('GET')) {
+            PackageDownloaded::dispatch(
+                $record->id,
+                $version->id,
+                $version->version,
+                $this->token($request)?->token_prefix,
+            );
+        }
 
         // Reading the zip out through PHP pins a worker for the length of the
         // transfer, and one `composer install` fetches an archive per package.
@@ -421,11 +428,25 @@ class ComposerRepositoryController extends Controller
         $url = $this->archives->temporaryUrl($version->archive_path);
 
         if ($url !== null) {
-            return redirect()->away($url);
+            // The archive is immutable; this response is not. It carries a URL
+            // that stops working in minutes, and a cache replaying it after
+            // that turns a redirect into a failed install. What may be done
+            // with the bytes on the other side is the bucket's headers to say.
+            return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
         }
 
         return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [
             'Content-Type' => 'application/zip',
+            // The URL names a commit, so it can only ever answer with these
+            // bytes: there is nothing for a client to revalidate, and a year
+            // is the conventional way to spell "as long as you like".
+            //
+            // `private` because whether these bytes may be handed over depends
+            // on the token that asked, which is a decision a shared cache is
+            // not party to. A client's own cache is different in kind: it can
+            // only replay an archive that client already downloaded, so a
+            // token revoked afterwards loses it nothing it did not have.
+            'Cache-Control' => 'private, max-age=31536000, immutable',
         ]);
     }
 

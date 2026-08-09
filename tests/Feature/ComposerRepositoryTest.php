@@ -369,7 +369,11 @@ class ComposerRepositoryTest extends TestCase
 
         $response = $this->get("/dist/acme/widgets/{$reference}.zip")
             ->assertOk()
-            ->assertHeader('Content-Type', 'application/zip');
+            ->assertHeader('Content-Type', 'application/zip')
+            // The URL is keyed by commit, so the bytes behind it never change
+            // and a client may keep them for as long as it likes. Private:
+            // a shared cache is no party to who this app serves an archive to.
+            ->assertHeader('Cache-Control', 'immutable, max-age=31536000, private');
 
         $this->assertSame('zip-bytes', $response->streamedContent());
 
@@ -391,6 +395,9 @@ class ComposerRepositoryTest extends TestCase
         $location = (string) $this->get("/dist/acme/widgets/{$reference}.zip")
             ->assertStatus(302)
             ->assertRedirectContains('https://objects.test/packages/acme/widgets/v110.zip')
+            // The archive may be immutable, but a URL that expires in minutes
+            // is not: a cache replaying this redirect would fail the install.
+            ->assertHeader('Cache-Control', 'no-store, private')
             ->headers->get('Location');
 
         // The signature is the only authorisation the storage service applies,

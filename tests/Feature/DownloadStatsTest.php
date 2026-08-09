@@ -77,6 +77,24 @@ class DownloadStatsTest extends TestCase
         $this->assertSame($new->token->token_prefix, Download::query()->sole()->token_prefix);
     }
 
+    public function test_a_head_request_is_not_a_download(): void
+    {
+        // Laravel answers HEAD on every GET route, so `curl -I`, an uptime
+        // check and a proxy prefetch all reach the dist endpoint. None of them
+        // takes the archive, and counting them would inflate the number the
+        // dashboard and search present as installs.
+        $this->head('/dist/acme/widgets/'.str_repeat('a', 40).'.zip')->assertOk();
+
+        $this->assertSame(0, Download::query()->count());
+        $this->assertSame(0, $this->package->fresh()->total_downloads);
+
+        // The GET that a probing client eventually makes still counts, once.
+        $this->download();
+
+        $this->assertSame(1, Download::query()->count());
+        $this->assertSame(1, $this->package->fresh()->total_downloads);
+    }
+
     public function test_a_404_records_nothing(): void
     {
         $this->get('/dist/acme/widgets/'.str_repeat('f', 40).'.zip')->assertNotFound();
