@@ -69,6 +69,12 @@ shape rather than a delta from a previous one.
   themselves — nothing has to remember to clear them — and `METADATA_CACHE_DAYS`
   and `METADATA_CACHE_MAX_KB` bound how long and how large. Who may see a
   package is still decided per request; only the bytes are cached.
+- `/p2` metadata is served in Packagist's minified format
+  (`"minified": "composer/2.0"`), where each version carries only what differs
+  from the one before it. Composer expands it on arrival — with the same
+  library that produces it here — so nothing changes for a client except how
+  much of it there is to download. A document without the key is read as
+  already expanded, which is what these responses were until now.
 - Versions are normalized once on the way in (`v1.2.3` → `1.2.3`, branches to
   Packagist-style dev versions) and carry an indexed sort key, so `1.10.0`
   ranks above `1.9.0` and a release above its own release candidates — in the

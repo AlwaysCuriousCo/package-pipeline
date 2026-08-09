@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Package;
+use Composer\MetadataMinifier\MetadataMinifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -24,6 +25,7 @@ class ComposerRepositoryTest extends TestCase
 
         $package->versions()->create([
             'version' => 'v1.1.0',
+            'order' => '1.1.0.0',
             'reference' => str_repeat('b', 40),
             'is_dev' => false,
             'released_at' => '2026-02-01 12:00:00',
@@ -195,6 +197,110 @@ class ComposerRepositoryTest extends TestCase
     public function test_metadata_for_an_unknown_package_is_a_404(): void
     {
         $this->get('/p2/acme/missing.json')->assertNotFound();
+    }
+
+    public function test_metadata_is_served_in_the_minified_format(): void
+    {
+        $this->makeServedPackage();
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            // Composer reads an absent key as "already expanded", so declaring
+            // the format is the whole of the opt-in.
+            ->assertJsonPath('minified', 'composer/2.0');
+    }
+
+    public function test_minification_omits_what_a_version_shares_with_the_one_before_it(): void
+    {
+        $package = $this->makeServedPackage();
+
+        // Identical to v1.1.0 in everything but the version itself, which is
+        // the ordinary case: a release line's requirements rarely move.
+        $package->versions()->create([
+            'version' => 'v1.0.0',
+            'order' => '1.0.0.0',
+            'reference' => str_repeat('c', 40),
+            'is_dev' => false,
+            'released_at' => '2026-01-01 12:00:00',
+            'metadata' => [
+                'name' => 'acme/widgets',
+                'version' => 'v1.0.0',
+                'type' => 'library',
+                'require' => ['php' => '^8.3'],
+            ],
+        ]);
+
+        $versions = $this->get('/p2/acme/widgets.json')->assertOk()->json('packages.acme/widgets');
+
+        // Newest first, and the first entry is the complete one.
+        $this->assertSame('v1.1.0', $versions[0]['version']);
+        $this->assertArrayHasKey('type', $versions[0]);
+
+        // The second carries only what actually changed.
+        $this->assertSame(
+            ['version', 'time', 'dist'],
+            array_keys($versions[1]),
+        );
+    }
+
+    public function test_expanding_the_minified_response_recovers_every_version_whole(): void
+    {
+        // The strongest statement available: what a Composer client ends up
+        // with after expansion, spelled out rather than derived from the code
+        // that produced it.
+        $package = $this->makeServedPackage();
+
+        $package->versions()->create([
+            'version' => 'v1.0.0',
+            'order' => '1.0.0.0',
+            'reference' => str_repeat('c', 40),
+            'is_dev' => false,
+            'released_at' => '2026-01-01 12:00:00',
+            'archive_path' => 'packages/acme/widgets/v100.zip',
+            'shasum' => sha1('older-zip-bytes'),
+            'metadata' => [
+                'name' => 'acme/widgets',
+                'version' => 'v1.0.0',
+                'type' => 'library',
+                // A key v1.1.0 does not carry, and — by its absence here —
+                // a `require` that v1.1.0 does. Expansion has to honour the
+                // format's "__unset" as well as its carrying-forward.
+                'description' => 'The first cut.',
+            ],
+        ]);
+
+        $expanded = MetadataMinifier::expand(
+            $this->get('/p2/acme/widgets.json')->assertOk()->json('packages.acme/widgets'),
+        );
+
+        $this->assertEquals([
+            [
+                'name' => 'acme/widgets',
+                'version' => 'v1.1.0',
+                'type' => 'library',
+                'require' => ['php' => '^8.3'],
+                'time' => '2026-02-01T12:00:00+00:00',
+                'dist' => [
+                    'type' => 'zip',
+                    'url' => url('/dist/acme/widgets/'.str_repeat('b', 40).'.zip'),
+                    'reference' => str_repeat('b', 40),
+                    'shasum' => sha1('zip-bytes'),
+                ],
+            ],
+            [
+                'name' => 'acme/widgets',
+                'version' => 'v1.0.0',
+                'type' => 'library',
+                'description' => 'The first cut.',
+                'time' => '2026-01-01T12:00:00+00:00',
+                'dist' => [
+                    'type' => 'zip',
+                    'url' => url('/dist/acme/widgets/'.str_repeat('c', 40).'.zip'),
+                    'reference' => str_repeat('c', 40),
+                    'shasum' => sha1('older-zip-bytes'),
+                ],
+            ],
+        ], $expanded);
     }
 
     public function test_the_dist_endpoint_serves_the_stored_archive(): void

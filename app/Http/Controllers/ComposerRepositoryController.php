@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\ArchiveStore;
 use App\Services\CreateVersionFromZip;
 use Carbon\CarbonImmutable;
+use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -39,7 +40,7 @@ class ComposerRepositoryController extends Controller
      * than from the bytes, so nothing else would tell a client whose copy
      * predates a deploy that what it holds is no longer what this code sends.
      */
-    private const PAYLOAD_REVISION = 1;
+    private const PAYLOAD_REVISION = 2;
 
     public function __construct(private readonly ArchiveStore $archives) {}
 
@@ -281,6 +282,18 @@ class ComposerRepositoryController extends Controller
     /**
      * The `/p2` document for one flavour of one package, as the bytes to send.
      *
+     * Served in Packagist's minified form, where each version carries only
+     * what differs from the one before it and Composer expands the chain back
+     * out on arrival — the same fields repeated down every version of a
+     * package are most of what a `/p2` document weighs. The ordering the query
+     * already applies is what makes that pay: newest first puts the versions
+     * most alike next to each other, and the first entry — the one Composer
+     * most often wants — is the complete one.
+     *
+     * Minifying with Composer's own library rather than by hand is the point:
+     * minify() and the expand() every Composer client runs are inverses by
+     * construction, instead of by our reading of an undocumented format.
+     *
      * Serves the package's stored name rather than the spelling the URL asked
      * for: on a case-insensitive collation the two need not match, and the
      * body has to be a function of what is stored, not of how it was typed —
@@ -320,7 +333,12 @@ class ComposerRepositoryController extends Controller
             ->values()
             ->all();
 
-        return json_encode(['packages' => [$name => $versions]], JSON_THROW_ON_ERROR);
+        return json_encode([
+            // A document without this key is read as already expanded, which
+            // is what every response here was until now.
+            'minified' => 'composer/2.0',
+            'packages' => [$name => MetadataMinifier::minify($versions)],
+        ], JSON_THROW_ON_ERROR);
     }
 
     /**
