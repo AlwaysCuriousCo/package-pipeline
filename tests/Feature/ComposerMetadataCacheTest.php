@@ -9,17 +9,20 @@ use App\Models\Repository;
 use App\Models\Token;
 use App\Models\User;
 use App\Services\PackageSynchronizer;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Conditional requests on the `/p2` metadata endpoint.
+ * Conditional requests and the rendered-payload cache on the `/p2` metadata
+ * endpoint.
  *
  * Composer's downloader sends If-Modified-Since on every metadata refetch, so
  * this is where a `composer update` against an unchanged registry stops paying
  * for a rebuilt, re-transferred payload per package — without ever letting a
- * 304 answer a question the requester was not allowed to ask.
+ * 304, or a cache hit, answer a question the requester was not allowed to ask.
  */
 class ComposerMetadataCacheTest extends TestCase
 {
@@ -209,6 +212,117 @@ class ComposerMetadataCacheTest extends TestCase
 
         $this->withToken($strangerToken->plainText)
             ->get('/r/internal/p2/acme/widgets.json', ['If-Modified-Since' => $modifiedSince])
+            ->assertNotFound();
+    }
+
+    /**
+     * Rewrite the served version name underneath the cache, without moving
+     * anything the cache key is cut from. A response that still reads 1.0.0
+     * was handed back whole; one that reads 9.9.9 was rebuilt from the rows.
+     */
+    private function rewriteBehindTheCache(Package $package): void
+    {
+        DB::table('package_versions')
+            ->where('package_id', $package->id)
+            ->update(['metadata' => json_encode(['name' => 'acme/widgets', 'version' => '9.9.9'])]);
+    }
+
+    public function test_the_rendered_payload_is_reused_between_requests(): void
+    {
+        $package = $this->makeServedPackage();
+
+        $this->get(self::URL)->assertOk();
+
+        $this->rewriteBehindTheCache($package);
+
+        $this->get(self::URL)
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.version', '1.0.0');
+    }
+
+    public function test_a_cache_hit_reads_no_version_rows(): void
+    {
+        $this->makeServedPackage();
+
+        $this->get(self::URL)->assertOk();
+
+        $queries = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        $this->get(self::URL)->assertOk();
+
+        $touched = array_values(array_filter(
+            $queries,
+            fn (string $sql): bool => str_contains($sql, 'package_versions'),
+        ));
+
+        // Exactly the fingerprint aggregate, and nothing that would drag every
+        // version's metadata column back out of the database.
+        $this->assertCount(1, $touched);
+        $this->assertStringContainsString('count(*)', $touched[0]);
+    }
+
+    public function test_a_new_version_rebuilds_the_payload(): void
+    {
+        $package = $this->makeServedPackage();
+
+        $this->get(self::URL)->assertOk();
+
+        $package->versions()->create([
+            'version' => '1.1.0',
+            'order' => '1.1.0.0',
+            'reference' => str_repeat('b', 40),
+            'is_dev' => false,
+            'metadata' => ['name' => 'acme/widgets', 'version' => '1.1.0'],
+        ]);
+
+        $this->get(self::URL)
+            ->assertOk()
+            ->assertJsonCount(2, 'packages.acme/widgets')
+            ->assertJsonPath('packages.acme/widgets.0.version', '1.1.0');
+    }
+
+    public function test_a_payload_over_the_ceiling_is_served_but_never_stored(): void
+    {
+        // The ceiling keeps an outsized payload out of the cache store, not out
+        // of the response; zero turns the cache off for every payload.
+        config(['registry.metadata_cache.max_kilobytes' => 0]);
+
+        $package = $this->makeServedPackage();
+
+        $this->get(self::URL)->assertOk();
+
+        $this->rewriteBehindTheCache($package);
+
+        $this->get(self::URL)
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.version', '9.9.9');
+    }
+
+    public function test_the_cache_never_answers_for_a_client_that_may_not_see_the_package(): void
+    {
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+
+        $package = $this->makeServedPackage();
+        $package->update(['repository_id' => $internal->id]);
+
+        $granted = DeployToken::factory()->create();
+        $granted->packages()->attach($package);
+
+        // Warmed by a client that may see it, then asked for by one that may
+        // not: the cache holds a payload, and the answer is still a 404.
+        $this->withToken(Token::issue($granted, 'granted', [TokenAbility::RepositoryRead])->plainText)
+            ->get('/r/internal/p2/acme/widgets.json')
+            ->assertOk();
+
+        $stranger = DeployToken::factory()->create();
+        $stranger->repositories()->attach(Repository::factory()->create(['path' => 'other', 'public' => false]));
+
+        $this->withToken(Token::issue($stranger, 'stranger', [TokenAbility::RepositoryRead])->plainText)
+            ->get('/r/internal/p2/acme/widgets.json')
             ->assertNotFound();
     }
 

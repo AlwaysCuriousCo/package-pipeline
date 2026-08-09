@@ -149,14 +149,53 @@ class ComposerRepositoryController extends Controller
             'Vary' => 'Authorization',
         ]);
 
+        $etag = $this->etag($repository, $record, $dev, $state);
+
         $response->setLastModified($this->lastModified($record, $state));
-        $response->setEtag($this->etag($repository, $record, $dev, $state), weak: true);
+        $response->setEtag($etag, weak: true);
 
         if ($response->isNotModified($request)) {
             return $response;
         }
 
-        return $response->setContent($this->renderMetadata($repository, $record, $dev));
+        return $response->setContent($this->payload($repository, $record, $dev, $etag));
+    }
+
+    /**
+     * The bytes to serve for one metadata request, rendered at most once per
+     * change to the package.
+     *
+     * Keyed by the fingerprint the ETag was cut from, which is what makes this
+     * safe: the entry is not invalidated, it is *superseded* — a sync, an
+     * upload, a prune or a deploy that changes the rendering all produce a
+     * different key, and the same aggregate that decided the validators
+     * decided the key. Busting explicitly would mean naming every write path
+     * (the synchronizer's import, prune and finalize, the archive store, the
+     * upload creator, version and package deletion) and being right about all
+     * of them forever — and a registry serving one package's stale metadata
+     * is the worst failure this app has.
+     *
+     * Only the payload is cached. Who may see it is decided per request, above.
+     */
+    private function payload(Repository $repository, Package $package, bool $dev, string $etag): string
+    {
+        $key = 'composer:metadata:'.$package->getKey().':'.($dev ? 'dev' : 'stable').":{$etag}";
+
+        $cached = cache()->get($key);
+
+        if (is_string($cached)) {
+            return $cached;
+        }
+
+        $json = $this->renderMetadata($repository, $package, $dev);
+
+        $ceiling = (int) config('registry.metadata_cache.max_kilobytes') * 1024;
+
+        if (strlen($json) <= $ceiling) {
+            cache()->put($key, $json, now()->addDays((int) config('registry.metadata_cache.days')));
+        }
+
+        return $json;
     }
 
     /**

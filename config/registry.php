@@ -21,4 +21,31 @@ return [
 
     'upload_max_megabytes' => (int) env('ARTIFACT_UPLOAD_MAX_MB', 100),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Rendered Metadata Cache
+    |--------------------------------------------------------------------------
+    |
+    | The /p2 endpoint stores the exact bytes it serves, keyed by a fingerprint
+    | of the version rows behind them. A sync invalidates an entry by producing
+    | a different key rather than by clearing anything, so no write path has to
+    | remember this cache exists.
+    |
+    | Entries therefore supersede themselves, and the lifetime only decides how
+    | long a superseded one lingers in the store. A week keeps the store small
+    | without costing a rebuild for a package that is only fetched now and then.
+    |
+    | The ceiling is a sanity bound rather than a tuning knob: the default store
+    | is the database, where the value column is a MEDIUMTEXT and every hit
+    | drags the whole row across the wire. A payload past it is served from the
+    | version rows every time, which for a package that fat is the lesser
+    | problem. Zero turns the cache off entirely.
+    |
+    */
+
+    'metadata_cache' => [
+        'days' => (int) env('METADATA_CACHE_DAYS', 7),
+        'max_kilobytes' => (int) env('METADATA_CACHE_MAX_KB', 4096),
+    ],
+
 ];

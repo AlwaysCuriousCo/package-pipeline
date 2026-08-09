@@ -63,6 +63,12 @@ shape rather than a delta from a previous one.
   validators: the first has no work for a `304` to skip, and the other two
   answer a set of packages chosen by the caller's grants, which cannot be
   fingerprinted more cheaply than it can be answered.
+- The rendered `/p2` payload is cached under that same fingerprint, so a
+  package with hundreds of versions is decoded and re-serialised once per
+  change rather than once per consumer per request. Entries supersede
+  themselves — nothing has to remember to clear them — and `METADATA_CACHE_DAYS`
+  and `METADATA_CACHE_MAX_KB` bound how long and how large. Who may see a
+  package is still decided per request; only the bytes are cached.
 - Versions are normalized once on the way in (`v1.2.3` → `1.2.3`, branches to
   Packagist-style dev versions) and carry an indexed sort key, so `1.10.0`
   ranks above `1.9.0` and a release above its own release candidates — in the
