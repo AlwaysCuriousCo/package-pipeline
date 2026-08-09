@@ -45,8 +45,10 @@ class AuthenticateComposer
 
         // A presented credential is always checked, public repository or not:
         // a CI system with a revoked token should hear about it as a 401, not
-        // keep working by accident until the repository goes private.
-        if (! $token instanceof Token || $token->isExpired()) {
+        // keep working by accident until the repository goes private. A token
+        // whose principal no longer resolves is spent too — package scoping
+        // reads it as nobody and would hand it every public package.
+        if (! $token instanceof Token || $token->isExpired() || $token->tokenable === null) {
             return $this->challenge($request);
         }
 

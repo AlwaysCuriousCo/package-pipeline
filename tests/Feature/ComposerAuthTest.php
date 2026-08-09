@@ -115,6 +115,38 @@ class ComposerAuthTest extends TestCase
             ->assertUnauthorized();
     }
 
+    public function test_deleting_a_user_revokes_their_tokens(): void
+    {
+        $user = User::factory()->superAdmin()->create();
+        $new = Token::issue($user, 'personal', [TokenAbility::RepositoryRead]);
+
+        $this->withBasicAuth('token', $new->plainText)->getJson('/r/internal/list.json')->assertOk();
+
+        $user->delete();
+
+        $this->assertSoftDeleted('access_tokens', ['id' => $new->token->id]);
+
+        $this->withBasicAuth('token', $new->plainText)
+            ->getJson('/r/internal/list.json')
+            ->assertUnauthorized();
+    }
+
+    public function test_a_token_whose_principal_is_gone_stops_authenticating(): void
+    {
+        // Rows orphaned before the principals started revoking their own
+        // tokens: authenticating as nobody must not read as "the public".
+        $this->private->update(['public' => true]);
+
+        $new = $this->issueToken();
+
+        User::withoutEvents(fn () => $new->token->tokenable->delete());
+
+        $this->withBasicAuth('token', $new->plainText)
+            ->getJson('/r/internal/list.json')
+            ->assertUnauthorized()
+            ->assertHeader('WWW-Authenticate', 'Basic realm="Composer repository"');
+    }
+
     public function test_an_expired_token_stops_authenticating(): void
     {
         $new = Token::issue(User::factory()->superAdmin()->create(), 'expired', [TokenAbility::RepositoryRead], now()->subDay());

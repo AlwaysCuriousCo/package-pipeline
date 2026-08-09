@@ -22,6 +22,15 @@ class User extends Authenticatable implements FilamentUser
     /** @use HasFactory<UserFactory> */
     use HasFactory, HasRoles, Notifiable;
 
+    protected static function booted(): void
+    {
+        // Deleting the person revokes their credentials; the soft-deleted
+        // token rows keep the audit trail of what they reached and when. An
+        // orphaned token authenticates as nobody, which package scoping reads
+        // as "the public packages" rather than as no access at all.
+        static::deleted(fn (self $user) => $user->tokens()->delete());
+    }
+
     /**
      * Determine whether the user may access the given Filament panel.
      *
