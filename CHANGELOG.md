@@ -55,6 +55,14 @@ shape rather than a delta from a previous one.
 
 ### Changed
 
+- Per-package `/p2` metadata answers conditional requests. Every response
+  carries `Last-Modified`, a weak `ETag` and `Cache-Control: no-cache, private`,
+  and a Composer client whose copy is current is answered `304` after a single
+  aggregate over the version rows — no rows read, no payload built, no body
+  sent. `packages.json`, `list.json` and `search.json` deliberately keep no
+  validators: the first has no work for a `304` to skip, and the other two
+  answer a set of packages chosen by the caller's grants, which cannot be
+  fingerprinted more cheaply than it can be answered.
 - Versions are normalized once on the way in (`v1.2.3` → `1.2.3`, branches to
   Packagist-style dev versions) and carry an indexed sort key, so `1.10.0`
   ranks above `1.9.0` and a release above its own release candidates — in the
@@ -74,6 +82,10 @@ shape rather than a delta from a previous one.
 
 - A sync batch left behind by a lost worker is cancelled before its replacement
   starts, instead of letting stale import jobs race the new sync.
+- Recording a download no longer stamps `updated_at` on the package and version
+  rows. Eloquent does that on an increment by default, which made a package's
+  "Last synced" read as "last downloaded" — and would have made the busiest
+  packages in the registry invalidate their own metadata on every zip served.
 - Archive presence is verified on the dist disk rather than trusted from the
   database, so a re-sync actually rebuilds a zip that storage lost, and a dist
   request falls through to a sibling row whose file is still there.

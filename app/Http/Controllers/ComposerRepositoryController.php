@@ -12,9 +12,12 @@ use App\Models\Token;
 use App\Models\User;
 use App\Services\ArchiveStore;
 use App\Services\CreateVersionFromZip;
+use Carbon\CarbonImmutable;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -29,6 +32,15 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class ComposerRepositoryController extends Controller
 {
+    /**
+     * Bumped whenever the rendered `/p2` document changes shape.
+     *
+     * A metadata response's validators are derived from the database rather
+     * than from the bytes, so nothing else would tell a client whose copy
+     * predates a deploy that what it holds is no longer what this code sends.
+     */
+    private const PAYLOAD_REVISION = 1;
+
     public function __construct(private readonly ArchiveStore $archives) {}
 
     /**
@@ -91,8 +103,21 @@ class ComposerRepositoryController extends Controller
     /**
      * Version metadata for one package. Composer requests both
      * `vendor/name.json` (releases) and `vendor/name~dev.json` (branches).
+     *
+     * The one endpoint a `composer update` hammers, so it answers conditional
+     * requests: Composer's downloader sends `If-Modified-Since` on every
+     * metadata refetch, and a 304 here costs one aggregate instead of every
+     * version row, every `metadata` column decoded, and the megabytes they
+     * render back into.
+     *
+     * The other three read endpoints deliberately get no validators.
+     * `packages.json` is three URL templates built from a row already in
+     * memory, so a 304 would skip no work at all. `list.json` and
+     * `search.json` answer a *set* of packages chosen by the caller's grants,
+     * and there is no cheap fingerprint of that set — the query that would
+     * produce one is the query that answers them.
      */
-    public function metadata(Request $request, string $vendor, string $package): JsonResponse
+    public function metadata(Request $request, string $vendor, string $package): Response
     {
         $repository = $this->repository($request);
 
@@ -104,9 +129,130 @@ class ComposerRepositoryController extends Controller
             ->where('name', $name)
             ->first();
 
+        // Visibility is settled before a validator is so much as computed, so
+        // a client that may not see this package gets the 404 it always got
+        // and never a 304 confirming the package is here.
         abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
 
-        $versions = $record->versions()
+        $state = $this->versionState($record, $dev);
+
+        $response = response('', 200, [
+            'Content-Type' => 'application/json',
+            // `no-cache` rather than a freshness lifetime: a response carrying
+            // Last-Modified and no max-age is fair game for heuristic
+            // freshness, and a cache inventing one would go on serving this
+            // package's metadata to a token that has since been revoked.
+            // `private` keeps it out of shared caches altogether, because what
+            // this URL answers depends on who asked — which is also what Vary
+            // says to anything that stores it regardless.
+            'Cache-Control' => 'private, no-cache',
+            'Vary' => 'Authorization',
+        ]);
+
+        $response->setLastModified($this->lastModified($record, $state));
+        $response->setEtag($this->etag($repository, $record, $dev, $state), weak: true);
+
+        if ($response->isNotModified($request)) {
+            return $response;
+        }
+
+        return $response->setContent($this->renderMetadata($repository, $record, $dev));
+    }
+
+    /**
+     * A cheap fingerprint of the version rows one metadata response is built
+     * from: how many there are, when one of them last changed, and the
+     * highest row id among them.
+     *
+     * One aggregate and not a single row, which is the entire point — a 304
+     * that had to read every version's `metadata` column to decide it was a
+     * 304 would cost exactly what sending the body costs.
+     *
+     * All three parts are load-bearing. The count alone misses an edit; the
+     * timestamp alone misses a deletion, and being second-resolution it also
+     * misses a row replaced inside one second, which the id catches.
+     *
+     * @return array{count: int, changed: ?CarbonImmutable, newest: int}
+     */
+    private function versionState(Package $package, bool $dev): array
+    {
+        $state = (array) $package->versions()
+            ->where('is_dev', $dev)
+            ->toBase()
+            ->selectRaw('count(*) as version_count, max(updated_at) as changed_at, coalesce(max(id), 0) as newest_id')
+            ->first();
+
+        $changed = $state['changed_at'] ?? null;
+
+        return [
+            'count' => (int) ($state['version_count'] ?? 0),
+            'changed' => is_string($changed) ? CarbonImmutable::parse($changed) : null,
+            'newest' => (int) ($state['newest_id'] ?? 0),
+        ];
+    }
+
+    /**
+     * When this package's metadata last changed.
+     *
+     * The package's own timestamp is in the max because a *deleted* version
+     * leaves no timestamp behind. Every path that removes one — a sync
+     * pruning refs gone from upstream, an import dropping a ref whose
+     * composer.json lost its name — finishes by saving the package, so what
+     * moves when the version rows only get fewer is the package row.
+     *
+     * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
+     */
+    private function lastModified(Package $package, array $state): ?DateTimeInterface
+    {
+        $timestamps = array_filter([$package->updated_at, $state['changed']]);
+
+        return $timestamps === [] ? null : max($timestamps);
+    }
+
+    /**
+     * A weak validator for a metadata response.
+     *
+     * Weak deliberately: it is derived from the fingerprint above rather than
+     * from a digest of the bytes, because hashing the payload would mean
+     * building the payload — the work the validator exists to skip. Weakness
+     * is precisely the claim being made, and revalidation is the only thing
+     * either Composer or an intermediary ever uses this for.
+     *
+     * The dist URLs are baked into the body, so the base they are built from
+     * is part of what the tag identifies — a repository moved to another path
+     * serves different bytes from the same rows.
+     *
+     * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
+     */
+    private function etag(Repository $repository, Package $package, bool $dev, array $state): string
+    {
+        // xxh128 because this is a cache validator, not a signature: it has to
+        // be collision-resistant against accident, never against an attacker.
+        return hash('xxh128', implode('|', [
+            self::PAYLOAD_REVISION,
+            $repository->url('/dist/'),
+            $package->getKey(),
+            $dev ? 'dev' : 'stable',
+            $state['count'],
+            $state['changed']?->getTimestamp() ?? 0,
+            $state['newest'],
+        ]));
+    }
+
+    /**
+     * The `/p2` document for one flavour of one package, as the bytes to send.
+     *
+     * Serves the package's stored name rather than the spelling the URL asked
+     * for: on a case-insensitive collation the two need not match, and the
+     * body has to be a function of what is stored, not of how it was typed —
+     * otherwise two spellings of one package share a validator and differ in
+     * what they answer.
+     */
+    private function renderMetadata(Repository $repository, Package $package, bool $dev): string
+    {
+        $name = (string) $package->name;
+
+        $versions = $package->versions()
             ->where('is_dev', $dev)
             // Releases sort by the normalizer's order string, whose lexical
             // order is semantic order (1.10.0 above 1.9.0). Branches have no
@@ -124,18 +270,18 @@ class ComposerRepositoryController extends Controller
                 ...($version->released_at ? ['time' => $version->released_at->toIso8601String()] : []),
                 'dist' => [
                     'type' => 'zip',
-                    'url' => $repository->url(
-                        '/dist/'.$vendor.'/'.explode('/', $name)[1]."/{$version->reference}.zip",
-                    ),
+                    'url' => $repository->url("/dist/{$name}/{$version->reference}.zip"),
                     'reference' => $version->reference,
                     // Composer verifies the downloaded zip against this. A
                     // version synced before archives were stored has none, and
                     // omitting the key beats advertising a null.
                     ...($version->shasum ? ['shasum' => $version->shasum] : []),
                 ],
-            ]);
+            ])
+            ->values()
+            ->all();
 
-        return response()->json(['packages' => [$name => $versions]]);
+        return json_encode(['packages' => [$name => $versions]], JSON_THROW_ON_ERROR);
     }
 
     /**
