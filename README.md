@@ -123,8 +123,12 @@ Everything lives in `.env`; the interesting knobs beyond a stock Laravel app:
 
 ```bash
 composer test        # phpunit via artisan test
-vendor/bin/pint      # code style (Laravel Pint)
+composer lint        # code style, report only (Laravel Pint)
+composer analyse     # static analysis (PHPStan via Larastan, level 6)
+vendor/bin/pint      # apply the fixes `composer lint` reports
 ```
+
+CI runs all three on every pull request, so a branch that passes them locally is a branch that goes green.
 
 `composer run dev` runs the web server, a queue worker, `pail` log streaming, and Vite together — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever.
 

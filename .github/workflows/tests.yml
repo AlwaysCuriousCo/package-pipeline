@@ -46,3 +46,36 @@ jobs:
 
       - name: Execute tests
         run: php artisan test
+
+  # Style and static analysis read the source rather than run it, so their
+  # verdict is the same on every PHP the tests matrix covers. One job on the
+  # lowest supported version is enough, and it fails with its own name in the
+  # checks list instead of hiding inside "PHP 8.3".
+  quality:
+    runs-on: ubuntu-latest
+
+    name: Lint and static analysis
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: 8.3
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Check code style
+        run: composer run lint
+
+      # Larastan boots the framework to resolve container types; it reads no
+      # configuration of its own, so there is no .env to write here.
+      - name: Run static analysis
+        run: composer run analyse
