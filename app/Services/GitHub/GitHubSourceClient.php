@@ -5,6 +5,7 @@ namespace App\Services\GitHub;
 use App\Models\Source;
 use App\Sources\Project;
 use App\Sources\SourceClient;
+use App\Support\HttpTimeouts;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -100,6 +101,8 @@ class GitHubSourceClient implements SourceClient
     private function request(): PendingRequest
     {
         return Http::baseUrl($this->source->apiUrl())
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->withToken($this->source->accessToken())
             ->acceptJson();

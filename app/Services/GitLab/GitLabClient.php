@@ -4,6 +4,7 @@ namespace App\Services\GitLab;
 
 use App\Models\Package;
 use App\Sources\RepositoryClient;
+use App\Support\HttpTimeouts;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -104,6 +105,10 @@ class GitLabClient implements RepositoryClient
     public function downloadZipball(string $ref, string $destination): void
     {
         $response = $this->request()
+            // Unlike every other call here, how long this takes is a property
+            // of the repository, not of GitLab's health; the API budget would
+            // cut a large archive off mid-stream.
+            ->timeout(HttpTimeouts::ARCHIVE)
             ->sink($destination)
             ->get("/projects/{$this->projectId()}/repository/archive.zip", ['sha' => $ref])
             ->throw();
@@ -214,6 +219,8 @@ class GitLabClient implements RepositoryClient
     private function request(): PendingRequest
     {
         return Http::baseUrl($this->apiUrl)
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->when($this->token, fn (PendingRequest $request) => $request->withHeaders([
                 'PRIVATE-TOKEN' => $this->token,
             ]))

@@ -8,6 +8,7 @@ use App\Services\GitHub\GitHubSourceClient;
 use App\Services\GitLab\GitLabSourceClient;
 use App\Sources\SourceClient;
 use App\Sources\StubClient;
+use App\Support\HttpTimeouts;
 use Database\Factories\SourceFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -399,7 +400,12 @@ class Source extends Model
      */
     private function get(string $path, array $query = [], bool $allowMissing = false): ?array
     {
+        // Connection tests run from a panel action, with an admin watching the
+        // button spin; an unreachable API has to come back as an error rather
+        // than as a request that never ends.
         $response = Http::baseUrl($this->apiUrl())
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->when(
                 $this->provider === SourceProvider::Github,
                 fn ($request) => $request->withHeaders(['X-GitHub-Api-Version' => '2022-11-28']),

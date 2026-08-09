@@ -3,6 +3,7 @@
 namespace App\Services\GitHub;
 
 use App\Enums\WebhookState;
+use App\Support\HttpTimeouts;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -359,7 +360,12 @@ class GitHubApp
 
     private function request(): PendingRequest
     {
+        // Everything here is a small call on the app's own endpoints, and half
+        // of it runs while an admin waits on a panel page that reports webhook
+        // coverage; none of it may hang for GitHub's benefit.
         return Http::baseUrl(config('services.github.app.api_url'))
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->acceptJson();
     }

@@ -4,6 +4,7 @@ namespace App\Services\GitHub;
 
 use App\Models\Package;
 use App\Sources\RepositoryClient;
+use App\Support\HttpTimeouts;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -116,6 +117,10 @@ class GitHubClient implements RepositoryClient
     public function downloadZipball(string $ref, string $destination): void
     {
         $response = $this->request()
+            // Unlike every other call here, how long this takes is a property
+            // of the repository, not of GitHub's health; the API budget would
+            // cut a large archive off mid-stream.
+            ->timeout(HttpTimeouts::ARCHIVE)
             ->sink($destination)
             ->get("/repos/{$this->repositoryPath}/zipball/{$ref}")
             ->throw();
@@ -229,6 +234,8 @@ class GitHubClient implements RepositoryClient
     private function request(): PendingRequest
     {
         return Http::baseUrl($this->apiUrl)
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->when($this->token, fn (PendingRequest $request) => $request->withToken($this->token))
             ->acceptJson();
