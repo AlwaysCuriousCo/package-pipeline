@@ -183,7 +183,6 @@ class ComposerRepositoryController extends Controller
             $record->id,
             $version->id,
             $version->version,
-            $request->ip(),
             $this->token($request)?->token_prefix,
         );
 

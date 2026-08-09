@@ -93,6 +93,10 @@ shape rather than a delta from a previous one.
 - SSO sign-in adopts an existing account only when the provider has verified the
   address and the source's domain allowlist passes. Previously any source
   asserting an admin's email could sign in as them.
+- Dist downloads are recorded without the requesting IP address. Nothing ever
+  read it, and keeping one per download forever is a retention liability a
+  self-hosted registry should not take on by default. The migration drops the
+  column, and with it the addresses already collected.
 - Deleting a user revokes their access tokens, and the Composer middleware
   treats a token whose principal no longer resolves as spent rather than as an
   anonymous caller with public access.

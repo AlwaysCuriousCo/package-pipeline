@@ -20,7 +20,6 @@ class RecordDownload implements ShouldQueue
             'package_id' => $event->packageId,
             'package_version_id' => $event->packageVersionId,
             'version' => $event->version,
-            'ip' => $event->ip,
             'token_prefix' => $event->tokenPrefix,
             'created_at' => now(),
         ]);
