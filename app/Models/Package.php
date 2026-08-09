@@ -23,7 +23,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -49,9 +49,27 @@ class Package extends Model
             'token' => 'encrypted',
             'webhook_secret' => 'encrypted',
             'webhook_enabled' => 'boolean',
+            'abandoned' => 'boolean',
             'last_synced_at' => 'datetime',
             'webhook_received_at' => 'datetime',
         ];
+    }
+
+    /**
+     * How Composer wants this package's abandonment stated: a replacement name
+     * when there is one, a bare `true` when there is not, and nothing at all
+     * while the package is still supported.
+     *
+     * Composer reads this per version rather than per package, so it is
+     * rendered into every version object /p2 serves.
+     */
+    public function abandonment(): string|bool|null
+    {
+        if (! $this->abandoned) {
+            return null;
+        }
+
+        return filled($this->replacement_package) ? (string) $this->replacement_package : true;
     }
 
     protected static function booted(): void

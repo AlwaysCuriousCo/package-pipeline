@@ -36,8 +36,43 @@ class PackageForm
                 self::latestVersion(),
                 self::type(),
                 self::webhookEnabled(),
+                self::abandoned(),
+                self::replacementPackage(),
                 self::description(),
             ]);
+    }
+
+    /**
+     * Marks the package as one nobody should be depending on any more.
+     *
+     * Composer carries this through to the consumer: `composer audit` reports
+     * abandoned packages, and since 2.9 a project can configure that to fail
+     * the build outright. It is the only way this registry can tell a
+     * developer to stop reaching for something without deleting it out from
+     * under the projects already using it.
+     */
+    public static function abandoned(): Toggle
+    {
+        return Toggle::make('abandoned')
+            ->label('Abandoned')
+            ->live()
+            ->helperText('Warns anyone who installs or audits this package that it is no longer maintained. Existing versions keep resolving.');
+    }
+
+    /**
+     * What to use instead, which Composer names in the warning it prints.
+     */
+    public static function replacementPackage(): TextInput
+    {
+        return TextInput::make('replacement_package')
+            ->label('Use instead')
+            ->maxLength(255)
+            ->visible(fn (Get $get): bool => (bool) $get('abandoned'))
+            ->placeholder('vendor/package')
+            // Deliberately unvalidated against the registry's own packages: the
+            // replacement is often somewhere else entirely — a public package
+            // on packagist.org, or one not imported here yet.
+            ->helperText('Optional. Any package name, including one this registry does not serve. Left empty, consumers are told only that the package is abandoned.');
     }
 
     /**

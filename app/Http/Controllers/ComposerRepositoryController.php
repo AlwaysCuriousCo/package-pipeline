@@ -302,6 +302,19 @@ class ComposerRepositoryController extends Controller
      * is part of what the tag identifies — a repository moved to another path
      * serves different bytes from the same rows.
      *
+     * So is the package's own timestamp, because the version rows are not the
+     * only thing the body is rendered from: the name it is keyed by and the
+     * dist URLs built from that name both live on the package. Without it,
+     * renaming one would leave the validator and the payload cache key unmoved
+     * and clients would go on being served the old document — the one failure
+     * the cache was built to make impossible.
+     *
+     * The abandonment notice is folded in by value rather than left to that
+     * timestamp. Timestamps are second-resolution, so a package marked
+     * abandoned within the same second as the write before it would hash
+     * identically, and the payload cache holds entries for days — long enough
+     * for "stop using this" to go unsaid for a long time.
+     *
      * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
      */
     private function etag(Repository $repository, Package $package, bool $dev, array $state): string
@@ -312,6 +325,8 @@ class ComposerRepositoryController extends Controller
             self::PAYLOAD_REVISION,
             $repository->url('/dist/'),
             $package->getKey(),
+            $package->updated_at?->getTimestamp() ?? 0,
+            var_export($package->abandonment(), true),
             $dev ? 'dev' : 'stable',
             $state['count'],
             $state['changed']?->getTimestamp() ?? 0,
@@ -344,6 +359,11 @@ class ComposerRepositoryController extends Controller
     {
         $name = (string) $package->name;
 
+        // Composer reads abandonment off the version it resolved, not off the
+        // package, so it belongs in every entry. The minifier then collapses
+        // the repetition back down to the first one.
+        $abandonment = $package->abandonment();
+
         $versions = $package->versions()
             ->where('is_dev', $dev)
             // Releases sort by the normalizer's order string, whose lexical
@@ -355,6 +375,7 @@ class ComposerRepositoryController extends Controller
             ->map(fn (PackageVersion $version): array => [
                 ...$version->metadata,
                 'name' => $name,
+                ...($abandonment !== null ? ['abandoned' => $abandonment] : []),
                 // Composer reads release dates from `time`. The column is the
                 // source of truth, so the served date can never drift from it;
                 // a version synced before the date was tracked omits the key

@@ -27,7 +27,18 @@ class PackagesTable
             ->columns([
                 TextColumn::make('name')
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()
+                    // Abandonment is a property of the package rather than of
+                    // any one sync, so it belongs against the name and not in
+                    // a column of its own that would be empty for almost every
+                    // row.
+                    ->badge(fn (Package $record): bool => $record->abandoned)
+                    ->color(fn (Package $record): ?string => $record->abandoned ? 'danger' : null)
+                    ->tooltip(fn (Package $record): ?string => match (true) {
+                        ! $record->abandoned => null,
+                        filled($record->replacement_package) => "Abandoned — use {$record->replacement_package} instead.",
+                        default => 'Abandoned.',
+                    }),
                 TextColumn::make('repository')
                     ->label('Repository')
                     ->searchable()

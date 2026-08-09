@@ -147,6 +147,47 @@ class ComposerRepositoryTest extends TestCase
             ->assertJsonPath('available-package-patterns', ['acme/*', 'other/*']);
     }
 
+    public function test_an_abandoned_package_says_so_in_its_metadata(): void
+    {
+        $this->makeServedPackage()->update(['abandoned' => true]);
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.abandoned', true);
+    }
+
+    public function test_an_abandonment_can_name_its_replacement(): void
+    {
+        $this->makeServedPackage()->update([
+            'abandoned' => true,
+            'replacement_package' => 'acme/gadgets',
+        ]);
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.abandoned', 'acme/gadgets');
+    }
+
+    public function test_abandoning_a_package_supersedes_its_cached_metadata(): void
+    {
+        $package = $this->makeServedPackage();
+
+        // Warm the payload cache, whose key is cut from the same fingerprint
+        // the ETag is. An abandonment that fingerprint failed to notice would
+        // be served from this entry for as long as it lives.
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonMissingPath('packages.acme/widgets.0.abandoned');
+
+        // Deliberately no time travel: the two writes land in the same second,
+        // which is exactly the case a timestamp cannot tell apart.
+        $package->update(['abandoned' => true, 'replacement_package' => 'acme/gadgets']);
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.abandoned', 'acme/gadgets');
+    }
+
     public function test_search_filters_by_name_prefix(): void
     {
         $this->makeServedPackage();
