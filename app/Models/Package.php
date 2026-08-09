@@ -98,6 +98,16 @@ class Package extends Model
     }
 
     /**
+     * Known vulnerabilities in this package, served to `composer audit`.
+     *
+     * @return HasMany<PackageAdvisory, $this>
+     */
+    public function advisories(): HasMany
+    {
+        return $this->hasMany(PackageAdvisory::class);
+    }
+
+    /**
      * @return BelongsTo<Source, $this>
      */
     public function source(): BelongsTo

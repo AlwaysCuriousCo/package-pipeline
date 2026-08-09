@@ -39,6 +39,14 @@ $composer = function (): void {
             ->name('search');
         Route::get('/list.json', [ComposerRepositoryController::class, 'list'])
             ->name('list');
+        // What `composer audit` asks. Composer only ever POSTs here; GET is
+        // accepted as well because packagist.org's advisory API answers GET
+        // and because it makes the endpoint reachable from a browser when an
+        // audit needs explaining. Read authentication, like the rest of the
+        // group: an advisory names a package, and naming one is exactly what
+        // a private repository does not do to an anonymous caller.
+        Route::match(['get', 'post'], '/security-advisories', [ComposerRepositoryController::class, 'securityAdvisories'])
+            ->name('security-advisories');
         Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
             // Greedy segment so package names containing dots still match.
             ->where('package', '[^/]+')

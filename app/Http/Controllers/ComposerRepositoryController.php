@@ -6,6 +6,7 @@ use App\Events\PackageDownloaded;
 use App\Http\Middleware\ResolveComposerRepository;
 use App\Models\DeployToken;
 use App\Models\Package;
+use App\Models\PackageAdvisory;
 use App\Models\PackageVersion;
 use App\Models\Repository;
 use App\Models\Token;
@@ -16,6 +17,7 @@ use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -67,6 +69,25 @@ class ComposerRepositoryController extends Controller
             // of every name would have to be rebuilt and re-sent on each root
             // fetch, and it is the one document Composer cannot lazily skip.
             'available-package-patterns' => $this->servedVendorPatterns($request),
+            // Without this key Composer's auditor skips every package resolved
+            // from here — silently, because "this repository publishes no
+            // advisories" and "this repository was never asked" look identical
+            // from the consumer's side. Since 2.9 an audit runs as part of
+            // `composer update`, so private packages were the one part of a
+            // dependency graph nobody was checking.
+            //
+            // `metadata: false` because the per-package alternative — inlining
+            // a `security-advisories` key into each /p2 document — is only ever
+            // read when the caller allows *partial* advisories, which is the
+            // update-time summary audit and not `composer audit` itself. It
+            // would also fold advisory changes into the /p2 payload cache and
+            // its ETag, making a newly recorded advisory wait on a package
+            // write to become visible. The api-url below answers both callers
+            // from live rows instead.
+            'security-advisories' => [
+                'metadata' => false,
+                'api-url' => $repository->url('/security-advisories'),
+            ],
             'search' => $repository->url('/search.json').'?q=%query%&type=%type%',
             'list' => $repository->url('/list.json'),
         ]);
@@ -138,6 +159,82 @@ class ComposerRepositoryController extends Controller
     {
         return response()->json([
             'packageNames' => $this->servedPackages($request)->orderBy('name')->pluck('name'),
+        ]);
+    }
+
+    /**
+     * Known vulnerabilities in the named packages — the endpoint `composer
+     * audit` (and the audit `composer update` runs since 2.9) posts to.
+     *
+     * Composer sends `Content-type: application/x-www-form-urlencoded` with
+     * `http_build_query(['packages' => [...]])` over POST, so the names arrive
+     * as `packages[]`. GET is answered too because that is how packagist.org's
+     * own advisory API is reached, and because a POST-only endpoint cannot be
+     * checked with a browser or a plain curl when an audit comes back empty
+     * and someone has to find out which side is wrong.
+     *
+     * A package the caller may not see must not appear here even as an empty
+     * entry: presence in the response is precisely how Composer learns a
+     * repository knows a name, and answering for a private package would leak
+     * its existence to a token that cannot fetch it.
+     *
+     * Both halves of the contract are read from Composer's own
+     * Repository\ComposerRepository::getSecurityAdvisories(), which is where
+     * the request is built and the response parsed. Named rather than linked
+     * because composer/composer is not a dependency of this app.
+     */
+    public function securityAdvisories(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'packages' => ['array'],
+            'packages.*' => ['string', 'max:255'],
+        ]);
+
+        /** @var list<string> $requested */
+        $requested = array_values(array_unique($validated['packages'] ?? []));
+
+        // Composer already narrows this list to the vendor patterns the root
+        // advertised, and those are cut from the very packages queried below —
+        // so a well-behaved client asks about a bounded set. This is still
+        // written to survive any list: one query, whatever its length.
+        $packages = $requested === [] ? new EloquentCollection : $this->servedPackages($request)
+            ->whereIn('name', array_map(mb_strtolower(...), $requested))
+            ->with('advisories')
+            ->get();
+
+        $repository = $this->repository($request);
+
+        $advisories = [];
+
+        foreach ($requested as $name) {
+            $package = $packages->first(
+                fn (Package $package): bool => mb_strtolower((string) $package->name) === mb_strtolower($name),
+            );
+
+            if (! $package instanceof Package) {
+                continue;
+            }
+
+            // Keyed by the spelling that was asked for, not the stored one.
+            // Composer looks each returned name up in the map it built from
+            // the installed packages, warns about anything it did not request,
+            // and drops it — so a case difference between the two would throw
+            // away the advisory it just fetched.
+            //
+            // A clean package is reported as an empty list rather than
+            // omitted, which is what tells Composer this repository covers the
+            // name and had nothing to report. Omitting it reads as "unknown
+            // here", and Composer then has to keep looking elsewhere.
+            $advisories[$name] = $package->advisories
+                ->map(fn (PackageAdvisory $advisory): array => $advisory->toComposerAdvisory((string) $package->name, $repository))
+                ->values();
+        }
+
+        return response()->json([
+            // Cast so an empty result serialises as `{}` and not `[]`:
+            // Composer iterates this as a map of package name to advisory
+            // list, and a JSON array is not one.
+            'advisories' => (object) $advisories,
         ]);
     }
 

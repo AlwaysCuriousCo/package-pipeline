@@ -60,6 +60,7 @@ class PackageResource extends Resource
     {
         return [
             RelationManagers\VersionsRelationManager::class,
+            RelationManagers\AdvisoriesRelationManager::class,
         ];
     }
 

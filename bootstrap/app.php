@@ -28,8 +28,17 @@ return Application::configure(basePath: dirname(__DIR__))
         // GitHub posts deliveries with no session and no token; they carry a
         // signature instead, which the webhook controller checks before doing
         // anything with the payload. Artifact uploads are likewise stateless:
-        // CI authenticates with an access token, not a session.
-        $middleware->validateCsrfTokens(except: ['incoming/*', 'upload/*', 'r/*/upload/*']);
+        // CI authenticates with an access token, not a session. So is the
+        // advisory endpoint, which Composer reaches by POST because that is
+        // how it sends a package list — it is a read, and it holds no session
+        // to carry a token in.
+        $middleware->validateCsrfTokens(except: [
+            'incoming/*',
+            'upload/*',
+            'r/*/upload/*',
+            'security-advisories',
+            'r/*/security-advisories',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // The upload endpoint is driven by curl in CI scripts, which rarely
@@ -42,6 +51,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 || $request->is('upload/*')
                 || $request->is('r/*/upload/*')
                 || $request->is('incoming/*')
+                // Composer sends no Accept header when it posts a package
+                // list, and a validation failure answered with a redirect
+                // would surface as an unreadable audit rather than an error.
+                || $request->is('security-advisories')
+                || $request->is('r/*/security-advisories')
                 || $request->expectsJson(),
         );
     })->create();
