@@ -3,12 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Auth\SsoProviderFactory;
+use App\Enums\AuthProvider;
 use App\Models\AuthenticationSource;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Laravel\Socialite\AbstractUser;
+use Laravel\Socialite\Contracts\User as Identity;
 use Symfony\Component\HttpFoundation\RedirectResponse as SymfonyRedirect;
 use Throwable;
 
@@ -49,16 +52,33 @@ class SsoController extends Controller
 
         // Fall back to the email for accounts that predate the source, and
         // bind the identity so renaming an email at the provider later does
-        // not mint a second account. Never rebind an already-bound account:
-        // that would let one provider quietly take over another's users.
+        // not mint a second account.
         if (! $user instanceof User && filled($email)) {
-            $user = User::query()->where('email', $email)->first();
+            $existing = User::query()->where('email', $email)->first();
 
-            if ($user instanceof User && $user->external_id === null) {
-                $user->forceFill([
+            if ($existing instanceof User) {
+                // Never rebind an already-bound account: that would let one
+                // provider quietly take over another's users.
+                if ($existing->external_id !== null) {
+                    return $this->refuse('That address already signs in through a different provider.');
+                }
+
+                // Adopting an unclaimed account on an asserted address is a
+                // takeover: an admin can point an OIDC source at any issuer,
+                // and an issuer can claim any address it likes. The provider
+                // has to stand behind it, and the source has to be trusted
+                // with the domain — the allowlist gates who may register, and
+                // inheriting an account is at least as much of a grant.
+                if (! $this->vouchedForEmail($source, $identity) || ! $source->allowsDomain($email)) {
+                    return $this->refuse('An account already uses that address. An admin must link it to this provider.');
+                }
+
+                $existing->forceFill([
                     'authentication_source_id' => $source->id,
                     'external_id' => $externalId,
                 ])->save();
+
+                $user = $existing;
             }
         }
 
@@ -80,6 +100,28 @@ class SsoController extends Controller
         session()->regenerate();
 
         return redirect()->intended(Filament::getPanel('admin')->getUrl());
+    }
+
+    /**
+     * Whether the provider itself stands behind the address, rather than
+     * passing on whatever the principal put in its profile.
+     */
+    private function vouchedForEmail(AuthenticationSource $source, Identity $identity): bool
+    {
+        // Socialite's name-brand drivers hand back an address the provider has
+        // already confirmed — GitHub's picks the primary *verified* one off
+        // /user/emails, and Google and GitLab only publish confirmed addresses.
+        if ($source->provider !== AuthProvider::Oidc) {
+            return true;
+        }
+
+        // OIDC is the general case, so nothing about the issuer is known in
+        // advance and only the claim can answer for the address. Some issuers
+        // send it as a string; an absent claim is not a promise.
+        $claims = $identity instanceof AbstractUser ? $identity->getRaw() : [];
+        $verified = $claims['email_verified'] ?? null;
+
+        return $verified === true || $verified === 'true';
     }
 
     /**
