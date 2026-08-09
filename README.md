@@ -15,13 +15,14 @@ Sharing private PHP packages across projects is a chore: every consuming app nee
 ## Requirements
 
 - PHP **8.3+** with Composer
-- Node.js 20+ with npm (builds the admin panel assets)
 - SQLite (default — nothing to configure), or MySQL/Postgres if you prefer
 - A GitHub account with the repositories you want to serve
 
+No Node.js, and no front-end build step: every page the app serves is Filament's, and Filament ships its own compiled assets.
+
 ## Quickstart
 
-Clone and run the one-shot setup script. It installs PHP and JS dependencies, creates `.env`, generates an app key, runs migrations, and builds assets:
+Clone and run the one-shot setup script. It installs dependencies, creates `.env`, generates an app key, runs migrations, and seeds the panel's permissions:
 
 ```bash
 git clone https://github.com/AlwaysCuriousCo/package-pipeline.git
@@ -37,7 +38,7 @@ php artisan admin:create --email=you@example.com
 
 Re-running it against the same address is safe — it updates that account rather than creating a second one, which also makes it the way to reset a forgotten password. The account is granted the `super_admin` role, which is what gets it into the panel; see [Roles and permissions](#roles-and-permissions).
 
-Start everything (HTTP server, queue worker, log tail, and Vite, all in one command):
+Start everything (HTTP server, queue worker, and log tail, all in one command):
 
 ```bash
 composer run dev
@@ -130,7 +131,13 @@ vendor/bin/pint      # apply the fixes `composer lint` reports
 
 CI runs all three on every pull request, so a branch that passes them locally is a branch that goes green.
 
-`composer run dev` runs the web server, a queue worker, `pail` log streaming, and Vite together — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever.
+`composer run dev` runs the web server, a queue worker, and `pail` log streaming together — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever. It multiplexes them with `npx concurrently`, which is the one thing here that wants Node installed; without it, run the three in separate terminals:
+
+```bash
+php artisan serve
+php artisan queue:listen --tries=1 --timeout=0
+php artisan pail --timeout=0
+```
 
 ## Deploying
 
