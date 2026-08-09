@@ -3,15 +3,65 @@
 namespace Tests\Feature;
 
 use App\Models\Package;
+use App\Models\Repository;
 use Composer\MetadataMinifier\MetadataMinifier;
+use DateTimeInterface;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use League\Flysystem\Filesystem as Flysystem;
+use League\Flysystem\Local\LocalFilesystemAdapter as FlysystemLocalAdapter;
 use Tests\TestCase;
 
 class ComposerRepositoryTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * Paths the dist disk was asked to sign a URL for.
+     *
+     * @var list<string>
+     */
+    private array $signed = [];
+
+    /**
+     * A dist disk that hands out URLs of its own, which is what `DIST_DISK=s3`
+     * gets in production.
+     *
+     * Storage::fake() cannot stand in for one: it builds a local disk whatever
+     * it is named, and a local disk is precisely the case the endpoint streams
+     * rather than redirects. So the disk is assembled here — real files
+     * underneath, a signer on top — and every minted URL recorded, because
+     * "none was minted" is half of what these tests assert.
+     */
+    private function fakeSigningDisk(): FilesystemAdapter
+    {
+        $root = storage_path('framework/testing/disks/signing');
+
+        File::cleanDirectory($root);
+
+        $adapter = new FlysystemLocalAdapter($root);
+
+        $disk = new FilesystemAdapter(new Flysystem($adapter), $adapter);
+
+        // By reference because Laravel rebinds the callback to the disk it
+        // belongs to, which leaves the test's own $this out of reach.
+        $signed = &$this->signed;
+
+        $disk->buildTemporaryUrlsUsing(function (string $path, DateTimeInterface $expiration) use (&$signed): string {
+            $signed[] = $path;
+
+            return "https://objects.test/{$path}?expires={$expiration->getTimestamp()}";
+        });
+
+        Storage::set('s3', $disk);
+        config(['filesystems.dists' => 's3']);
+
+        return $disk;
+    }
 
     private function makeServedPackage(): Package
     {
@@ -305,8 +355,10 @@ class ComposerRepositoryTest extends TestCase
 
     public function test_the_dist_endpoint_serves_the_stored_archive(): void
     {
-        // The dist disk is configurable so it can be pointed at object
-        // storage; the endpoint must not assume a local one.
+        // Storage::fake() builds a local disk under any name, so this is the
+        // streaming path: the bytes come out through PHP, as they do for a
+        // single-server install. The redirect a disk with its own URLs gets
+        // has its own coverage below.
         config(['filesystems.dists' => 's3']);
         Storage::fake('s3');
         Storage::disk('s3')->put('packages/acme/widgets/v110.zip', 'zip-bytes');
@@ -324,6 +376,73 @@ class ComposerRepositoryTest extends TestCase
         // Serving is storage only. GitHub is never consulted, so consumers
         // need no GitHub credentials and an outage there changes nothing.
         Http::assertNothingSent();
+    }
+
+    public function test_a_dist_disk_with_its_own_urls_is_redirected_to(): void
+    {
+        // Streaming the zip from PHP holds a worker for the whole transfer,
+        // and a `composer install` fetches one archive per package. A disk
+        // that can sign its own URLs is handed the transfer instead.
+        $this->fakeSigningDisk()->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+
+        $package = $this->makeServedPackage();
+        $reference = str_repeat('b', 40);
+
+        $location = (string) $this->get("/dist/acme/widgets/{$reference}.zip")
+            ->assertStatus(302)
+            ->assertRedirectContains('https://objects.test/packages/acme/widgets/v110.zip')
+            ->headers->get('Location');
+
+        // The signature is the only authorisation the storage service applies,
+        // so the grant it hands out is short-lived by construction.
+        $expires = (int) Str::after($location, 'expires=');
+
+        $this->assertGreaterThan(now()->timestamp, $expires);
+        $this->assertLessThanOrEqual(now()->addMinutes(15)->timestamp, $expires);
+
+        // Redirecting is still serving: the archive left the registry, and the
+        // request that sent it there is the only one that will count it.
+        $this->assertSame(1, $package->fresh()->total_downloads);
+        $this->assertSame(1, $package->versions()->where('reference', $reference)->sole()->total_downloads);
+    }
+
+    public function test_a_local_dist_disk_streams_rather_than_redirecting(): void
+    {
+        // A local disk can sign URLs too — `serve` mounts a route that answers
+        // them — but that route is this same application, so redirecting to it
+        // would buy a round trip and hand the bytes back to PHP anyway.
+        config(['filesystems.dists' => 'local']);
+        Storage::fake('local');
+        Storage::disk('local')->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+
+        $this->makeServedPackage();
+
+        $response = $this->get('/dist/acme/widgets/'.str_repeat('b', 40).'.zip')->assertOk();
+
+        $this->assertSame('zip-bytes', $response->streamedContent());
+    }
+
+    public function test_no_url_is_minted_for_a_client_that_may_not_have_the_archive(): void
+    {
+        $this->fakeSigningDisk()->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+
+        $package = $this->makeServedPackage();
+        $package->composerRepository()->associate(
+            Repository::factory()->create(['path' => 'internal', 'public' => false]),
+        )->save();
+
+        $reference = str_repeat('b', 40);
+
+        // Unauthenticated against the repository that serves it...
+        $this->getJson("/r/internal/dist/acme/widgets/{$reference}.zip")->assertUnauthorized();
+
+        // ...and asking a repository that does not serve it at all.
+        $this->get("/dist/acme/widgets/{$reference}.zip")->assertNotFound();
+
+        // A signed URL is a grant this app cannot take back for as long as it
+        // lives, so none exists until the caller has been cleared for exactly
+        // the archive it names.
+        $this->assertCount(0, $this->signed);
     }
 
     public function test_a_version_without_a_stored_archive_is_a_404(): void

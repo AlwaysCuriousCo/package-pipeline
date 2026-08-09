@@ -25,6 +25,9 @@ shape rather than a delta from a previous one.
 - Version archives fetched at sync time and stored on a local or S3 disk
   (`DIST_DISK`), checked against their published `shasum`, so GitHub is never in
   a download path. `archives:clean` prunes the files re-syncs leave behind.
+  A disk that can pre-sign URLs serves `dist` downloads itself — the client is
+  redirected to a short-lived URL instead of the app streaming the zip — so the
+  bucket has to be reachable from wherever `composer install` runs.
 - Sources: GitHub App installations that authenticate syncs with hourly,
   org-owned tokens scoped to the repositories chosen at install time. Packages
   can be onboarded straight from a source's project list.

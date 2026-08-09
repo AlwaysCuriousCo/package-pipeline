@@ -17,6 +17,7 @@ use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -342,13 +343,17 @@ class ComposerRepositoryController extends Controller
     }
 
     /**
-     * Stream a version's stored archive from the dist disk.
+     * Serve a version's stored archive from the dist disk.
      *
      * Archives are built at sync time, so serving never reaches for GitHub —
      * a consumer needs no GitHub credentials, and an archive that was never
      * stored (or has gone missing) is a 404 the next sync repairs.
+     *
+     * The bytes only pass through PHP when the disk has no URL of its own to
+     * offer, which in practice means a single-server install on the local
+     * disk. See the redirect below for why.
      */
-    public function dist(Request $request, string $vendor, string $package, string $reference): StreamedResponse
+    public function dist(Request $request, string $vendor, string $package, string $reference): StreamedResponse|RedirectResponse
     {
         $name = "{$vendor}/{$package}";
 
@@ -366,13 +371,20 @@ class ComposerRepositoryController extends Controller
         $disk = $this->archives->disk();
 
         // A tag and a branch can share a commit; any row with a stored
-        // archive serves for both. The disk is asked per row rather than
-        // once, because a row's path can outlive its file — a sibling row
-        // may still hold a live zip for the same commit.
-        $version = $versions->first(
-            fn (PackageVersion $version): bool => $version->archive_path !== null
-                && $disk->exists($version->archive_path),
-        );
+        // archive serves for both. Rows that never got one are dropped before
+        // the disk is asked anything, and the search stops at the first live
+        // path — so an ordinary download costs one existence check, and only a
+        // row whose file has actually gone missing costs a second.
+        //
+        // That check is the reason this endpoint answers 404 instead of
+        // handing out a link to nothing: a row's path can outlive its file
+        // (storage lost on a redeploy, an object deleted out from under us),
+        // and a sibling row may still hold a live zip for the same commit.
+        // Keeping it costs one metadata call against a transfer that is orders
+        // of magnitude larger, whichever way the archive is then served.
+        $version = $versions
+            ->filter(fn (PackageVersion $version): bool => $version->archive_path !== null)
+            ->first(fn (PackageVersion $version): bool => $disk->exists($version->archive_path));
 
         abort_unless(
             $version instanceof PackageVersion,
@@ -381,13 +393,36 @@ class ComposerRepositoryController extends Controller
         );
 
         // Only an archive actually being served counts; every 404 above
-        // returned before reaching this line.
+        // returned before reaching this line. Both ways of serving one are
+        // below, and a request takes exactly one of them.
         PackageDownloaded::dispatch(
             $record->id,
             $version->id,
             $version->version,
             $this->token($request)?->token_prefix,
         );
+
+        // Reading the zip out through PHP pins a worker for the length of the
+        // transfer, and one `composer install` fetches an archive per package.
+        // A disk that can issue its own URLs is handed the transfer instead:
+        // Composer follows the redirect and still verifies what arrives
+        // against the `shasum` /p2 published, so integrity never rested on the
+        // bytes having come from here.
+        //
+        // The URL is a bearer credential for this one object for as long as it
+        // lives — it carries the storage service's signature, not ours, so
+        // none of this app's tokens, repository scoping or package visibility
+        // reaches it. That is acceptable only in this shape: it is minted
+        // after the visibility check above has already passed, for the single
+        // archive this request was entitled to, and it expires minutes later
+        // (see ArchiveStore for the window). Anything that mints one earlier,
+        // or for a path the caller has not been cleared for, gives that check
+        // away.
+        $url = $this->archives->temporaryUrl($version->archive_path);
+
+        if ($url !== null) {
+            return redirect()->away($url);
+        }
 
         return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [
             'Content-Type' => 'application/zip',
