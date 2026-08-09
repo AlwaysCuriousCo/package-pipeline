@@ -7,6 +7,7 @@ use App\Models\PackageVersion;
 use App\Models\Repository;
 use App\Support\VersionNormalizer;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Number;
 use Illuminate\Validation\ValidationException;
 use ZipArchive;
 
@@ -32,6 +33,16 @@ class CreateVersionFromZip
         'conflict', 'provide', 'replace', 'suggest', 'minimum-stability',
         'prefer-stable', 'scripts', 'extra',
     ];
+
+    /**
+     * The most a composer.json may weigh, uncompressed.
+     *
+     * Real manifests are kilobytes — the fattest on Packagist, with hundreds of
+     * requirements and a wall of `extra`, stay well under 100 KB — so a
+     * megabyte is generous by an order of magnitude while still being a bound
+     * an archive cannot talk its way past.
+     */
+    private const MAX_MANIFEST_BYTES = 1024 * 1024;
 
     public function __construct(
         private readonly ArchiveStore $archives,
@@ -119,6 +130,12 @@ class CreateVersionFromZip
      * The decoded composer.json inside the zip, found at the top level or one
      * folder deep — the shape both `git archive` and build tools produce.
      *
+     * The manifest is the only entry ever inflated here; the archive itself is
+     * stored and streamed byte for byte, never extracted. So the compression
+     * ratio of everything *else* inside it is a consuming Composer client's
+     * exposure, shared with every archive synced from a VCS provider, and
+     * bounded by the upload ceiling rather than by this reader.
+     *
      * @return array<string, mixed>
      */
     private function composerJson(string $path): array
@@ -152,7 +169,26 @@ class CreateVersionFromZip
                 ]);
             }
 
-            $decoded = json_decode((string) $zip->getFromName($manifest), true);
+            $declared = $zip->statName($manifest);
+
+            // The central directory carries every entry's uncompressed size, so
+            // an implausible manifest is refused before libzip inflates a byte
+            // of it. composer.json is the one entry this app reads into memory,
+            // which makes it the one entry a bomb would aim at: a few kilobytes
+            // of deflated zeroes can declare gigabytes behind them. An entry
+            // that was just enumerated but cannot be stat'ed is an archive not
+            // worth trusting either.
+            if ($declared === false || $declared['size'] > self::MAX_MANIFEST_BYTES) {
+                throw ValidationException::withMessages([
+                    'file' => 'The zip\'s composer.json is not a plausible package manifest: a manifest is kilobytes, '
+                        .'and anything over '.Number::fileSize(self::MAX_MANIFEST_BYTES).' is refused unread.',
+                ]);
+            }
+
+            // That size is the archive's own claim about itself, so the read is
+            // capped at the same bound: a lying header then truncates into
+            // invalid JSON rather than into the worker's memory.
+            $decoded = json_decode((string) $zip->getFromName($manifest, self::MAX_MANIFEST_BYTES), true);
 
             if (! is_array($decoded)) {
                 throw ValidationException::withMessages(['file' => 'The composer.json inside the zip is not valid JSON.']);

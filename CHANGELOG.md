@@ -100,5 +100,11 @@ shape rather than a delta from a previous one.
 - Deleting a user revokes their access tokens, and the Composer middleware
   treats a token whose principal no longer resolves as spent rather than as an
   anonymous caller with public access.
+- Artifact uploads are bounded at both ends. The endpoint refuses an archive
+  larger than `ARTIFACT_UPLOAD_MAX_MB` (100 MB by default) rather than
+  inheriting whatever `upload_max_filesize` a deployment happens to allow, and a
+  zip whose `composer.json` declares more than a megabyte is refused before it
+  is decompressed — a few-kilobyte archive could otherwise inflate that one
+  entry into gigabytes of a worker's memory.
 
 [Unreleased]: https://github.com/AlwaysCuriousCo/package-pipeline/commits/main

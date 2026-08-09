@@ -199,8 +199,16 @@ class ComposerRepositoryController extends Controller
      */
     public function upload(Request $request, CreateVersionFromZip $creator, string $vendor, string $package): JsonResponse
     {
+        // Laravel sizes file rules in kilobytes; the ceiling is configured in
+        // megabytes, which is the unit an operator sizing a package thinks in.
+        $maxKilobytes = (int) config('registry.upload_max_megabytes') * 1024;
+
         $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:zip'],
+            // Without a max: rule the only bound is php.ini's
+            // upload_max_filesize — a deployment default rather than a decision
+            // this app made, and absent entirely once an operator raises it for
+            // one large package. See config/registry.php for the number.
+            'file' => ['required', 'file', "max:{$maxKilobytes}", 'mimes:zip'],
             'version' => ['nullable', 'string', 'max:255'],
         ]);
 

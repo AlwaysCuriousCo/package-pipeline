@@ -182,6 +182,59 @@ class ArtifactUploadTest extends TestCase
             ->assertJsonValidationErrors(['file']);
     }
 
+    public function test_an_archive_over_the_configured_ceiling_is_refused(): void
+    {
+        // One megabyte, so proving the rule exists does not cost a
+        // hundred-megabyte upload.
+        config(['registry.upload_max_megabytes' => 1]);
+
+        $path = (string) tempnam(sys_get_temp_dir(), 'upload-zip-');
+
+        $zip = new ZipArchive;
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString('composer.json', (string) json_encode(['name' => 'acme/widgets', 'version' => '1.0.0']));
+        // Random bytes: deflate would squeeze anything repetitive back under
+        // the ceiling, and it is the stored size that is being bounded.
+        $zip->addFromString('src/blob.bin', random_bytes(2 * 1024 * 1024));
+        $zip->close();
+
+        // Everything else about this archive is valid, so the 422 can only be
+        // the size rule.
+        $this->withToken($this->writeToken())
+            ->post('/upload/acme/widgets', [
+                'file' => new UploadedFile($path, 'package.zip', 'application/zip', test: true),
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['file']);
+
+        $this->assertDatabaseCount('packages', 0);
+    }
+
+    public function test_a_manifest_that_declares_an_absurd_size_is_refused_without_being_decoded(): void
+    {
+        $path = (string) tempnam(sys_get_temp_dir(), 'upload-zip-');
+
+        $zip = new ZipArchive;
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString('composer.json', str_repeat('a', 2 * 1024 * 1024));
+        $zip->close();
+
+        // The shape of the attack: a tiny archive whose one interesting entry
+        // is not tiny at all.
+        $this->assertLessThan(64 * 1024, (int) filesize($path));
+
+        $response = $this->withToken($this->writeToken())
+            ->post('/upload/acme/widgets', [
+                'file' => new UploadedFile($path, 'package.zip', 'application/zip', test: true),
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['file']);
+
+        // The declared size is what refused it. The entry is not JSON either,
+        // so a "not valid JSON" answer would mean it had been inflated first.
+        $this->assertStringContainsString('refused unread', (string) $response->json('errors.file.0'));
+    }
+
     public function test_something_that_is_not_a_zip_is_rejected(): void
     {
         $this->withToken($this->writeToken())

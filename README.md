@@ -119,6 +119,7 @@ Everything lives in `.env`; the interesting knobs beyond a stock Laravel app:
 | `GITHUB_APP_SLUG` / `GITHUB_APP_API_URL` | Normally read from GitHub automatically; only set to skip that lookup or on GitHub Enterprise. |
 | `GITHUB_TOKEN` | Fallback token for packages with neither a connected source nor a token of their own. |
 | `DIST_DISK` | Disk where version archives (Composer zipballs) are stored at sync time. Defaults to `FILESYSTEM_DISK`; set to `s3` on any deployment whose containers don't share a local disk. |
+| `ARTIFACT_UPLOAD_MAX_MB` | Largest artifact zip `POST /upload/{vendor}/{package}` accepts, in megabytes (default `100`). PHP's `upload_max_filesize` and `post_max_size` have to allow the same size. |
 
 ## Development
 
