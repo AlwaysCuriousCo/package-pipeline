@@ -132,7 +132,7 @@ vendor/bin/pint      # code style (Laravel Pint)
 
 The short version for production:
 
-- **Run a queue worker** (`php artisan queue:work`) — package syncs from the admin panel are queued jobs.
+- **Run a queue worker** (`php artisan queue:work --timeout=310`) — package syncs from the admin panel are queued jobs. Keep that timeout between the longest job's own (300 seconds, for a version import streaming a large archive) and the connection's `retry_after` (330): a worker that gives up sooner kills healthy imports, and a `retry_after` that fires first hands a still-running import to a second worker, which downloads and stores the same archive again. Raising `ImportVersion::$timeout` means raising both.
 - **Schedule syncs if you want them automatic.** Nothing is scheduled out of the box; add something like this to `routes/console.php` and run the scheduler (`php artisan schedule:work`, or cron):
 
   ```php
@@ -161,7 +161,7 @@ The short version for production:
    php artisan db:seed --force
    ```
 
-4. **Add a queue worker** to the environment (Resources → Queue Worker, default queue). Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
+4. **Add a queue worker** to the environment (Resources → Queue Worker, default queue) and give it a **310-second timeout**, for the reason above. Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
 5. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
 
 #### Create your super admin
