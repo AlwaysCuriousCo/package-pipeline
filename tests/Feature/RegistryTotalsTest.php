@@ -33,10 +33,8 @@ class RegistryTotalsTest extends TestCase
         $this->actingAs(User::factory()->superAdmin()->create());
 
         $repository = Repository::factory()->create();
-        $package = Package::factory()->create(['repository_id' => $repository->id]);
+        $package = Package::factory()->create(['repository_id' => $repository->id, 'total_downloads' => 1]);
         PackageVersion::factory()->count(2)->for($package)->create();
-
-        Download::create(['package_id' => $package->id, 'version' => '1.0.0']);
 
         // The seeded default repository stands beside the factory-made one.
         $this->assertSame([
@@ -62,9 +60,9 @@ class RegistryTotalsTest extends TestCase
 
         $user->repositories()->attach($granted);
 
-        $visible = Package::factory()->create(['repository_id' => $public->id]);
+        $visible = Package::factory()->create(['repository_id' => $public->id, 'total_downloads' => 1]);
         Package::factory()->create(['repository_id' => $granted->id]);
-        $unseen = Package::factory()->create(['repository_id' => $hidden->id]);
+        $unseen = Package::factory()->create(['repository_id' => $hidden->id, 'total_downloads' => 7]);
 
         // A single granted package also pulls its repository into view.
         $adopted = Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
@@ -72,9 +70,6 @@ class RegistryTotalsTest extends TestCase
 
         PackageVersion::factory()->for($visible)->create();
         PackageVersion::factory()->count(3)->for($unseen)->create();
-
-        Download::create(['package_id' => $visible->id, 'version' => '1.0.0']);
-        Download::create(['package_id' => $unseen->id, 'version' => '1.0.0']);
 
         // Visible: the seeded default (public), $public, $granted, and the
         // adopted package's home — but never $hidden.
@@ -84,6 +79,22 @@ class RegistryTotalsTest extends TestCase
             'Versions' => '1',
             'Downloads' => '1',
         ], $this->totals()->all());
+    }
+
+    public function test_downloads_are_summed_from_the_denormalized_counters(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        Package::factory()->create(['total_downloads' => 12]);
+        Package::factory()->create(['total_downloads' => 30]);
+        Package::factory()->create();
+
+        // Rows in the downloads table are not what the card reads; the
+        // listener's counters are, and downloads:recalculate is what puts the
+        // two back in step when they drift.
+        Download::create(['package_id' => Package::query()->first()->id, 'version' => '1.0.0']);
+
+        $this->assertSame('42', $this->totals()['Downloads']);
     }
 
     /**

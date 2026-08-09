@@ -112,9 +112,13 @@ class VersionReleaseHeatmap extends Widget
     /**
      * Bucket the releases by calendar day, keyed by `Y-m-d`.
      *
-     * Grouped in PHP rather than SQL because date truncation has no portable
-     * spelling across SQLite, MySQL and Postgres, and a single year of releases
-     * is a small enough set to sort in memory.
+     * Grouped in PHP rather than SQL, unlike the downloads chart next to it,
+     * because a `GROUP BY` would return counts and every cell here also needs
+     * the releases themselves: the tooltip names them. The rows have to be
+     * read either way, and the set is bounded by how often the tracked
+     * packages tag a release rather than by how often anyone downloads one.
+     *
+     * The widget also does not poll, so this runs once per page view.
      *
      * @param  Collection<int, PackageVersion>  $versions
      * @return Collection<string, array{count: int, releases: array<int, string>}>

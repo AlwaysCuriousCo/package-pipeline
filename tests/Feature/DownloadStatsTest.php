@@ -156,6 +156,46 @@ class DownloadStatsTest extends TestCase
         $this->assertSame(1, array_sum($data['datasets'][0]['data']));
     }
 
+    public function test_the_chart_buckets_downloads_by_the_day_they_landed(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+        $this->freezeTime();
+
+        // Bucketing moved from PHP into a SQL `GROUP BY`, so the boundaries
+        // are now the database's to get right: downloads either side of a
+        // midnight, one on the window's first day, and one that fell out of it.
+        foreach ([
+            '-0 days 00:15',
+            '-0 days 23:45',
+            '-1 days 12:00',
+            '-1 days 12:00',
+            '-1 days 18:30',
+            '-29 days 06:00',
+            '-30 days 23:59',
+        ] as $when) {
+            [$offset, $time] = explode(' days ', $when);
+
+            Download::create([
+                'package_id' => $this->package->id,
+                'version' => 'v1.0.0',
+                'created_at' => now()->addDays((int) $offset)->setTimeFromTimeString($time),
+            ]);
+        }
+
+        $data = (fn (): array => $this->getData())->call(new DownloadsChart);
+
+        $counts = array_combine($data['labels'], $data['datasets'][0]['data']);
+
+        $this->assertCount(30, $counts);
+        $this->assertSame(2, $counts[now()->format('M j')]);
+        $this->assertSame(3, $counts[now()->subDay()->format('M j')]);
+        $this->assertSame(1, $counts[now()->subDays(29)->format('M j')]);
+
+        // Seven rows were written; the one before the window opens has no
+        // label to land in and is dropped rather than folded into the first.
+        $this->assertSame(6, array_sum($counts));
+    }
+
     public function test_the_download_history_survives_pruning_the_version(): void
     {
         $this->download();

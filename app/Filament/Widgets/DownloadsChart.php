@@ -36,6 +36,20 @@ class DownloadsChart extends ChartWidget
      */
     protected int $days = 30;
 
+    /**
+     * A day's bar cannot visibly move inside five seconds, which is what
+     * ChartWidget polls at out of the box — and each poll is an aggregate
+     * over every download served in the window. Once a minute is as often as
+     * a daily bucket has anything new to say.
+     */
+    protected ?string $pollingInterval = '60s';
+
+    /**
+     * How long one computed set of buckets stands for, sized to the polling
+     * interval so extra tabs and extra viewers with the same scope are free.
+     */
+    private const CACHE_SECONDS = 60;
+
     protected function getType(): string
     {
         return 'line';
@@ -88,6 +102,83 @@ class DownloadsChart extends ChartWidget
     }
 
     /**
+     * What distinguishes one viewer's version of this chart from another's.
+     *
+     * The dashboard chart is cut by the signed-in user's grants; the package
+     * page's is cut by the package. Both are cached, so both have to say
+     * which slice they are.
+     */
+    protected function scopeKey(): string
+    {
+        return 'user:'.(auth()->user()?->getAuthIdentifier() ?? 'guest');
+    }
+
+    /**
+     * Downloads per calendar day inside the window, keyed `Y-m-d`, with the
+     * empty days simply absent.
+     *
+     * Counted by the database rather than hydrated and counted here. The
+     * previous shape plucked every `created_at` in the window into a PHP
+     * collection to countBy() it — a registry serving a hundred thousand
+     * downloads a month therefore built a hundred-thousand-element collection
+     * on every poll, to produce thirty integers.
+     *
+     * Cached alongside that, because the aggregate is still a range scan over
+     * everything served in the window: a minute's worth of tabs and viewers
+     * sharing a scope now costs one of them.
+     *
+     * @return array<string, int>
+     */
+    protected function countsByDay(CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $key = implode(':', ['widget:downloads-chart', static::class, $this->days, $start->toDateString(), $this->scopeKey()]);
+
+        return cache()->remember($key, self::CACHE_SECONDS, function () use ($start, $end): array {
+            $day = $this->dayExpression();
+
+            $rows = $this->downloads()
+                // Bounded at both ends so the index range scan is closed:
+                // the loop below reads nothing outside the window anyway.
+                ->whereBetween('created_at', [$start, $end])
+                ->toBase()
+                ->selectRaw("{$day} as day, count(*) as downloads")
+                ->groupByRaw($day)
+                ->get();
+
+            $counts = [];
+
+            foreach ($rows as $row) {
+                $counts[(string) $row->day] = (int) $row->downloads;
+            }
+
+            return $counts;
+        });
+    }
+
+    /**
+     * The SQL that truncates `created_at` to a calendar day on the connection
+     * in use.
+     *
+     * The one dialect-specific expression in this app, kept to a single line
+     * because there is no portable spelling of date truncation and the
+     * alternative — pulling the rows back to group them in PHP — is the cost
+     * this method exists to avoid. `CAST(x AS DATE)` is ANSI and correct on
+     * MySQL, MariaDB, Postgres and SQL Server; SQLite has no date type, so
+     * the cast falls through to its numeric affinity and yields the year as
+     * an integer. `date()` is the only spelling that truncates there.
+     *
+     * Both forms render back as `Y-m-d`, which is what the buckets are keyed
+     * by, and both read the stored value as written — the same wall clock
+     * Carbon parsed it in, so no day moves.
+     */
+    private function dayExpression(): string
+    {
+        return $this->downloads()->getModel()->getConnection()->getDriverName() === 'sqlite'
+            ? 'date(created_at)'
+            : 'cast(created_at as date)';
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function getData(): array
@@ -95,13 +186,7 @@ class DownloadsChart extends ChartWidget
         $end = CarbonImmutable::now()->endOfDay();
         $start = $end->subDays($this->days - 1)->startOfDay();
 
-        // Grouped in PHP rather than SQL for the same reason as the release
-        // heatmap: date truncation has no portable spelling, and a few months
-        // of timestamps is a small set.
-        $byDay = $this->downloads()
-            ->where('created_at', '>=', $start)
-            ->pluck('created_at')
-            ->countBy(fn (CarbonImmutable $created): string => $created->toDateString());
+        $byDay = $this->countsByDay($start, $end);
 
         $labels = [];
         $counts = [];
