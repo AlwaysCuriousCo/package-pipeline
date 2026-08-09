@@ -34,11 +34,14 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         // The upload endpoint is driven by curl in CI scripts, which rarely
         // send an Accept header; a validation failure must still answer 422
-        // JSON, never a redirect to a login page.
+        // JSON, never a redirect to a login page. The webhook endpoints answer
+        // JSON from the controller either way, so a framework-generated 404 or
+        // 429 landing in a provider's delivery log should read the same.
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*')
                 || $request->is('upload/*')
                 || $request->is('r/*/upload/*')
+                || $request->is('incoming/*')
                 || $request->expectsJson(),
         );
     })->create();

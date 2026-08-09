@@ -106,5 +106,12 @@ shape rather than a delta from a previous one.
   zip whose `composer.json` declares more than a megabyte is refused before it
   is decompressed — a few-kilobyte archive could otherwise inflate that one
   entry into gigabytes of a worker's memory.
+- Rate limits on the surfaces a stranger can reach. Failed Composer
+  authentications are counted per address and answered `429` once an address has
+  spent thirty in a minute; webhook deliveries are limited per repository and per
+  address; SSO and artifact uploads have ceilings of their own. Successful
+  Composer traffic is deliberately not throttled — one `composer install` fans
+  out a request per package, and a CI fleet arrives from a single address — and
+  uploads are keyed by the token rather than the address for the same reason.
 
 [Unreleased]: https://github.com/AlwaysCuriousCo/package-pipeline/commits/main
