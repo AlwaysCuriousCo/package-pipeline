@@ -1,0 +1,803 @@
+<?php
+
+namespace App\Services\Mirror;
+
+use App\Models\MirroredArchive;
+use App\Models\MirroredPackage;
+use App\Models\Package;
+use App\Models\Repository;
+use App\Models\ReservedVendor;
+use App\Models\Upstream;
+use App\Services\ArchiveStore;
+use Composer\MetadataMinifier\MetadataMinifier;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Log;
+use Throwable;
+
+/**
+ * Serves packages this registry does not publish, from a repository's
+ * upstreams, out of a cache it fills on demand.
+ *
+ * The one rule everything here is arranged around: **a local package always
+ * wins, unconditionally**. Not "wins when it has a higher version", not "wins
+ * when it is visible to the caller" — a name this installation publishes, or
+ * has reserved the vendor of, is never answered from somebody else's copy.
+ * That is the defence against dependency confusion, and it is only a defence
+ * if it has no exceptions to reason about. See mayMirror() for the whole of
+ * it, and docs/dependency-confusion.md for what the consuming project still
+ * has to do.
+ *
+ * Nothing here runs at all for a repository with no upstreams, which is every
+ * repository until an operator adds one.
+ *
+ * @see docs/mirroring.md
+ */
+class MirrorService
+{
+    /**
+     * Bumped whenever the *rewriting* below changes shape.
+     *
+     * A mirrored response's validator is cut from the upstream bytes plus this
+     * number, so nothing else would tell a client whose copy predates a deploy
+     * that what this code now sends is different.
+     */
+    private const PAYLOAD_REVISION = 1;
+
+    /**
+     * Composer's own package name grammar, from ValidatingArrayLoader.
+     *
+     * Applied before a name is put in a URL, a query or a file path, which
+     * makes it the one guard several things rest on: a `vendor` of `..` cannot
+     * reach out of the archive prefix, and a name Composer could never require
+     * never becomes an outbound request.
+     */
+    private const NAME_PATTERN = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$/';
+
+    /**
+     * What may stand between `/dist/vendor/name/` and `.zip`.
+     *
+     * A dist reference is a commit sha everywhere it matters, but it is a
+     * string the upstream chose, and it becomes both a URL segment and a path
+     * on the dist disk. Slashes are excluded, which is what keeps it one of
+     * each.
+     */
+    private const REFERENCE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/';
+
+    public function __construct(private readonly ArchiveStore $archives) {}
+
+    /**
+     * Whether this repository may answer for this name out of an upstream.
+     *
+     * Three refusals, in the order they are cheapest to decide:
+     *
+     * 1. No upstreams — mirroring is off, which is every installation until
+     *    somebody turns it on.
+     * 2. Not a Composer package name. Nothing else here has to wonder.
+     * 3. A name this installation already publishes, or whose vendor it has
+     *    reserved. This is the important one, and it is deliberately blunt.
+     *    It does not ask which repository publishes the name, or whether the
+     *    caller may see it: a package that exists here is never shadowed by an
+     *    upstream's package of the same name, and a package that *cannot* be
+     *    seen 404s rather than being answered from packagist.org — which,
+     *    since the name is private, is where an attacker would have put one.
+     *    A reserved vendor extends the same refusal to names not published
+     *    yet, which is the case the reservation was always for.
+     */
+    public function mayMirror(Repository $repository, string $name): bool
+    {
+        if (! $repository->mirrors()) {
+            return false;
+        }
+
+        if (preg_match(self::NAME_PATTERN, $name) !== 1) {
+            return false;
+        }
+
+        if (Package::query()->where('name', $name)->exists()) {
+            return false;
+        }
+
+        return ! ReservedVendor::query()->where('vendor', ReservedVendor::normalize($name))->exists();
+    }
+
+    /**
+     * The cached upstream document to serve for one package, fetching or
+     * revalidating it if need be, or null when no upstream has it.
+     *
+     * Upstreams are consulted in the operator's order and the first that has
+     * the package wins — including over a *later* upstream that might have a
+     * higher version, which is the same canonical-first-match rule Composer
+     * applies to its own repository list.
+     */
+    public function metadata(Repository $repository, string $name, bool $dev): ?MirroredPackage
+    {
+        if (! $this->mayMirror($repository, $name)) {
+            return null;
+        }
+
+        foreach ($repository->activeUpstreams() as $upstream) {
+            $mirrored = $this->resolve($upstream, $name, $dev);
+
+            if ($mirrored instanceof MirroredPackage && $mirrored->found()) {
+                $mirrored->markUsed();
+
+                return $mirrored;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * A validator for a mirrored metadata response.
+     *
+     * Cut from a digest of the upstream bytes rather than from when they were
+     * fetched, and that distinction is the whole design: revalidating a
+     * package the upstream has not touched moves `fetched_at` every time the
+     * TTL lapses, and an ETag built from that would tell every client its copy
+     * was stale each hour for a document that never changed.
+     *
+     * Nothing here is derived from version rows, because there are none — the
+     * local endpoint's fingerprint of counts, timestamps and ids has nothing
+     * to count. It cannot be borrowed, and borrowing it would have meant an
+     * aggregate over an empty set answering identically for every mirrored
+     * package in the registry.
+     *
+     * The dist base is folded in for the same reason as the local one: the
+     * URLs it builds are baked into the body being served, so a repository
+     * moved to another mount serves different bytes from the same cache row.
+     */
+    public function etag(Repository $repository, MirroredPackage $mirrored): string
+    {
+        return hash('xxh128', implode('|', [
+            self::PAYLOAD_REVISION,
+            $repository->url('/dist/'),
+            $mirrored->name,
+            $mirrored->is_dev ? 'dev' : 'stable',
+            (string) $mirrored->digest,
+        ]));
+    }
+
+    /**
+     * The bytes to serve for one mirrored package.
+     *
+     * Rendered at most once per change, into the same cache the local endpoint
+     * uses and under the same discipline: the key carries the validator, so an
+     * entry is superseded rather than invalidated and no write path has to
+     * remember to bust it.
+     */
+    public function render(Repository $repository, MirroredPackage $mirrored): string
+    {
+        $key = "composer:mirror:{$mirrored->getKey()}:".$this->etag($repository, $mirrored);
+
+        $cached = cache()->get($key);
+
+        if (is_string($cached)) {
+            return $cached;
+        }
+
+        $json = $this->rewrite($repository, $mirrored);
+
+        $ceiling = (int) config('registry.metadata_cache.max_kilobytes') * 1024;
+
+        if (strlen($json) <= $ceiling) {
+            cache()->put($key, $json, now()->addDays((int) config('registry.metadata_cache.days')));
+        }
+
+        return $json;
+    }
+
+    /**
+     * The stored archive for one mirrored reference, fetching and verifying it
+     * the first time, or null when this registry will not serve one.
+     *
+     * Null covers every refusal — an unmirrorable name, an upstream that has
+     * no such reference, a download that failed, a size over the ceiling, and
+     * a sha1 that did not match. All of them become the same 404, because they
+     * are the same thing from the consumer's side: this registry has no
+     * archive it is prepared to stand behind.
+     */
+    public function archive(Repository $repository, string $name, string $reference): ?MirroredArchive
+    {
+        if (! $this->mayMirror($repository, $name) || preg_match(self::REFERENCE_PATTERN, $reference) !== 1) {
+            return null;
+        }
+
+        $upstreams = $repository->activeUpstreams();
+
+        $existing = MirroredArchive::query()
+            ->whereIn('upstream_id', $upstreams->modelKeys())
+            ->where('name', $name)
+            ->where('reference', $reference)
+            ->first();
+
+        if ($existing instanceof MirroredArchive) {
+            if ($this->archives->disk()->exists((string) $existing->path)) {
+                $existing->markUsed();
+
+                return $existing;
+            }
+
+            // The row outlived its file. Unlike a published version — where
+            // the same situation needs a sync, a provider credential and a
+            // rebuild — a mirror can always repair itself, because the
+            // upstream is still holding the bytes.
+            $existing->delete();
+        }
+
+        foreach ($upstreams as $upstream) {
+            $dist = $this->distFor($upstream, $name, $reference);
+
+            if ($dist === null) {
+                continue;
+            }
+
+            $archive = $this->fetchArchive($upstream, $name, $reference, $dist);
+
+            if ($archive instanceof MirroredArchive) {
+                return $archive;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * What the upstreams know about vulnerabilities in the named packages.
+     *
+     * This is a passthrough, not an advisory database: the same endpoint this
+     * app already implements, asked of the repository the packages themselves
+     * came from. Without it, mirroring would silently switch `composer audit`
+     * off for most of a project's dependency graph — the packages resolved
+     * from here would simply not be covered by anybody, and "no advisories"
+     * and "never asked" look identical to the consumer.
+     *
+     * Cached briefly. An audit runs on every `composer update`, so a CI fleet
+     * would otherwise put one upstream request per build in front of the
+     * upstream; a few minutes of staleness on a feed that is itself hours old
+     * buys that back. Never throws: a failed audit must not fail an install.
+     *
+     * @param  list<string>  $names
+     * @return array<string, list<mixed>>
+     */
+    public function advisories(Repository $repository, array $names): array
+    {
+        $wanted = array_values(array_filter(
+            $names,
+            fn (string $name): bool => $this->mayMirror($repository, $name),
+        ));
+
+        if ($wanted === []) {
+            return [];
+        }
+
+        $found = [];
+
+        foreach ($repository->activeUpstreams() as $upstream) {
+            $outstanding = array_values(array_diff($wanted, array_keys($found)));
+
+            if ($outstanding === []) {
+                break;
+            }
+
+            $found += $this->upstreamAdvisories($upstream, $outstanding);
+        }
+
+        return $found;
+    }
+
+    /**
+     * This upstream's answer for the named packages, from the cache where it
+     * has one and from the upstream for the rest.
+     *
+     * @param  list<string>  $names
+     * @return array<string, list<mixed>>
+     */
+    private function upstreamAdvisories(Upstream $upstream, array $names): array
+    {
+        $answers = [];
+        $ask = [];
+
+        foreach ($names as $name) {
+            $cached = cache()->get($this->advisoryKey($upstream, $name));
+
+            if (is_array($cached)) {
+                $answers[$name] = $cached;
+
+                continue;
+            }
+
+            $ask[] = $name;
+        }
+
+        if ($ask === [] || $this->unreachable($upstream)) {
+            return $answers;
+        }
+
+        try {
+            $response = (new UpstreamClient($upstream))->advisories($ask);
+        } catch (Throwable $exception) {
+            $this->markUnreachable($upstream, $exception->getMessage());
+
+            return $answers;
+        }
+
+        if (! $response instanceof Response || ! $response->successful()) {
+            return $answers;
+        }
+
+        $advisories = $response->json('advisories');
+
+        if (! is_array($advisories)) {
+            return $answers;
+        }
+
+        $minutes = (int) config('registry.mirror.advisory_ttl_minutes');
+
+        foreach ($ask as $name) {
+            // A name the upstream did not key is one it does not cover, which
+            // is not the same as one it found nothing for — but both are
+            // cached, because both mean "do not ask again for a few minutes".
+            // Only a covered name is returned, so an uncovered one stays
+            // absent from the response and Composer keeps looking elsewhere.
+            $entry = $advisories[$name] ?? null;
+
+            cache()->put($this->advisoryKey($upstream, $name), is_array($entry) ? array_values($entry) : null, now()->addMinutes($minutes));
+
+            if (is_array($entry)) {
+                $answers[$name] = array_values($entry);
+            }
+        }
+
+        return $answers;
+    }
+
+    private function advisoryKey(Upstream $upstream, string $name): string
+    {
+        return "mirror:advisories:{$upstream->getKey()}:{$name}";
+    }
+
+    /**
+     * The cache row for one package on one upstream, revalidated if stale.
+     */
+    private function resolve(Upstream $upstream, string $name, bool $dev): ?MirroredPackage
+    {
+        $cached = MirroredPackage::query()
+            ->where('upstream_id', $upstream->getKey())
+            ->where('name', $name)
+            ->where('is_dev', $dev)
+            ->first();
+
+        if ($cached instanceof MirroredPackage && $cached->isFresh()) {
+            return $cached;
+        }
+
+        return $this->refresh($upstream, $cached, $name, $dev);
+    }
+
+    /**
+     * Ask the upstream what it has, and record the answer.
+     *
+     * Every failure path returns what was already cached, however stale. That
+     * is the availability promise this feature exists for: an hour-old copy of
+     * symfony/console resolves a build, and an error does not. Nothing here
+     * can affect a package this registry publishes, which never reaches this
+     * code at all.
+     */
+    private function refresh(Upstream $upstream, ?MirroredPackage $cached, string $name, bool $dev): ?MirroredPackage
+    {
+        if ($this->unreachable($upstream)) {
+            return $cached;
+        }
+
+        // Validators are only replayed for a document we still hold. Sending
+        // them alongside a negative entry would invite a 304 confirming
+        // nothing, since there is no body it could be confirming.
+        $revalidating = $cached instanceof MirroredPackage && $cached->found();
+
+        try {
+            $response = (new UpstreamClient($upstream))->metadata(
+                $dev ? "{$name}~dev" : $name,
+                $revalidating ? $cached->upstream_etag : null,
+                $revalidating ? $cached->upstream_last_modified : null,
+            );
+        } catch (Throwable $exception) {
+            $this->markUnreachable($upstream, $exception->getMessage());
+
+            return $cached;
+        }
+
+        if ($response->status() === 304 && $cached instanceof MirroredPackage) {
+            return $this->confirm($cached);
+        }
+
+        // 404 and 410 are the upstream saying it does not have this package,
+        // which is an answer worth remembering. Every other unsuccessful
+        // status — a 500, a 403 from a credential that has stopped working —
+        // is the upstream failing to answer, and must never be recorded as
+        // "no such package": that would hide the package for as long as the
+        // negative entry lives, and hide the outage entirely.
+        if (in_array($response->status(), [404, 410], true)) {
+            return $this->remember($upstream, $cached, $name, $dev, null, $response);
+        }
+
+        if (! $response->successful()) {
+            $this->markUnreachable($upstream, "responded {$response->status()}");
+
+            return $cached;
+        }
+
+        $body = $response->body();
+
+        $ceiling = (int) config('registry.mirror.max_metadata_kilobytes') * 1024;
+
+        if (strlen($body) > $ceiling) {
+            Log::warning('Refusing an oversized upstream metadata document.', [
+                'upstream' => $upstream->url,
+                'package' => $name,
+                'bytes' => strlen($body),
+            ]);
+
+            return $cached;
+        }
+
+        $document = json_decode($body, true);
+
+        // A 200 that is not a Composer document — a proxy's login page, an
+        // HTML error, a v1 repository — is the upstream being broken rather
+        // than the package being absent, so it is not cached either way.
+        if (! is_array($document) || ! is_array($document['packages'] ?? null)) {
+            Log::warning('Upstream returned something that is not a Composer metadata document.', [
+                'upstream' => $upstream->url,
+                'package' => $name,
+            ]);
+
+            return $cached;
+        }
+
+        // Some repositories answer 200 with an empty `packages` for a name
+        // they do not have, rather than 404. Same fact, same negative entry.
+        $has = $this->versionsIn($document, $name) !== null;
+
+        return $this->remember($upstream, $cached, $name, $dev, $has ? $body : null, $response);
+    }
+
+    /**
+     * Record a 304: the upstream confirmed what we hold, so only the freshness
+     * clock moves. The digest — and therefore every client's validator — is
+     * untouched, which is the point of asking conditionally at all.
+     */
+    private function confirm(MirroredPackage $cached): MirroredPackage
+    {
+        $cached->forceFill(['fetched_at' => now()])->save();
+
+        return $cached;
+    }
+
+    /**
+     * Write what the upstream answered.
+     *
+     * A body identical to the one already stored moves the freshness clock and
+     * nothing else. Upstreams that do not implement conditional requests
+     * re-send unchanged documents all day, and letting that move `changed_at`
+     * would hand every consumer a new Last-Modified — and a fresh download of
+     * bytes they already have — every time the TTL lapsed.
+     */
+    private function remember(
+        Upstream $upstream,
+        ?MirroredPackage $cached,
+        string $name,
+        bool $dev,
+        ?string $body,
+        Response $response,
+    ): MirroredPackage {
+        $mirrored = $cached ?? new MirroredPackage([
+            'upstream_id' => $upstream->getKey(),
+            'name' => $name,
+            'is_dev' => $dev,
+        ]);
+
+        $digest = $body === null ? null : hash('xxh128', $body);
+
+        $attributes = [
+            'fetched_at' => now(),
+            'upstream_etag' => $this->header($response, 'ETag'),
+            'upstream_last_modified' => $this->header($response, 'Last-Modified'),
+            // Only on the way in. Afterwards it means "last served", which is
+            // what retention prunes on, and a revalidation is not a use.
+            ...($mirrored->exists ? [] : ['used_at' => now()]),
+        ];
+
+        if ($digest !== $mirrored->digest) {
+            $attributes['payload'] = $body;
+            $attributes['digest'] = $digest;
+            $attributes['changed_at'] = $body === null ? null : now();
+        }
+
+        $mirrored->forceFill($attributes)->save();
+
+        return $mirrored;
+    }
+
+    private function header(Response $response, string $name): ?string
+    {
+        $value = $response->header($name);
+
+        return $value === '' ? null : $value;
+    }
+
+    /**
+     * Whether this upstream is inside its failure backoff.
+     *
+     * An upstream that has just failed is not asked again for a few minutes.
+     * Without this, an outage costs every mirrored lookup a connect timeout —
+     * one `composer update` of a few hundred dependencies would spend an hour
+     * of wall clock discovering the same thing a few hundred times, and each
+     * of those seconds is a PHP worker held open.
+     *
+     * What the window costs is only freshness on an upstream that has come
+     * back, and stale metadata is exactly what a mirror is for.
+     */
+    private function unreachable(Upstream $upstream): bool
+    {
+        return cache()->has("mirror:unreachable:{$upstream->getKey()}");
+    }
+
+    private function markUnreachable(Upstream $upstream, string $reason): void
+    {
+        $minutes = (int) config('registry.mirror.failure_backoff_minutes');
+
+        cache()->put("mirror:unreachable:{$upstream->getKey()}", $reason, now()->addMinutes($minutes));
+
+        Log::warning('Upstream is unreachable; serving whatever is already cached.', [
+            'upstream' => $upstream->url,
+            'reason' => $reason,
+            'backoff_minutes' => $minutes,
+        ]);
+    }
+
+    /**
+     * The upstream document with this registry's own dist URLs in it.
+     */
+    private function rewrite(Repository $repository, MirroredPackage $mirrored): string
+    {
+        $name = (string) $mirrored->name;
+
+        $document = json_decode((string) $mirrored->payload, true);
+
+        $versions = is_array($document) ? $this->versionsIn($document, $name) : null;
+
+        $rewritten = array_map(
+            fn (mixed $version): array => $this->rewriteVersion($repository, $name, is_array($version) ? $version : []),
+            $versions ?? [],
+        );
+
+        // Reduced to the one package that was asked for, and re-keyed under
+        // the name this registry answered on. An upstream document is allowed
+        // to carry entries for other packages; serving them would let an
+        // upstream decide what names resolve from this repository, which is
+        // the whole thing mayMirror() is defending.
+        return json_encode([
+            ...(is_array($document) ? $document : []),
+            'minified' => 'composer/2.0',
+            'packages' => [$name => MetadataMinifier::minify($rewritten)],
+        ], JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * One version object with its dist pointed back here.
+     *
+     * @param  array<mixed>  $version
+     * @return array<mixed>
+     */
+    private function rewriteVersion(Repository $repository, string $name, array $version): array
+    {
+        // Restated rather than trusted. Composer reads `name` off the version
+        // it resolved, so an upstream answering our question about
+        // symfony/console with a version calling itself acme/internal would
+        // otherwise have chosen a name for this registry to serve.
+        $version['name'] = $name;
+
+        $dist = $version['dist'] ?? null;
+
+        if (! is_array($dist)) {
+            return $version;
+        }
+
+        $reference = $dist['reference'] ?? null;
+        $shasum = $dist['shasum'] ?? null;
+
+        // Only pointed here when this registry could actually stand behind the
+        // bytes: a zip, named by a usable reference, with the sha1 to check it
+        // against. Anything else keeps the upstream's own URL and is fetched
+        // by Composer directly — which forfeits the caching for that one
+        // version, and is much better than advertising a dist URL here that
+        // resolves to nothing, or to bytes nobody could verify.
+        if (($dist['type'] ?? null) !== 'zip'
+            || ! is_string($reference)
+            || preg_match(self::REFERENCE_PATTERN, $reference) !== 1
+            || ! is_string($shasum)
+            || $shasum === ''
+        ) {
+            return $version;
+        }
+
+        $version['dist']['url'] = $repository->url("/dist/{$name}/{$reference}.zip");
+
+        return $version;
+    }
+
+    /**
+     * The version list a document holds for one package, expanded, or null
+     * when the document does not cover that package at all.
+     *
+     * The key is matched case-insensitively because a repository is free to
+     * echo back the spelling it stores; the difference between "no such
+     * package" and "the same package in different case" is the difference
+     * between a negative cache entry and a served document.
+     *
+     * @param  array<mixed>  $document
+     * @return list<mixed>|null
+     */
+    private function versionsIn(array $document, string $name): ?array
+    {
+        $packages = $document['packages'] ?? [];
+
+        if (! is_array($packages)) {
+            return null;
+        }
+
+        foreach ($packages as $key => $versions) {
+            if (! is_string($key) || mb_strtolower($key) !== $name) {
+                continue;
+            }
+
+            if (! is_array($versions)) {
+                return null;
+            }
+
+            /** @var list<mixed> $list */
+            $list = array_values($versions);
+
+            // Only a document that says it is minified gets expanded. Both
+            // forms are legal, and expanding an already-expanded document
+            // would fold every version into the first one's fields.
+            return ($document['minified'] ?? null) === 'composer/2.0'
+                ? MetadataMinifier::expand($list)
+                : $list;
+        }
+
+        return null;
+    }
+
+    /**
+     * The upstream's own dist descriptor for one reference, read out of
+     * metadata this registry has already cached.
+     *
+     * This is what bounds the archive fetcher: a consumer can only ever make
+     * this app download a URL that an upstream published in a document we
+     * hold, for a reference that document named. There is no path from a
+     * request to an arbitrary outbound URL.
+     *
+     * @return array{url: string, shasum: string}|null
+     */
+    private function distFor(Upstream $upstream, string $name, string $reference): ?array
+    {
+        $documents = MirroredPackage::query()
+            ->where('upstream_id', $upstream->getKey())
+            ->where('name', $name)
+            ->whereNotNull('payload')
+            ->get();
+
+        foreach ($documents as $document) {
+            $decoded = json_decode((string) $document->payload, true);
+
+            foreach (is_array($decoded) ? ($this->versionsIn($decoded, $name) ?? []) : [] as $version) {
+                $dist = is_array($version) ? ($version['dist'] ?? null) : null;
+
+                if (! is_array($dist) || ($dist['type'] ?? null) !== 'zip') {
+                    continue;
+                }
+
+                $url = $dist['url'] ?? null;
+                $shasum = $dist['shasum'] ?? null;
+
+                if (($dist['reference'] ?? null) !== $reference || ! is_string($url) || ! is_string($shasum) || $shasum === '') {
+                    continue;
+                }
+
+                return ['url' => $url, 'shasum' => $shasum];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Download, verify and store one upstream archive.
+     *
+     * The sha1 check is the reason this registry can serve the bytes at all.
+     * Composer verifies a download against the `shasum` in the metadata it
+     * read, and that metadata now comes from here — so if this app stored
+     * whatever arrived, a compromised or merely broken upstream would have its
+     * bytes served under a hash this registry vouched for. Verified here, the
+     * consumer's own check confirms a claim that was already true.
+     *
+     * @param  array{url: string, shasum: string}  $dist
+     */
+    private function fetchArchive(Upstream $upstream, string $name, string $reference, array $dist): ?MirroredArchive
+    {
+        if ($this->unreachable($upstream)) {
+            return null;
+        }
+
+        $temporary = tempnam(sys_get_temp_dir(), 'mirror-archive-');
+
+        if ($temporary === false) {
+            return null;
+        }
+
+        try {
+            $response = (new UpstreamClient($upstream))->download($dist['url'], $temporary);
+
+            if (! $response->successful()) {
+                $this->markUnreachable($upstream, "archive download responded {$response->status()}");
+
+                return null;
+            }
+
+            $size = (int) filesize($temporary);
+
+            // Checked once the transfer is over rather than refused up front:
+            // the ceiling exists to bound what accumulates on the dist disk,
+            // and a Content-Length is a claim from the same party as the body.
+            // The transfer itself is bounded by the archive timeout, and the
+            // file this landed in is temporary either way.
+            $ceiling = (int) config('registry.mirror.max_archive_megabytes') * 1024 * 1024;
+
+            if ($size > $ceiling) {
+                Log::warning('Refusing an upstream archive over the size ceiling.', [
+                    'upstream' => $upstream->url,
+                    'package' => $name,
+                    'reference' => $reference,
+                    'bytes' => $size,
+                ]);
+
+                return null;
+            }
+
+            if (! hash_equals($dist['shasum'], (string) sha1_file($temporary))) {
+                Log::warning('Upstream archive did not match the sha1 the upstream published for it; refusing to store it.', [
+                    'upstream' => $upstream->url,
+                    'package' => $name,
+                    'reference' => $reference,
+                ]);
+
+                return null;
+            }
+
+            $path = $this->archives->storeMirrored($name, $reference, $temporary);
+
+            return MirroredArchive::create([
+                'upstream_id' => $upstream->getKey(),
+                'name' => $name,
+                'reference' => $reference,
+                'path' => $path,
+                'shasum' => $dist['shasum'],
+                'size' => $size,
+                'used_at' => now(),
+            ]);
+        } catch (Throwable $exception) {
+            Log::warning('Could not mirror an upstream archive.', [
+                'upstream' => $upstream->url,
+                'package' => $name,
+                'reference' => $reference,
+                'reason' => $exception->getMessage(),
+            ]);
+
+            return null;
+        } finally {
+            @unlink($temporary);
+        }
+    }
+}

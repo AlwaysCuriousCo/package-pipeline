@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Database\Factories\MirroredArchiveFactory;
+use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,6 +18,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @see docs/mirroring.md
  */
+#[Fillable(['upstream_id', 'name', 'reference', 'path', 'shasum', 'size', 'used_at'])]
 class MirroredArchive extends Model
 {
     /** @use HasFactory<MirroredArchiveFactory> */

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Events\PackageDownloaded;
 use App\Http\Middleware\ResolveComposerRepository;
+use App\Models\MirroredArchive;
+use App\Models\MirroredPackage;
 use App\Models\Package;
 use App\Models\PackageAdvisory;
 use App\Models\PackageVersion;
@@ -12,6 +14,7 @@ use App\Models\ReservedVendor;
 use App\Models\Token;
 use App\Services\ArchiveStore;
 use App\Services\CreateVersionFromZip;
+use App\Services\Mirror\MirrorService;
 use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
@@ -45,7 +48,10 @@ class ComposerRepositoryController extends Controller
      */
     private const PAYLOAD_REVISION = 3;
 
-    public function __construct(private readonly ArchiveStore $archives) {}
+    public function __construct(
+        private readonly ArchiveStore $archives,
+        private readonly MirrorService $mirror,
+    ) {}
 
     /**
      * The repository root that Composer fetches first.
@@ -56,18 +62,7 @@ class ComposerRepositoryController extends Controller
 
         return response()->json([
             'metadata-url' => $repository->pathPrefix().'/p2/%package%.json',
-            // Without some statement of what this repository could possibly
-            // answer for, Composer has to assume the answer is "anything" and
-            // asks about every package in the consuming project's dependency
-            // graph — twice each, releases and branches — on every cold
-            // update. A project with a few hundred transitive dependencies
-            // turns one `composer update` into a few hundred authenticated
-            // 404s here, which costs more than serving the real packages does.
-            //
-            // Vendor patterns rather than `available-packages`: an inline list
-            // of every name would have to be rebuilt and re-sent on each root
-            // fetch, and it is the one document Composer cannot lazily skip.
-            'available-package-patterns' => $this->servedVendorPatterns($request),
+            'available-package-patterns' => $this->availablePackagePatterns($request),
             // Without this key Composer's auditor skips every package resolved
             // from here — silently, because "this repository publishes no
             // advisories" and "this repository was never asked" look identical
@@ -90,6 +85,47 @@ class ComposerRepositoryController extends Controller
             'search' => $repository->url('/search.json').'?q=%query%&type=%type%',
             'list' => $repository->url('/list.json'),
         ]);
+    }
+
+    /**
+     * What this repository tells Composer it could possibly answer for.
+     *
+     * Without some statement of this, Composer has to assume the answer is
+     * "anything" and asks about every package in the consuming project's
+     * dependency graph — twice each, releases and branches — on every cold
+     * update. A project with a few hundred transitive dependencies turns one
+     * `composer update` into a few hundred authenticated 404s here, which
+     * costs more than serving the real packages does. So a repository that
+     * only publishes its own packages advertises its vendor prefixes and is
+     * asked about nothing else.
+     *
+     * A mirroring repository has to say the opposite, and this is the single
+     * most important interaction mirroring has with what was already here.
+     * Left as it was, the list would name only the local vendors — which tells
+     * Composer never to ask about `symfony/*`, and the mirror would then serve
+     * nothing at all, silently and for exactly the packages it exists to
+     * serve. There is no narrower true answer available either: what an
+     * upstream has is not knowable without asking it, and the point of
+     * on-demand caching is not to enumerate packagist.org first.
+     *
+     * So one universal pattern — any vendor, any name — stated rather than
+     * achieved by omitting the key. Both make Composer ask about everything;
+     * the pattern says it is a decision. What it costs is the 404 storm the
+     * key was added to prevent — but those requests are now the mirror lookups
+     * themselves, which is the feature rather than the waste, and each one is
+     * answered from the cache or a cached absence rather than a database miss.
+     *
+     * Vendor patterns rather than `available-packages` in either case: an
+     * inline list of every name would have to be rebuilt and re-sent on each
+     * root fetch, and it is the one document Composer cannot lazily skip.
+     *
+     * @return list<string>
+     */
+    private function availablePackagePatterns(Request $request): array
+    {
+        return $this->repository($request)->mirrors()
+            ? ['*/*']
+            : $this->servedVendorPatterns($request);
     }
 
     /**
@@ -124,6 +160,17 @@ class ComposerRepositoryController extends Controller
     /**
      * Search served packages by name prefix and optional Composer type,
      * mirroring packagist.org's search.json shape.
+     *
+     * Local packages only, even on a repository with upstreams. Search is a
+     * menu — it answers "what is here that I could depend on" — and a mirror's
+     * cache is not a catalogue of anything: it holds whichever transitive
+     * dependencies some project happened to install, which is an accident of
+     * traffic rather than a fact about the repository. Returning `symfony/*`
+     * because somebody's build pulled it in last Tuesday, and not returning it
+     * next month because retention swept it, would be worse than not
+     * answering. Searching a repository for its own packages stays exactly as
+     * useful as it was, and what is cached is an operational question, which
+     * the admin panel answers.
      */
     public function search(Request $request): JsonResponse
     {
@@ -153,6 +200,15 @@ class ComposerRepositoryController extends Controller
 
     /**
      * Every package name this repository serves.
+     *
+     * Local packages only, even when the repository mirrors — as with search
+     * above. This answers "what does this registry publish", which stays a
+     * true and stable statement; a mirror's cache is neither. Adding the names
+     * that happen to be warm right now would produce a list that changes when
+     * an unrelated project installs something, shrinks when `mirror:prune`
+     * runs, and is never the set of names the repository can actually resolve,
+     * which is all of them. Resolution does not depend on it either: the root
+     * document's universal pattern is what tells Composer to ask.
      */
     public function list(Request $request): JsonResponse
     {
@@ -181,6 +237,21 @@ class ComposerRepositoryController extends Controller
      * Repository\ComposerRepository::getSecurityAdvisories(), which is where
      * the request is built and the response parsed. Named rather than linked
      * because composer/composer is not a dependency of this app.
+     *
+     * A mirroring repository passes the names it does not publish through to
+     * its upstreams, and that is a deliberate decision rather than a
+     * convenience. Since 2.9 an audit runs inside every `composer update`, so
+     * a project that resolves its whole graph through this registry would
+     * otherwise have auditing quietly switched off for the mirrored majority
+     * of it — and "this repository reported nothing" is indistinguishable from
+     * "nobody checked" at the consumer's end. Mirroring must not make a
+     * project less safe than pointing at packagist.org directly did.
+     *
+     * This is not advisory ingestion, which is a different thing and not built
+     * here: nothing is imported, stored or reconciled, and no external feed is
+     * consulted. It is the same endpoint this app already implements, asked of
+     * the repository the packages themselves came from, and only for names
+     * this registry does not answer for itself.
      */
     public function securityAdvisories(Request $request): JsonResponse
     {
@@ -203,6 +274,14 @@ class ComposerRepositoryController extends Controller
 
         $repository = $this->repository($request);
 
+        // What the upstreams say about the names this registry does not
+        // publish. Asked for the whole requested set at once — the service
+        // drops the ones it may not mirror, which includes every name answered
+        // locally below, so no package is ever asked about twice.
+        $mirrored = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->advisories($repository, array_map(mb_strtolower(...), $requested))
+            : [];
+
         $advisories = [];
 
         foreach ($requested as $name) {
@@ -211,6 +290,12 @@ class ComposerRepositoryController extends Controller
             );
 
             if (! $package instanceof Package) {
+                $upstream = $mirrored[mb_strtolower($name)] ?? null;
+
+                if (is_array($upstream)) {
+                    $advisories[$name] = $upstream;
+                }
+
                 continue;
             }
 
@@ -269,7 +354,16 @@ class ComposerRepositoryController extends Controller
         // Visibility is settled before a validator is so much as computed, so
         // a client that may not see this package gets the 404 it always got
         // and never a 304 confirming the package is here.
-        abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
+        //
+        // Only a repository with no local answer falls through to its
+        // upstreams, and the mirror refuses again on its own terms — a name
+        // published anywhere in this installation is never served from
+        // somebody else's copy, whether or not this caller could have seen the
+        // local one. So an invisible local package still 404s, and 404s
+        // without an upstream having been asked anything.
+        if (! $record instanceof Package) {
+            return $this->mirroredMetadata($request, $repository, $name, $dev);
+        }
 
         $state = $this->versionState($record, $dev);
 
@@ -296,6 +390,70 @@ class ComposerRepositoryController extends Controller
         }
 
         return $response->setContent($this->payload($repository, $record, $dev, $etag));
+    }
+
+    /**
+     * A package this repository does not publish, served from an upstream.
+     *
+     * Conditional in the same shape as the local endpoint above, on validators
+     * that have nothing to do with the ones above. A mirrored document has no
+     * version rows to fingerprint — the whole of what is held is a blob of
+     * somebody else's bytes — so the ETag is cut from a digest of those bytes
+     * and Last-Modified is when they last changed, which is not the same as
+     * when they were last confirmed. See MirrorService::etag().
+     *
+     * @see MirrorService for the rules on which names may be answered here
+     */
+    private function mirroredMetadata(Request $request, Repository $repository, string $name, bool $dev): Response
+    {
+        $mirrored = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->metadata($repository, mb_strtolower($name), $dev)
+            : null;
+
+        // Word for word what a package that is simply not here says, because
+        // that is what this is. Nothing about the response distinguishes "no
+        // upstream has it", "mirroring is off" and "the vendor is reserved".
+        abort_unless($mirrored instanceof MirroredPackage, 404, "Package {$name} is not served by this repository.");
+
+        $response = response('', 200, [
+            'Content-Type' => 'application/json',
+            'Cache-Control' => 'private, no-cache',
+            'Vary' => 'Authorization',
+        ]);
+
+        $response->setLastModified($mirrored->changed_at);
+        $response->setEtag($this->mirror->etag($repository, $mirrored), weak: true);
+
+        if ($response->isNotModified($request)) {
+            return $response;
+        }
+
+        return $response->setContent($this->mirror->render($repository, $mirrored));
+    }
+
+    /**
+     * Whether this request's principal may be served mirrored content at all.
+     *
+     * Mirrored packages have no rows of their own to scope, so the repository
+     * is the unit: a principal that may read this repository may read what
+     * this repository mirrors, and one that may not gets nothing. That is the
+     * only coherent reading — a grant names a package this registry publishes,
+     * and there is no such package here to name.
+     *
+     * It is checked explicitly rather than left to the authentication
+     * middleware, which only asks whether the credential is live and whether
+     * the repository is public. A token scoped to another repository passes
+     * that and is then narrowed to nothing by per-package visibility — a
+     * narrowing mirrored content is not subject to. Without this, such a token
+     * could pull a private upstream's packages through a mount it was never
+     * granted.
+     */
+    private function mayReadMirrored(Request $request, Repository $repository): bool
+    {
+        return Repository::query()
+            ->whereKey($repository->getKey())
+            ->visibleTo($this->token($request))
+            ->exists();
     }
 
     /**
@@ -513,12 +671,16 @@ class ComposerRepositoryController extends Controller
     {
         $name = "{$vendor}/{$package}";
 
-        $record = $this->repository($request)->packages()
+        $repository = $this->repository($request);
+
+        $record = $repository->packages()
             ->visibleTo($this->token($request))
             ->where('name', $name)
             ->first();
 
-        abort_unless($record instanceof Package, 404, "Package {$name} is not served by this repository.");
+        if (! $record instanceof Package) {
+            return $this->mirroredDist($request, $repository, $name, $reference);
+        }
 
         $versions = $record->versions()->where('reference', $reference)->get();
 
@@ -602,6 +764,52 @@ class ComposerRepositoryController extends Controller
             // not party to. A client's own cache is different in kind: it can
             // only replay an archive that client already downloaded, so a
             // token revoked afterwards loses it nothing it did not have.
+            'Cache-Control' => 'private, max-age=31536000, immutable',
+        ]);
+    }
+
+    /**
+     * An upstream release archive, served from this registry's own disk.
+     *
+     * The first request for one fetches it, checks it against the sha1 the
+     * upstream published, and stores it; every request afterwards is answered
+     * from the dist disk and touches nothing outside this installation. That
+     * is the whole promise of mirroring the archives as well as the metadata —
+     * without it a mirrored `composer install` still depends on GitHub being
+     * up, and Composer would be fetching from codeload with the consumer's own
+     * credentials or none at all.
+     *
+     * Downloads are not counted. `total_downloads` is a statement about
+     * packages this registry publishes — it drives the panel's charts, the
+     * package table and search ordering — and folding somebody else's release
+     * into it would answer a question nobody asked with a number nobody can
+     * act on.
+     */
+    private function mirroredDist(Request $request, Repository $repository, string $name, string $reference): StreamedResponse|RedirectResponse
+    {
+        $archive = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->archive($repository, mb_strtolower($name), $reference)
+            : null;
+
+        abort_unless(
+            $archive instanceof MirroredArchive,
+            404,
+            "No archive is stored for {$name}@{$reference}, and none could be mirrored.",
+        );
+
+        $path = (string) $archive->path;
+
+        // Both ways of serving an archive, chosen exactly as they are for a
+        // published one; see dist() above for why a signing disk is handed the
+        // transfer and why the redirect must not be cached.
+        $url = $this->archives->temporaryUrl($path);
+
+        if ($url !== null) {
+            return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
+        }
+
+        return $this->archives->disk()->download($path, str_replace('/', '-', $name)."-{$reference}.zip", [
+            'Content-Type' => 'application/zip',
             'Cache-Control' => 'private, max-age=31536000, immutable',
         ]);
     }

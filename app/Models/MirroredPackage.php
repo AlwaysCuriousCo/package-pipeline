@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Database\Factories\MirroredPackageFactory;
+use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -21,6 +22,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @see docs/mirroring.md
  */
+#[Fillable(['upstream_id', 'name', 'is_dev', 'payload', 'digest', 'upstream_etag', 'upstream_last_modified', 'fetched_at', 'changed_at', 'used_at'])]
 class MirroredPackage extends Model
 {
     /** @use HasFactory<MirroredPackageFactory> */

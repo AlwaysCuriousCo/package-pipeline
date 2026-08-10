@@ -75,17 +75,32 @@ return [
     | dist disk grows to, so it is the number to lower when disk is tight.
     |
     | `max_archive_megabytes` refuses to cache an upstream archive past this
-    | size. The upload ceiling above bounds what a token of ours may spend; this
-    | bounds what a *stranger's* published package can, since any name a
-    | consuming project requires can reach it.
+    | size, and `max_metadata_kilobytes` does the same for a metadata document.
+    | The upload ceiling above bounds what a token of ours may spend; these
+    | bound what a *stranger's* published package can, since any name a
+    | consuming project requires can reach them.
+    |
+    | `advisory_ttl_minutes` is how long an upstream's answer about known
+    | vulnerabilities is reused. An audit runs inside every `composer update`,
+    | so without it a CI fleet puts one upstream request per build in front of
+    | the upstream — and the feed behind that answer is itself hours old.
+    |
+    | `failure_backoff_minutes` is how long an upstream that has just failed is
+    | left alone. During it, cached documents still answer and nothing reaches
+    | the network. Without it an outage costs every mirrored lookup a connect
+    | timeout, so one `composer update` spends minutes discovering the same
+    | thing once per dependency — with a PHP worker held open for each.
     |
     */
 
     'mirror' => [
         'metadata_ttl_minutes' => (int) env('MIRROR_METADATA_TTL_MINUTES', 60),
         'missing_ttl_minutes' => (int) env('MIRROR_MISSING_TTL_MINUTES', 10),
+        'advisory_ttl_minutes' => (int) env('MIRROR_ADVISORY_TTL_MINUTES', 10),
+        'failure_backoff_minutes' => (int) env('MIRROR_FAILURE_BACKOFF_MINUTES', 5),
         'retention_days' => (int) env('MIRROR_RETENTION_DAYS', 30),
         'max_archive_megabytes' => (int) env('MIRROR_MAX_ARCHIVE_MB', 256),
+        'max_metadata_kilobytes' => (int) env('MIRROR_MAX_METADATA_KB', 8192),
     ],
 
 ];
