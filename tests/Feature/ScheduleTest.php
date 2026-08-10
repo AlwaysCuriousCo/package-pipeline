@@ -59,6 +59,16 @@ class ScheduleTest extends TestCase
         $this->assertSame('20 3 * * *', $this->event('archives:audit')->expression);
     }
 
+    /**
+     * The only bound on what the mirror costs in disk: nothing else ever
+     * deletes a cached upstream archive, and a full dist disk takes the
+     * private packages down along with the mirrored ones.
+     */
+    public function test_the_mirror_cache_is_pruned_daily(): void
+    {
+        $this->assertSame('15 3 * * *', $this->event('mirror:prune')->expression);
+    }
+
     public function test_the_append_only_tables_are_pruned_daily(): void
     {
         $notifications = $this->event('model:prune');
@@ -82,7 +92,7 @@ class ScheduleTest extends TestCase
             $this->assertTrue($event->onOneServer, "{$event->command} is not restricted to one server.");
         }
 
-        foreach (['packages:sync', 'archives:clean'] as $command) {
+        foreach (['packages:sync', 'archives:clean', 'mirror:prune'] as $command) {
             $this->assertTrue($this->event($command)->withoutOverlapping, "{$command} may overlap itself.");
         }
     }

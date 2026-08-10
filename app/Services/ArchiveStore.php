@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\PackageVersion;
+use App\Models\Upstream;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Filesystem\LocalFilesystemAdapter;
@@ -112,10 +113,15 @@ class ArchiveStore
      * published archive: an upstream reference names an immutable release, so
      * re-fetching one can only ever write the same bytes over themselves,
      * where a re-synced *version* legitimately changes what a tag points at.
+     *
+     * The upstream is in the path because "immutable" is only that upstream's
+     * word. Two upstreams offering one name at one reference would otherwise
+     * share a file while each row vouched for its own sha1 — and the second to
+     * write would have its bytes served under the first one's hash.
      */
-    public function storeMirrored(string $name, string $reference, string $zip): string
+    public function storeMirrored(Upstream $upstream, string $name, string $reference, string $zip): string
     {
-        $path = self::MIRROR_PREFIX."/{$name}/{$reference}.zip";
+        $path = self::MIRROR_PREFIX."/{$upstream->getKey()}/{$name}/{$reference}.zip";
 
         $this->write($path, $zip);
 

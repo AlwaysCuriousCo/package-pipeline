@@ -22,7 +22,7 @@ class MirroredArchiveFactory extends Factory
             'upstream_id' => Upstream::factory(),
             'name' => 'vendor/mirrored',
             'reference' => $reference,
-            'path' => "mirror/vendor/mirrored/{$reference}.zip",
+            'path' => "mirror/1/vendor/mirrored/{$reference}.zip",
             'shasum' => sha1('mirrored-zip-bytes'),
             'size' => 1024,
             'used_at' => now(),

@@ -776,7 +776,7 @@ class MirrorService
                 return null;
             }
 
-            $path = $this->archives->storeMirrored($name, $reference, $temporary);
+            $path = $this->archives->storeMirrored($upstream, $name, $reference, $temporary);
 
             return MirroredArchive::create([
                 'upstream_id' => $upstream->getKey(),

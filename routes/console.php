@@ -63,6 +63,17 @@ Schedule::command('archives:audit')
     ->withoutOverlapping()
     ->onOneServer();
 
+// The only bound on what upstream mirroring costs in disk. Every transitive
+// dependency of every project that resolves through a mirroring repository is
+// fetched once and kept, so without this the dist disk grows monotonically and
+// forever — and a full disk takes the private packages down with the cached
+// ones. A no-op on an installation with no upstreams, which is every
+// installation until an operator adds one.
+Schedule::command('mirror:prune')
+    ->dailyAt('03:15')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 // AdminNotifier writes a row per admin per event and the panel's bell only
 // ever marks them read, so the notifications table is otherwise append-only.
 // The audit log is append-only by design — nothing in the app updates or
