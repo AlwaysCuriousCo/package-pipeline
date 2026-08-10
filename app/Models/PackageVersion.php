@@ -16,6 +16,58 @@ class PackageVersion extends Model
     use HasFactory;
 
     /**
+     * Composer's own word for "not an open source licence at all", which is
+     * the one value the field is documented to take that SPDX does not define.
+     *
+     * @see https://getcomposer.org/doc/04-schema.md#license
+     */
+    public const PROPRIETARY = 'proprietary';
+
+    protected static function booted(): void
+    {
+        // `license` is `metadata->license` folded to one expression, kept as a
+        // column so the registry can be asked about its licensing without
+        // decoding every manifest it stores. Derived here rather than at each
+        // write, so the sync path, an artifact upload and a rebuild cannot
+        // drift from one another.
+        //
+        // Only when the manifest is actually moving. A row read back with a
+        // subset of its columns — which the synchronizer does for every stored
+        // version on every sync — has no `metadata` attribute to derive from,
+        // and recomputing would quietly clear the column on the next save of
+        // it. `isDirty` is false in exactly that case and true for every
+        // insert, which is the distinction wanted.
+        static::saving(function (self $version): void {
+            if ($version->isDirty('metadata')) {
+                $version->license = self::licenseExpression($version->licenses());
+            }
+        });
+    }
+
+    /**
+     * The declared licenses as the single SPDX expression the `license` column
+     * holds, or null when nothing is declared.
+     *
+     * Several licenses become "A OR B" rather than being kept apart, because
+     * that is what declaring several in a composer.json means: the consumer
+     * may take the package under any one of them. It is also the one spelling
+     * the licence report, the panel filter and the CycloneDX export all want,
+     * so folding it once here keeps three readers from each doing it
+     * differently.
+     *
+     * @param  list<string>  $licenses
+     */
+    public static function licenseExpression(array $licenses): ?string
+    {
+        $expression = implode(' OR ', array_unique($licenses));
+
+        // The column is indexed and so is bounded; a declaration that will not
+        // fit is not a licence anyone can act on anyway, and `metadata` still
+        // holds whatever the manifest actually said.
+        return $expression === '' ? null : mb_substr($expression, 0, 255);
+    }
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array
@@ -105,6 +157,25 @@ class PackageVersion extends Model
         }
 
         return $lines;
+    }
+
+    /**
+     * Narrow to the versions of packages a caller may see.
+     *
+     * The packages query is passed in rather than a user or a token, so that
+     * every reader of this reaches visibility through Package's own scopes —
+     * the single chokepoint all access control here goes through — instead of
+     * a second implementation of it growing beside them. A licence report and
+     * an SBOM are both "everything visible, one row per version", and neither
+     * is a place to be inventive about who may see what.
+     *
+     * @param  Builder<static>  $query
+     * @param  Builder<Package>  $packages  already narrowed by visibleTo/visibleToUser
+     * @return Builder<static>
+     */
+    public function scopeOfPackages(Builder $query, Builder $packages): Builder
+    {
+        return $query->whereIn('package_versions.package_id', $packages->select('packages.id'));
     }
 
     /**

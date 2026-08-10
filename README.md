@@ -272,6 +272,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | --- | --- |
 | `archives:clean` | Delete stored archives no version references. Re-synced versions leave their previous archive behind by design and nothing else removes one. `--dry-run` lists without deleting. Runs nightly. |
 | `archives:audit` | The other direction: find versions whose archive is no longer on the dist disk and clear the reference, so the next sync downloads it again. `--dry-run` reports without touching. Run it by hand after restoring a bucket. |
+| `sbom:export` | A CycloneDX bill of materials, streamed. `--package=` (with `--repository=` when the name is ambiguous) narrows it to one package, `--path=` writes to a file or a directory instead of stdout. |
 | `downloads:recalculate` | Rebuild the denormalized `total_downloads` counters from the raw downloads rows. For when the counters and the chart disagree. |
 
 **Accounts and access**
@@ -371,6 +372,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
+- [docs/licensing.md](docs/licensing.md) — the license report, what a version declaring none means, and the CycloneDX SBOM export: its shape, the choices behind it, and what was verified against the spec.
 - [docs/metrics.md](docs/metrics.md) — the Prometheus endpoint: what it exposes, why it is off by default, what to alert on, and what a scrape costs.
 - [docs/monorepos.md](docs/monorepos.md) — publishing several packages from one repository: the subdirectory field, how a dist for part of a repository is built, and what a push to a monorepo syncs.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.

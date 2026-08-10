@@ -42,6 +42,13 @@ shape rather than a delta from a previous one.
   repository; per-repository hooks are the fallback for packages with no source.
 - Access tokens for Composer clients and scoped deploy tokens for machines,
   with package visibility scoped per panel user.
+- A **Licenses** page reporting what the registry publishes under, which
+  packages and versions carry each license, and — the number worth watching —
+  how many versions declare none at all. Each version's declaration is kept in
+  a column of its own, derived from its manifest.
+- **CycloneDX 1.6 SBOM export**, registry-wide or per package, from the panel
+  and from `sbom:export`. One component per package version, streamed, and cut
+  to the caller's own grants. See [docs/licensing.md](docs/licensing.md).
 - Reserved vendor prefixes per Composer repository, as a dependency-confusion
   defence: only the owning repository may introduce names under a reserved
   vendor, enforced on the create wizard, the API, `package:add`, artifact

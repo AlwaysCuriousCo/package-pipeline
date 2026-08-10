@@ -5,6 +5,7 @@ use App\Http\Controllers\DownloadExportController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\PasswordSetupController;
+use App\Http\Controllers\SbomExportController;
 use App\Http\Controllers\SourceConnectionController;
 use App\Http\Controllers\SsoController;
 use App\Http\Middleware\AuthenticateComposer;
@@ -125,6 +126,13 @@ Route::middleware('throttle:sso')->group(function (): void {
 Route::get('/exports/downloads', DownloadExportController::class)
     ->middleware('auth')
     ->name('exports.downloads');
+
+// A CycloneDX bill of materials, streamed for the same reason: a component per
+// package version is a document nobody should be assembling in memory. Scoped
+// to the signed-in admin's own grants; `?package=` narrows it to one package.
+Route::get('/exports/sbom', SbomExportController::class)
+    ->middleware('auth')
+    ->name('exports.sbom');
 
 // The GitHub App install handshake for connecting a source. Both legs are
 // admin-only: the callback attaches an installation to a source, so it must
