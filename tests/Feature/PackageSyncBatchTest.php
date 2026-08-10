@@ -173,11 +173,11 @@ class PackageSyncBatchTest extends TestCase
         // First pass: discovery fans out, three imports land, the fourth is
         // released for retry. The batch cannot finish until the retries are
         // spent, so wind the clock past each backoff and let the worker at it.
-        $this->artisan('queue:work', ['--stop-when-empty' => true])->assertSuccessful();
+        $this->workQueue(['--stop-when-empty' => true])->assertSuccessful();
 
         foreach ([31, 121] as $seconds) {
             $this->travelTo(now()->addSeconds($seconds));
-            $this->artisan('queue:work', ['--stop-when-empty' => true])->assertSuccessful();
+            $this->workQueue(['--stop-when-empty' => true])->assertSuccessful();
         }
 
         $package->refresh();

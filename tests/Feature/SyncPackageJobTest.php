@@ -278,7 +278,7 @@ class SyncPackageJobTest extends TestCase
         $this->assertSame(60, $payload['timeout']);
         $this->assertNull($package->refresh()->last_synced_at);
 
-        $this->artisan('queue:work', ['--stop-when-empty' => true])->assertSuccessful();
+        $this->workQueue(['--stop-when-empty' => true])->assertSuccessful();
 
         $this->assertDatabaseCount('jobs', 0);
         $this->assertDatabaseCount('failed_jobs', 0);
@@ -305,11 +305,11 @@ class SyncPackageJobTest extends TestCase
 
         // The dispatcher job never touches GitHub, so it succeeds and leaves
         // the discovery job on the queue.
-        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+        $this->workQueue(['--once' => true])->assertSuccessful();
 
         // The worker exits 0 whether or not the job it ran threw; the outcome
         // is recorded on the job, so that is where to look.
-        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+        $this->workQueue(['--once' => true])->assertSuccessful();
 
         // One attempt of three: the discovery goes back to the queue, not to
         // the floor.
