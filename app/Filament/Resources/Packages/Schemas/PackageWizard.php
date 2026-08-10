@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\SourceProvider;
 use App\Models\Package;
 use App\Models\Source;
 use Filament\Forms\Components\Hidden;
@@ -163,7 +164,8 @@ class PackageWizard
             return 'Authenticating with the token entered below.';
         }
 
-        $repositoryPath = (new Package(['repository' => trim((string) $get('repository'))]))->suggestedName();
+        $package = new Package(['repository' => trim((string) $get('repository'))]);
+        $repositoryPath = $package->suggestedName();
 
         if ($repositoryPath === null) {
             return 'Matched from the repository URL. Override it here for a repository no source covers.';
@@ -171,8 +173,14 @@ class PackageWizard
 
         $owner = strtok($repositoryPath, '/');
 
-        return Source::forRepositoryPath($repositoryPath) instanceof Source
-            ? "Matched to the source connected for \"{$owner}\"."
-            : "No connected source covers \"{$owner}\", so GITHUB_TOKEN is used. Choose a source or enter a token if the repository is private.";
+        if (Source::forRepositoryPath($repositoryPath) instanceof Source) {
+            return "Matched to the source connected for \"{$owner}\".";
+        }
+
+        // The environment fallback is GitHub's alone, so a GitLab URL with
+        // neither a source nor a token has nothing to authenticate with.
+        return $package->provider() === SourceProvider::Github
+            ? "No connected source covers \"{$owner}\", so GITHUB_TOKEN is used. Choose a source or enter a token if the repository is private."
+            : "No connected source covers \"{$owner}\", and there is no environment fallback for {$package->provider()->getLabel()}. Choose a source or enter a token unless the repository is public.";
     }
 }

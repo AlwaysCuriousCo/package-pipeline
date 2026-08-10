@@ -107,7 +107,7 @@ Then **Test connection** on the source, which lists the projects the token can r
 - **`GITHUB_TOKEN` is not a fallback for GitLab.** It is a GitHub credential and is deliberately never handed to another provider's API, so a GitLab package needs either a connected source or a token of its own.
 - **Nested namespaces are fine.** `group/subgroup/project` is handled; the path is what GitLab calls the project's `path_with_namespace`.
 
-A package can also be added without a source at all, by pasting a GitLab URL into **Packages → New package** and putting a token in the package's own token field. The panel labels that field "GitHub token" — it is used for whatever provider the URL names.
+A package can also be added without a source at all, by pasting a GitLab URL into **Packages → New package** and putting a token in the package's own **Access token** field, which is used for whatever provider the URL names.
 
 ## Roles and permissions
 

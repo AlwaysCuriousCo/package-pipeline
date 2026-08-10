@@ -20,7 +20,7 @@ class AddPackage extends Command
         {repository? : The VCS repository URL (https://github.com/owner/repo); prompted for when omitted}
         {--name= : The composer name; guessed from the URL when omitted}
         {--repo= : The Composer repository path to serve it from; the root repository when omitted}
-        {--token= : A GitHub token, for repositories no connected source covers}
+        {--token= : A provider access token, for repositories no connected source covers}
         {--no-webhook : Do not create a repository webhook}
         {--no-sync : Do not queue the first sync}';
 

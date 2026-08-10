@@ -170,7 +170,7 @@ class PackageForm
     public static function token(): TextInput
     {
         return TextInput::make('token')
-            ->label('GitHub token')
+            ->label('Access token')
             ->password()
             ->revealable()
             ->maxLength(255)
@@ -178,8 +178,11 @@ class PackageForm
             // a blank input keeps it, a new value replaces it.
             ->afterStateHydrated(fn (TextInput $component) => $component->state(null))
             ->dehydrated(fn (?string $state): bool => filled($state))
-            ->placeholder(fn (?Package $record): string => $record?->token ? 'Token saved — enter a new one to replace it' : 'ghp_...')
-            ->helperText('Only used for repositories no source covers — a connected source takes precedence over this. Falls back to GITHUB_TOKEN when both are empty.');
+            ->placeholder(fn (?Package $record): string => $record?->token ? 'Token saved — enter a new one to replace it' : 'ghp_… or glpat-…')
+            // Not GitHub-only: the token is handed to whichever provider the
+            // repository URL resolves to. Only the environment fallback is
+            // GitHub's, which is why it is named as the narrower case.
+            ->helperText('A credential for whichever provider hosts the repository. Only used for repositories no source covers — a connected source takes precedence over this. GitHub repositories fall back to GITHUB_TOKEN when both are empty.');
     }
 
     public static function latestVersion(): TextInput

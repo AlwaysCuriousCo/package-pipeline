@@ -17,7 +17,7 @@ class SyncPackages extends Command
         {--source= : Only sync packages connected through this source, by name or account}
         {--queue : Dispatch each sync to the queue instead of running it inline}';
 
-    protected $description = 'Sync package versions from their GitHub repositories';
+    protected $description = 'Sync package versions from their source repositories';
 
     public function handle(PackageSynchronizer $synchronizer): int
     {
