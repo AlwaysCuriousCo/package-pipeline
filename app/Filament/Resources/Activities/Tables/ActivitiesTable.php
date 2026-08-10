@@ -90,12 +90,7 @@ class ActivitiesTable
                     ->multiple(),
                 SelectFilter::make('subject_type')
                     ->label('Record type')
-                    ->options(fn (): array => Activity::query()
-                        ->distinct()
-                        ->whereNotNull('subject_type')
-                        ->pluck('subject_type', 'subject_type')
-                        ->map(fn (string $type): string => class_basename($type))
-                        ->all())
+                    ->options(self::subjectTypes(...))
                     ->multiple(),
                 Filter::make('unattributed')
                     ->label('Not made by a signed-in user')
@@ -104,6 +99,29 @@ class ActivitiesTable
             ->recordActions([
                 ViewAction::make(),
             ]);
+    }
+
+    /**
+     * The record types the log actually holds entries for, named as the panel
+     * names them.
+     *
+     * A `distinct` over a column with no index of its own, on a table two years
+     * deep — and the filter form is rebuilt on every Livewire round trip, so
+     * sorting a column or turning a page paid for it again. What it returns is
+     * the set of audited model classes, which changes when this app gains one
+     * and not otherwise, so an hour of staleness costs a filter option
+     * appearing an hour after the first entry of a brand new type.
+     *
+     * @return array<string, string>
+     */
+    private static function subjectTypes(): array
+    {
+        return cache()->remember('filament:activity-log:subject-types', now()->addHour(), fn (): array => Activity::query()
+            ->distinct()
+            ->whereNotNull('subject_type')
+            ->pluck('subject_type', 'subject_type')
+            ->map(fn (string $type): string => class_basename($type))
+            ->all());
     }
 
     /**

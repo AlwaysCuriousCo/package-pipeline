@@ -18,6 +18,7 @@ use App\Models\Token;
 use App\Models\Upstream;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
@@ -427,6 +428,34 @@ class AuditLogTest extends TestCase
             ->assertCanSeeTableRecords([$entry])
             ->mountAction(TestAction::make('view')->table($entry))
             ->assertActionMounted(TestAction::make('view')->table($entry));
+    }
+
+    /**
+     * The Record type filter's options are a `distinct` over an unindexed
+     * column on a table kept for two years, and Filament rebuilds the filter
+     * form on every round trip — so paging the list used to pay for it again.
+     */
+    public function test_the_record_type_filter_asks_the_log_what_types_it_holds_once(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets']);
+
+        $entry = Activity::query()->where('subject_type', Package::class)->sole();
+
+        $distinct = 0;
+
+        DB::listen(function (QueryExecuted $query) use (&$distinct): void {
+            if (str_contains($query->sql, 'distinct')) {
+                $distinct++;
+            }
+        });
+
+        Livewire::test(ListActivities::class)
+            ->filterTable('subject_type', [Package::class])
+            ->assertCanSeeTableRecords([$entry])
+            ->filterTable('subject_type', [User::class])
+            ->assertCanNotSeeTableRecords([$entry]);
+
+        $this->assertSame(1, $distinct);
     }
 
     public function test_the_audit_log_cannot_be_written_to_through_the_panel(): void
