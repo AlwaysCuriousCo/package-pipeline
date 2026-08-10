@@ -6,6 +6,24 @@ a worker, run the scheduler, seed the permissions, create an admin, point
 that which are easy to get wrong, plus the two things a checklist can't cover —
 what to back up, and what to do when a restore comes back inconsistent.
 
+## `APP_URL` is what the registry publishes
+
+Set it, and set it to the address consumers actually reach. Every `dist` URL in
+every `/p2` document is built from it, so a wrong value produces metadata that
+resolves and archives that do not.
+
+It is deliberately *not* taken from the request's `Host` header. TLS terminates
+at a load balancer, so the app trusts every proxy — which makes `Host` and
+`X-Forwarded-Host` inputs an anonymous caller fully controls. Those headers
+would otherwise reach the ETag that keys the rendered-metadata cache, so a loop
+varying them could fill that cache with entries nobody will ever read, and hand
+a consumer's Composer archive URLs on a host of its choosing.
+
+Moving a live registry to a new address is therefore a change clients cannot
+see in a `Last-Modified` — a URL has nowhere to go in a date. Bump
+`ComposerRepositoryController::REVISION_EPOCH` (and `MirrorService`'s) in the
+same deploy and every client refetches once.
+
 ## Recommended drivers
 
 The defaults are `QUEUE_CONNECTION=database`, `CACHE_STORE=database`,
@@ -27,7 +45,7 @@ For anything beyond a single small deployment:
 | --- | --- | --- |
 | `QUEUE_CONNECTION` | `redis` | Takes the fan-out off the database entirely. This is the single biggest change. |
 | `CACHE_STORE` | `redis` | The cache holds the metadata payloads, the conditional-request ETags for ref listings, and the locks below. All of it is hot, none of it is worth a database round trip. |
-| `SESSION_DRIVER` | `database` is fine | Admin sessions are few and small; there is little to win here. |
+| `SESSION_DRIVER` | `database` is fine | Only the admin panel has sessions — the Composer endpoints run outside the session middleware, so no `composer install` ever writes one. Few and small; there is little to win here. |
 | `DB_CONNECTION` | `mysql` / `pgsql` | Any deployment with more than one app container needs a database they can share anyway. |
 
 Whatever you pick, keep `REDIS_QUEUE_RETRY_AFTER` (or `DB_QUEUE_RETRY_AFTER`)
