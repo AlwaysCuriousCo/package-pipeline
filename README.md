@@ -129,6 +129,8 @@ The permissions themselves are seeded from the panel's own resources, pages and 
 
 It is not scoped because a scoped audit trail is a misleading one: the rows hardest to attribute to a viewer are the deletions, which leave no record to check a policy against, and an investigator reading a silently filtered history would believe it complete. Read the permission as "may read the whole registry's history", and grant it to the same people you would let see the whole registry. The Roles screen says so too.
 
+Nothing in the panel can add, edit or remove an entry — the policy refuses those outright, whatever a role holds. That is the whole of the guarantee: the rows are ordinary rows in `activity_log`, kept for two years and then pruned, with no hash chain or signature over them. Anyone with database or shell access can rewrite them, which on a single-box install is the same person who administers the panel. If you need the log to survive its own administrator, ship it somewhere they cannot reach — a syslog collector or an append-only store — rather than relying on the table.
+
 ### Teams
 
 Row-level access can be granted to a **team** rather than to a person: a team holds package and repository grants, users belong to it, and a user's effective access is their own grants plus their teams'. Onboarding becomes adding somebody to a team instead of repeating the last person's grants.

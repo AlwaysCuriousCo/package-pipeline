@@ -14,9 +14,21 @@ use Illuminate\Foundation\Auth\User as AuthUser;
  *
  * Shield derives the same twelve permissions for every resource, so the Roles
  * screen offers Create/Update/Delete for this one too. They are refused here
- * regardless of who holds them — the only thing that makes an audit trail
- * worth reading is that the people it records cannot edit it, and that has to
- * be a property of the app rather than of how carefully a role was ticked.
+ * regardless of who holds them: an entry the people it records could edit is
+ * an entry nobody could read as evidence, and that has to be a property of the
+ * app rather than of how carefully a role was ticked.
+ *
+ * **What this buys is that the log cannot be altered through the app** — no
+ * more, and it is worth being exact about the difference. There is no hash
+ * chain, no signature and no append-only storage; the rows are ordinary rows,
+ * and App\Models\Activity prunes them on a retention policy. Anyone with
+ * database or shell access rewrites the table freely, and on a self-hosted
+ * single box that is the same person who administers the panel. An HMAC would
+ * not change that — its key would sit in the `.env` beside the database — so
+ * tamper-*evidence*, as opposed to tamper-resistance against the app's own
+ * users, is a deployment decision: ship the entries somewhere the registry's
+ * administrator cannot reach. The README says as much under "Roles and
+ * permissions".
  *
  * Stated as explicit `false` rather than left out: Filament allows an action
  * whose policy method is simply absent, so an absent method here would have

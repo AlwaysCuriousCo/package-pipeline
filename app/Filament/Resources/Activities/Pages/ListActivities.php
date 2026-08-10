@@ -14,7 +14,10 @@ class ListActivities extends ListRecords
 
     /**
      * No header actions: the log is written by the records it audits, and an
-     * entry an admin could add by hand is an entry nobody could trust.
+     * entry an admin could add by hand is one nobody could read as evidence.
+     *
+     * That is a statement about this app, not about the table — see
+     * App\Policies\ActivityPolicy for what it does and does not buy.
      */
     protected function getHeaderActions(): array
     {

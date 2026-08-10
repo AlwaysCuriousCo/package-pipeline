@@ -11,10 +11,16 @@ use Spatie\Activitylog\Models\Activity as BaseActivity;
  * The audit trail, given a retention policy `model:prune` can enforce.
  *
  * The table is written by the LogsActivity trait on the models being audited
- * and only ever read afterwards — nothing updates or deletes a row — so it
- * grows for as long as the registry runs. That is the same mistake the
- * notifications table made before it was given a policy, and on a busier
- * table: a sync that corrects one package's description writes a row.
+ * and only ever read afterwards — nothing in the app updates a row, and the
+ * policy refuses every mutating ability — so it grows for as long as the
+ * registry runs. That is the same mistake the notifications table made before
+ * it was given a policy, and on a busier table: a sync that corrects one
+ * package's description writes a row.
+ *
+ * Pruning is the one deletion, and it is worth naming: retention below is a
+ * ceiling on how far back the log answers questions, and it is enforced by the
+ * app deleting rows. Nothing here makes the table tamper-*evident* — see
+ * App\Policies\ActivityPolicy for the exact claim.
  *
  * @see Notification for the same arrangement over notifications.
  */
