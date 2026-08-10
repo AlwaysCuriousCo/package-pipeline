@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Response;
 use Tests\TestCase;
 
@@ -279,6 +280,68 @@ class MirroringTest extends TestCase
         $this->get('/dist/acme/secret/'.self::REFERENCE.'.zip')->assertNotFound();
 
         $this->postJson('/security-advisories', ['packages' => ['acme/secret']])->assertOk();
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function decoratedNames(): array
+    {
+        return [
+            'trailing newline' => ['acme/private%0A'],
+            'trailing carriage return' => ['acme/private%0D'],
+            'trailing tab' => ['acme/private%09'],
+            'leading space' => ['%20acme/private'],
+            // Cyrillic а, U+0430. Indistinguishable from the published name in
+            // every terminal, and a different string in every comparison.
+            'Cyrillic homoglyph' => ['%D0%B0cme/private'],
+        ];
+    }
+
+    #[DataProvider('decoratedNames')]
+    public function test_a_published_name_cannot_be_decorated_into_a_mirrorable_one(string $requested): void
+    {
+        $this->mirroring();
+        $this->fakeUpstream();
+
+        // Published elsewhere, and its vendor deliberately *not* reserved: the
+        // reservation limb would refuse all of these on its own, and what is
+        // under test is the other limb — that a name this installation
+        // publishes cannot be dressed up into one it does not.
+        //
+        // A route parameter arrives rawurldecoded and `{package}` is `[^/]+`,
+        // so every one of these reaches the mirror as a distinct string. Each
+        // then has to fail the name grammar, because each *would* miss the
+        // published `acme/private` in the comparison that follows it.
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+        $this->makeLocalPackage('acme/private', $internal);
+
+        $this->getJson("/p2/{$requested}.json")->assertNotFound();
+        $this->get("/dist/{$requested}/".self::REFERENCE.'.zip')->assertNotFound();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_an_archive_reference_cannot_carry_a_trailing_newline(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'cdn.upstream.test/*' => Http::response(self::ZIP),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        // The reference becomes a path on the dist disk and a segment of an
+        // outbound URL, and one pattern is where that is decided — the lookup
+        // that follows compares it to what the upstream published and would
+        // refuse this too, but only by accident of the newline being part of
+        // the string it compares.
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'%0A.zip')->assertNotFound();
+
+        $this->assertDatabaseCount('mirrored_archives', 0);
     }
 
     public function test_a_reserved_vendor_is_never_served_from_an_upstream(): void

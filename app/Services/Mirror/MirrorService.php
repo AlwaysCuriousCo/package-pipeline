@@ -66,8 +66,16 @@ class MirrorService
      * makes it the one guard several things rest on: a `vendor` of `..` cannot
      * reach out of the archive prefix, and a name Composer could never require
      * never becomes an outbound request.
+     *
+     * `D` is load-bearing rather than tidy. Without it `$` also matches before
+     * a final newline, and a route parameter arrives rawurldecoded — so
+     * `/p2/acme/private%0A.json` would be a name that passes this pattern,
+     * fails to equal the `acme/private` this installation publishes, and is
+     * therefore fetched from an upstream. `u` makes the same refusal explicit
+     * for a subject that is not valid UTF-8, which preg_match answers `false`
+     * for rather than `0`.
      */
-    private const NAME_PATTERN = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$/';
+    private const NAME_PATTERN = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$/uD';
 
     /**
      * What may stand between `/dist/vendor/name/` and `.zip`.
@@ -75,9 +83,10 @@ class MirrorService
      * A dist reference is a commit sha everywhere it matters, but it is a
      * string the upstream chose, and it becomes both a URL segment and a path
      * on the dist disk. Slashes are excluded, which is what keeps it one of
-     * each.
+     * each, and `D` — as on the name above — is what stops a trailing newline
+     * riding along into either.
      */
-    private const REFERENCE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/';
+    private const REFERENCE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/D';
 
     public function __construct(private readonly ArchiveStore $archives) {}
 
