@@ -2,8 +2,9 @@
 
 namespace Tests\Unit;
 
-use App\Services\Mirror\EgressPolicy;
-use App\Services\Mirror\EgressRefused;
+use App\Support\EgressPolicy;
+use App\Support\EgressProfile;
+use App\Support\EgressRefused;
 use GuzzleHttp\Psr7\Request as GuzzleRequest;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Http\Message\RequestInterface;
@@ -11,12 +12,15 @@ use Tests\Support\FakeHostResolver;
 use Tests\TestCase;
 
 /**
- * Where a mirrored fetch is allowed to go.
+ * Where an outbound request is allowed to go.
  *
  * The addresses in a `dist.url` are written by whoever published the package
  * on the upstream, so on a repository mirroring packagist.org they are written
  * by the general public — and an anonymous `/dist/…` request is the trigger.
  * These are the destinations that has to fail to reach.
+ *
+ * The same rules judge an outgoing webhook endpoint, under escape hatches of
+ * its own; the last two tests here are about that separation.
  */
 class EgressPolicyTest extends TestCase
 {
@@ -167,5 +171,34 @@ class EgressPolicyTest extends TestCase
         $handler(new GuzzleRequest('GET', 'http://nexus.internal:8081/p2/acme/widgets.json'), []);
 
         $this->assertTrue($reached);
+    }
+
+    /**
+     * An operator who let the mirror reach an internal object store has said
+     * nothing about where a webhook may be pointed, and the reverse holds just
+     * as firmly. Two profiles, two sets of escape hatches, neither opening the
+     * other.
+     */
+    public function test_the_two_profiles_do_not_open_each_other(): void
+    {
+        config()->set('registry.mirror.egress.allowed_hosts', ['objects.internal']);
+        config()->set('registry.webhooks.egress.allowed_hosts', ['deploy.internal']);
+
+        $webhooks = EgressPolicy::for(EgressProfile::Webhook);
+
+        // Each profile honours its own list...
+        $this->assertSame([], $webhooks->addressesFor('https://deploy.internal/hooks/deploy'));
+        $this->assertSame([], $this->policy()->addressesFor('https://objects.internal/x.zip'));
+
+        // ...and neither is opened by the other's.
+        try {
+            $webhooks->addressesFor('https://objects.internal/hooks/deploy');
+
+            $this->fail("The webhook profile honoured the mirror's escape hatch.");
+        } catch (EgressRefused) {
+            $this->expectException(EgressRefused::class);
+
+            $this->policy()->addressesFor('https://deploy.internal/x.zip');
+        }
     }
 }

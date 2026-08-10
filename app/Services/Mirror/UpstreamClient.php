@@ -4,6 +4,8 @@ namespace App\Services\Mirror;
 
 use App\Models\Upstream;
 use App\Support\BoundedSink;
+use App\Support\EgressPolicy;
+use App\Support\EgressRefused;
 use App\Support\HttpTimeouts;
 use Closure;
 use Illuminate\Http\Client\PendingRequest;

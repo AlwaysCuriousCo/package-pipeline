@@ -1,27 +1,32 @@
 <?php
 
-namespace App\Services\Mirror;
+namespace App\Support;
 
-use App\Support\HostResolver;
 use Closure;
 use Psr\Http\Message\RequestInterface;
 
 /**
- * Where this app is willing to make an upstream-directed request to.
+ * Where this app is willing to make an outbound request to.
  *
- * The addresses in a mirrored `dist.url` are chosen by whoever published the
- * package on the upstream — which, for an upstream like packagist.org, is the
- * general public. A registry that fetched them unconditionally is a
- * server-side request forgery primitive with an anonymous trigger: `GET
- * /dist/evil/pkg/<ref>.zip` on a public mirroring repository, and this app
- * dials whatever host, port and path the attacker wrote into their package's
- * metadata. The reply is never served back — the sha1 will not match — but a
- * blind GET to `169.254.169.254` or an internal admin port is worth having on
- * its own.
+ * Two features here dial an address this app did not choose. The addresses in a
+ * mirrored `dist.url` are chosen by whoever published the package on the
+ * upstream — which, for an upstream like packagist.org, is the general public.
+ * A registry that fetched them unconditionally is a server-side request forgery
+ * primitive with an anonymous trigger: `GET /dist/evil/pkg/<ref>.zip` on a
+ * public mirroring repository, and this app dials whatever host, port and path
+ * the attacker wrote into their package's metadata. The reply is never served
+ * back — the sha1 will not match — but a blind GET to `169.254.169.254` or an
+ * internal admin port is worth having on its own.
  *
- * So: everything but the operator's own upstreams is default-denied to the
- * public internet, and the rules are applied to *addresses* rather than to
- * names, because a name is only ever a claim about an address.
+ * An outgoing webhook endpoint is the same shape with a louder reply: the URL
+ * is typed by whoever holds the permission to create one, and both the status
+ * and the first two hundred characters of the receiver's body come back into
+ * the panel. That is a port scanner with a readout attached, so it is judged
+ * under the same rules and its own escape hatches — see EgressProfile.
+ *
+ * So: a destination nobody vouched for is default-denied to the public
+ * internet, and the rules are applied to *addresses* rather than to names,
+ * because a name is only ever a claim about an address.
  *
  * Three things make that hold up:
  *
@@ -35,22 +40,28 @@ use Psr\Http\Message\RequestInterface;
  *    that, a DNS record with a one-second TTL answers publicly for the check
  *    and privately for the connection, and the check has proved nothing.
  * 3. **An escape hatch that is a decision.** Some self-hosted upstreams
- *    legitimately name an internal object store. `MIRROR_ALLOW_PRIVATE_DIST_HOSTS`
- *    turns the address rules off, and `MIRROR_PRIVATE_DIST_HOSTS` exempts named
- *    hosts one at a time; both default to refusing.
+ *    legitimately name an internal object store, and some deploy pipelines
+ *    legitimately live on an internal network. Each profile's
+ *    `allow_private` turns the address rules off and its `allowed_hosts`
+ *    exempts named hosts one at a time; every one of them defaults to refusing,
+ *    and they are set in the environment, so opening one is an act of the
+ *    operator who deployed this app rather than of whoever can reach a form.
  *
- * An upstream's own origin is exempt without any of that, because an operator
- * who typed `http://nexus.internal:8081` into the admin panel has already said
- * where this app may reach. That exemption is the caller's to apply — see
- * UpstreamClient, which is also where the same origin decides whether the
- * upstream's credential travels.
+ * What is exempt *without* any of that is the caller's to say, and the two
+ * callers say different things. An upstream's own origin is exempt, because an
+ * operator who typed `http://nexus.internal:8081` into the admin panel has
+ * already said where this app may reach — see UpstreamClient, where the same
+ * origin also decides whether the upstream's credential travels. A webhook
+ * endpoint has no equivalent and vouches for nothing: the URL *is* the
+ * attacker-chosen input there, so DeliverWebhook exempts nothing at all.
  *
  * @see docs/mirroring.md
+ * @see docs/outgoing-webhooks.md
  */
 final class EgressPolicy
 {
     /**
-     * Address ranges an upstream may not send this app to.
+     * Address ranges nothing may send this app to.
      *
      * Everything that is not a public unicast address, stated as CIDRs rather
      * than deferred to `FILTER_FLAG_NO_PRIV_RANGE`: that flag's idea of
@@ -87,7 +98,24 @@ final class EgressPolicy
      */
     private const DENIED_SUFFIXES = ['.internal', '.local', '.localhost', '.home.arpa', '.intranet'];
 
-    public function __construct(private readonly HostResolver $resolver) {}
+    public function __construct(
+        private readonly HostResolver $resolver,
+        private readonly EgressProfile $profile,
+    ) {}
+
+    /**
+     * The policy one feature's destinations are judged under.
+     *
+     * A named constructor rather than a container binding per profile, because
+     * the profile is the interesting half of what this object is and a caller
+     * asking for "an EgressPolicy" has not said enough. The mirror's is bound
+     * in AppServiceProvider, which is the one place a bare EgressPolicy is
+     * injected.
+     */
+    public static function for(EgressProfile $profile): self
+    {
+        return new self(app(HostResolver::class), $profile);
+    }
 
     /**
      * A Guzzle middleware that applies this policy to every request that goes
@@ -137,13 +165,13 @@ final class EgressPolicy
         $parts = parse_url($url);
 
         if (! is_array($parts)) {
-            throw new EgressRefused("Refusing to fetch a URL that cannot be parsed: {$url}");
+            throw new EgressRefused("Refusing to reach a URL that cannot be parsed: {$url}");
         }
 
         $scheme = mb_strtolower((string) ($parts['scheme'] ?? ''));
 
         if (! in_array($scheme, ['http', 'https'], true)) {
-            throw new EgressRefused("Refusing to fetch a URL that is not http or https: {$url}");
+            throw new EgressRefused("Refusing to reach a URL that is not http or https: {$url}");
         }
 
         // Brackets are the URL syntax for a literal IPv6 host, not part of the
@@ -153,14 +181,14 @@ final class EgressPolicy
         $host = mb_strtolower(trim((string) ($parts['host'] ?? ''), '[]'));
 
         if ($host === '') {
-            throw new EgressRefused("Refusing to fetch a URL with no host: {$url}");
+            throw new EgressRefused("Refusing to reach a URL with no host: {$url}");
         }
 
-        if (in_array($host, $this->exemptHosts(), true)) {
+        if (in_array($host, $this->profile->allowedHosts(), true)) {
             return [];
         }
 
-        if ((bool) config('registry.mirror.egress.allow_private')) {
+        if ($this->profile->allowsPrivate()) {
             return [];
         }
 
@@ -171,7 +199,7 @@ final class EgressPolicy
         $addresses = is_string($literal) ? [$literal] : $this->resolver->resolve($host);
 
         if ($addresses === []) {
-            throw new EgressRefused("Refusing to fetch from a host that does not resolve: {$host}");
+            throw new EgressRefused("Refusing to reach a host that does not resolve: {$host}");
         }
 
         foreach ($addresses as $address) {
@@ -195,12 +223,12 @@ final class EgressPolicy
         }
 
         if (! str_contains($host, '.')) {
-            throw new EgressRefused("Refusing to fetch from a host that is not a public name: {$host}");
+            throw new EgressRefused("Refusing to reach a host that is not a public name: {$host}");
         }
 
         foreach (self::DENIED_SUFFIXES as $suffix) {
             if (str_ends_with($host, $suffix)) {
-                throw new EgressRefused("Refusing to fetch from a host that names an internal network: {$host}");
+                throw new EgressRefused("Refusing to reach a host that names an internal network: {$host}");
             }
         }
     }
@@ -213,12 +241,12 @@ final class EgressPolicy
         $packed = $this->packed($address);
 
         if ($packed === null) {
-            throw new EgressRefused("Refusing to fetch from {$host}, which resolves to something that is not an address: {$address}");
+            throw new EgressRefused("Refusing to reach {$host}, which resolves to something that is not an address: {$address}");
         }
 
         foreach (self::DENIED_NETWORKS as $network) {
             if ($this->within($packed, $network)) {
-                throw new EgressRefused("Refusing to fetch from {$host}, which resolves into {$network}: {$address}");
+                throw new EgressRefused("Refusing to reach {$host}, which resolves into {$network}: {$address}");
             }
         }
     }
@@ -303,16 +331,5 @@ final class EgressPolicy
         );
 
         return "{$host}:{$port}:".implode(',', $pinned);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function exemptHosts(): array
-    {
-        /** @var list<string> $hosts */
-        $hosts = config('registry.mirror.egress.allowed_hosts', []);
-
-        return array_map(mb_strtolower(...), $hosts);
     }
 }

@@ -4,6 +4,9 @@ namespace App\Jobs;
 
 use App\Enums\WebhookEvent;
 use App\Models\OutgoingWebhook;
+use App\Support\EgressPolicy;
+use App\Support\EgressProfile;
+use App\Support\EgressRefused;
 use App\Support\HttpTimeouts;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -91,12 +94,40 @@ class DeliverWebhook implements ShouldQueue
             return;
         }
 
+        $egress = EgressPolicy::for(EgressProfile::Webhook);
+
+        try {
+            // Judged before anything is spent reaching it, so an endpoint that
+            // was never deliverable says so in the panel in those words rather
+            // than as a connection error — and so it is not retried twice, since
+            // no amount of waiting makes 10.0.0.1 a public address.
+            $egress->addressesFor($this->webhook->url);
+        } catch (EgressRefused $refusal) {
+            $this->recordRefusal($refusal->getMessage(), retryable: false);
+
+            return;
+        }
+
         $body = $this->body();
 
         try {
             $response = Http::withHeaders($this->headers($body))
                 ->connectTimeout(HttpTimeouts::CONNECT)
                 ->timeout(HttpTimeouts::API)
+                // Stated rather than left to Guzzle's defaults, which are the
+                // same five hops but say nothing about which schemes may be
+                // redirected to. Every hop is a destination the *receiver*
+                // chose, which is why the check above is not the enforcement:
+                // the middleware below sits under the redirect handler and
+                // judges each one on its own.
+                ->withOptions(['allow_redirects' => ['max' => 5, 'protocols' => ['http', 'https']]])
+                // Nothing is vouched for. The mirror exempts an upstream's own
+                // origin because an operator configured that upstream in the
+                // environment this app was deployed into; here the URL is the
+                // input under suspicion, so there is nothing an exemption could
+                // honestly be based on. WEBHOOK_PRIVATE_HOSTS is where an
+                // internal endpoint is allowed, and the policy reads it itself.
+                ->withMiddleware($egress->middleware(fn (string $url): bool => false))
                 ->withBody($body, 'application/json')
                 ->post($this->webhook->url);
         } catch (Throwable $exception) {
@@ -201,8 +232,12 @@ class DeliverWebhook implements ShouldQueue
      * genuine failure (a timeout, exhausted attempts, a row deleted from under
      * a queued delivery) into a fatal inside the worker, and the signature
      * would not have taken the Throwable it was handed either.
+     *
+     * `$retryable` is false for the one failure that is a fact about the
+     * endpoint rather than about its health: a destination this app will not
+     * dial is refused identically on all three attempts.
      */
-    private function recordRefusal(string $reason, ?int $status = null): void
+    private function recordRefusal(string $reason, ?int $status = null, bool $retryable = true): void
     {
         $this->webhook->recordFailure($status, $reason);
 
@@ -219,7 +254,7 @@ class DeliverWebhook implements ShouldQueue
             'reason' => $reason,
         ]);
 
-        if ($this->attempts() < $this->tries) {
+        if ($retryable && $this->attempts() < $this->tries) {
             $this->release($this->backoff()[$this->attempts() - 1] ?? 120);
         }
     }

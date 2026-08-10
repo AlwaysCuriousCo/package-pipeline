@@ -107,9 +107,42 @@ return [
     | addresses, and these two are the way out of that for the installation
     | whose self-hosted upstream genuinely names an internal object store:
     | `allow_private` turns the address rules off wholesale, `allowed_hosts`
-    | names the hosts they do not apply to. See App\Services\Mirror\EgressPolicy.
+    | names the hosts they do not apply to. See App\Support\EgressPolicy.
     |
     */
+
+    /*
+    |--------------------------------------------------------------------------
+    | Outgoing Webhook Destinations
+    |--------------------------------------------------------------------------
+    |
+    | The same guard, applied to where a delivery may be POSTed, and separate
+    | from the mirror's on purpose. An endpoint URL is typed by whoever holds
+    | the permission to create one — which is a panel permission, not shell
+    | access — and both the response status and the first two hundred
+    | characters of the receiver's body come back into the panel. Left
+    | unbounded that is a port scanner with a readout: `http://10.0.0.1:8500/`
+    | and `http://169.254.169.254/latest/meta-data/` are URLs like any other.
+    |
+    | So private, loopback and link-local destinations are refused by default,
+    | at save time and again at every delivery (including each redirect hop).
+    | A pipeline that genuinely lives on an internal network is the reason
+    | these exist: `WEBHOOK_ALLOW_PRIVATE_ENDPOINTS` turns the address rules
+    | off wholesale, `WEBHOOK_PRIVATE_HOSTS` names the hosts they do not apply
+    | to. Both are environment settings rather than fields on the form,
+    | because the decision belongs to whoever deployed this app.
+    |
+    */
+
+    'webhooks' => [
+        'egress' => [
+            'allow_private' => (bool) env('WEBHOOK_ALLOW_PRIVATE_ENDPOINTS', false),
+            'allowed_hosts' => array_values(array_filter(array_map(
+                trim(...),
+                explode(',', (string) env('WEBHOOK_PRIVATE_HOSTS', '')),
+            ))),
+        ],
+    ],
 
     /*
     |--------------------------------------------------------------------------

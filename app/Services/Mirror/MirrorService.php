@@ -11,6 +11,8 @@ use App\Models\Upstream;
 use App\Services\ArchiveStore;
 use App\Support\BoundedSink;
 use App\Support\ComposerName;
+use App\Support\EgressPolicy;
+use App\Support\EgressRefused;
 use App\Support\HttpTimeouts;
 use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;

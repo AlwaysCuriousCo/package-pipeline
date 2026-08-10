@@ -4,6 +4,10 @@ namespace App\Filament\Resources\OutgoingWebhooks\Schemas;
 
 use App\Enums\WebhookEvent;
 use App\Models\OutgoingWebhook;
+use App\Support\EgressPolicy;
+use App\Support\EgressProfile;
+use App\Support\EgressRefused;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\TextInput;
@@ -24,13 +28,7 @@ class OutgoingWebhookForm
                     ->maxLength(255)
                     ->placeholder('Deploy pipeline')
                     ->helperText('A label for this endpoint; only shown in the admin.'),
-                TextInput::make('url')
-                    ->label('Endpoint URL')
-                    ->required()
-                    ->url()
-                    ->maxLength(255)
-                    ->placeholder('https://ci.example.com/hooks/registry')
-                    ->helperText('Deliveries are POSTed here as JSON. A non-2xx response is retried twice, then recorded as a failure.'),
+                self::url(),
                 self::secret(),
                 self::events(),
                 Toggle::make('active')
@@ -38,6 +36,47 @@ class OutgoingWebhookForm
                     ->helperText('Switched off, nothing is delivered and deliveries already queued are dropped. The URL and secret are kept.'),
                 self::lastDelivery(),
             ]);
+    }
+
+    /**
+     * Where deliveries go — and the one field on this form that decides what
+     * this app will connect to.
+     *
+     * Judged against the egress policy at save time as well as at delivery.
+     * The delivery-side check is the enforcement (it sees every redirect hop,
+     * and an endpoint's DNS can change after it is saved); this one exists so
+     * that an operator is told immediately, in the field, rather than by a red
+     * row an hour later when a release fires.
+     *
+     * Which matters more than convenience here: an endpoint's failures record
+     * the receiver's status and the first two hundred characters of its body,
+     * and the panel renders both. Without the guard, this field plus that
+     * readout is a port scanner for the network this app is deployed into,
+     * available to anyone who can create a webhook.
+     */
+    private static function url(): TextInput
+    {
+        return TextInput::make('url')
+            ->label('Endpoint URL')
+            ->required()
+            ->url()
+            ->maxLength(255)
+            // Wrapped in a closure Filament evaluates, as the rules on
+            // PackageForm are: an unwrapped one is taken for something to
+            // inject the schema's own arguments into, not for the rule.
+            ->rules([
+                fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                    try {
+                        EgressPolicy::for(EgressProfile::Webhook)->addressesFor((string) $value);
+                    } catch (EgressRefused $refusal) {
+                        $fail($refusal->getMessage()
+                            .' An endpoint on an internal network has to be named in WEBHOOK_PRIVATE_HOSTS.');
+                    }
+                },
+            ])
+            ->placeholder('https://ci.example.com/hooks/registry')
+            ->helperText('Deliveries are POSTed here as JSON. A non-2xx response is retried twice, then recorded as a failure. '
+                .'Private, loopback and link-local destinations are refused unless the deployment names them in WEBHOOK_PRIVATE_HOSTS.');
     }
 
     /**

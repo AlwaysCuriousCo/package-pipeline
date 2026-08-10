@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services\Mirror;
+namespace App\Support;
 
 use RuntimeException;
 
