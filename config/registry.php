@@ -91,6 +91,14 @@ return [
     | timeout, so one `composer update` spends minutes discovering the same
     | thing once per dependency — with a PHP worker held open for each.
     |
+    | `lock_wait_seconds` is how long a request waits for another process that
+    | is already fetching the same thing. Only the first request for a cold
+    | package or archive fetches it; the rest wait for that one and are served
+    | its answer, which is what keeps a CI fleet starting fifty builds at once
+    | from making fifty identical downloads. A wait that runs out is not an
+    | error — a metadata lookup falls back to whatever is cached, and an
+    | archive is fetched again rather than 404ing a build.
+    |
     | `egress` bounds where a mirrored fetch may go. A `dist.url` is written by
     | whoever published the package upstream, so on a repository mirroring
     | packagist.org it is written by the general public — and a registry that
@@ -149,6 +157,7 @@ return [
         'advisory_ttl_minutes' => (int) env('MIRROR_ADVISORY_TTL_MINUTES', 10),
         'failure_backoff_minutes' => (int) env('MIRROR_FAILURE_BACKOFF_MINUTES', 5),
         'retention_days' => (int) env('MIRROR_RETENTION_DAYS', 30),
+        'lock_wait_seconds' => (int) env('MIRROR_LOCK_WAIT_SECONDS', 10),
         'max_archive_megabytes' => (int) env('MIRROR_MAX_ARCHIVE_MB', 256),
         'max_metadata_kilobytes' => (int) env('MIRROR_MAX_METADATA_KB', 8192),
         'egress' => [

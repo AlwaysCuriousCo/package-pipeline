@@ -16,6 +16,7 @@ use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -824,6 +825,106 @@ class MirroringTest extends TestCase
         // package behind the failure backoff on the strength of one fat
         // document.
         $this->getJson('/p2/symfony/finder.json')->assertOk();
+    }
+
+    public function test_only_one_request_fetches_a_stale_document_while_the_others_are_served_what_is_cached(): void
+    {
+        // What the waiting request does when the wait runs out is the part
+        // worth pinning down; that it waits at all is Cache::lock's business.
+        config()->set('registry.mirror.lock_wait_seconds', 0);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+        ]);
+
+        $upstream = Upstream::query()->sole();
+
+        MirroredPackage::factory()->create([
+            'upstream_id' => $upstream->getKey(),
+            'name' => 'symfony/console',
+            'is_dev' => false,
+            'payload' => json_encode($this->upstreamDocument()),
+            'digest' => 'whatever',
+            'fetched_at' => now()->subDay(),
+            'changed_at' => now()->subDay(),
+            'used_at' => now()->subDay(),
+        ]);
+
+        // Somebody else is already asking the upstream about this exact
+        // document. Fifty CI builds starting at once is the ordinary case, not
+        // an exotic interleaving, and every one of them finding the row stale
+        // is fifty identical requests to one upstream.
+        Cache::lock("mirror:refresh:{$upstream->getKey()}:symfony/console:stable", 60)->get();
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        // Served from the stale copy rather than queued behind the fetch —
+        // the same answer this class gives while an upstream is down, and for
+        // the same reason.
+        Http::assertNothingSent();
+    }
+
+    public function test_a_request_for_an_archive_somebody_else_is_downloading_would_rather_download_it_twice(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        config()->set('registry.mirror.lock_wait_seconds', 0);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'cdn.upstream.test/*' => Http::response(self::ZIP),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        Cache::lock('mirror:archive:symfony/console:'.self::REFERENCE, 300)->get();
+
+        // Waste, and the alternative is worse: the other two options are
+        // 404ing a package a build needs and holding a PHP worker open for as
+        // long as somebody else's transfer takes.
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertOk();
+    }
+
+    public function test_a_cold_cache_does_not_expire_all_at_once(): void
+    {
+        config()->set('registry.mirror.metadata_ttl_minutes', 60);
+
+        $this->mirroring();
+
+        $upstream = Upstream::query()->sole();
+
+        // What a single `composer update` leaves behind: a few hundred rows
+        // fetched inside the same second. Without a spread they lapse in the
+        // same second too, and the next build revalidates the whole dependency
+        // graph in one burst against one upstream.
+        $names = [
+            'symfony/console', 'symfony/finder', 'laravel/framework', 'monolog/monolog',
+            'guzzlehttp/guzzle', 'psr/log', 'nesbot/carbon', 'doctrine/dbal',
+        ];
+
+        $fresh = [];
+
+        foreach ($names as $name) {
+            $mirrored = MirroredPackage::factory()->create([
+                'upstream_id' => $upstream->getKey(),
+                'name' => $name,
+                'is_dev' => false,
+                'payload' => json_encode($this->upstreamDocument($name)),
+                'fetched_at' => now()->subMinutes(57),
+            ]);
+
+            $fresh[$name] = $mirrored->isFresh();
+
+            // Asked twice on purpose: a spread drawn at random would let one
+            // document be fresh when it is looked up and stale when it is
+            // checked again, which is a bug rather than a spread.
+            $this->assertSame($fresh[$name], $mirrored->isFresh());
+        }
+
+        $this->assertContains(true, $fresh);
+        $this->assertContains(false, $fresh);
     }
 
     public function test_advisories_are_passed_through_for_mirrored_packages(): void

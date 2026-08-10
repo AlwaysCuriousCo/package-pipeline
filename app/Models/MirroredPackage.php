@@ -89,7 +89,33 @@ class MirroredPackage extends Model
             ? 'registry.mirror.metadata_ttl_minutes'
             : 'registry.mirror.missing_ttl_minutes');
 
-        return $this->fetched_at->gt(now()->subMinutes($minutes));
+        $seconds = $minutes * 60;
+
+        return $this->fetched_at->gt(now()->subSeconds($seconds - $this->jitter($seconds)));
+    }
+
+    /**
+     * A little off the front of the window, so a whole cache does not lapse at
+     * once.
+     *
+     * A cold `composer update` fills this table with a few hundred rows inside
+     * a second or two, all with the same `fetched_at`. A plain comparison then
+     * expires all of them in the same second an hour later, and the next build
+     * revalidates the entire dependency graph in one burst — against one
+     * upstream, from however many workers are free.
+     *
+     * Cut from the name rather than drawn at random, because a row has to give
+     * the same answer every time it is asked inside one request: a random
+     * offset would let the same document be fresh when it is looked up and
+     * stale when it is checked again, which is a bug rather than a spread.
+     * A tenth of the window is enough to turn a burst into a trickle and far
+     * too little to notice as staleness.
+     */
+    private function jitter(int $seconds): int
+    {
+        $spread = intdiv($seconds, 10);
+
+        return $spread < 1 ? 0 : crc32((string) $this->name.($this->is_dev ? '~dev' : '')) % $spread;
     }
 
     /**

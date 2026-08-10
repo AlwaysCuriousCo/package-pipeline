@@ -224,6 +224,19 @@ exactly the one somebody is waiting on. It cannot be zero: a typo in a
 None of this is per request. A `composer update` of a few hundred dependencies
 against a warm cache makes **no** outbound requests at all.
 
+Nor is it per *requester*. When something is cold, the first request fetches it
+and the rest wait for that one — up to `MIRROR_LOCK_WAIT_SECONDS` (default 10)
+— rather than each making the same call. Fifty CI builds starting together on
+the same commit make one upstream fetch and one archive download between them.
+A wait that runs out is not an error: a metadata lookup falls back to whatever
+is cached, and an archive is fetched again rather than failing a build.
+
+Expiry is spread, too. A cold update fills the cache with hundreds of documents
+inside a second, and a plain TTL would expire all of them in the same second an
+hour later — so each document's window is shortened by up to a tenth, by an
+amount cut from its own name. Deterministic, so a document does not change its
+mind about being fresh between two lookups in one request.
+
 Clients get validators of their own, cut from a digest of the upstream bytes
 rather than from when they were fetched — so revalidating a package the
 upstream has not touched does not tell every client its copy is stale.
@@ -383,6 +396,7 @@ All optional; the defaults are the recommended values.
 | `MIRROR_MISSING_TTL_MINUTES` | `10` | The same for a name the upstream does not have. |
 | `MIRROR_ADVISORY_TTL_MINUTES` | `10` | How long an upstream's advisory answer is reused. |
 | `MIRROR_FAILURE_BACKOFF_MINUTES` | `5` | How long an upstream that has just failed is left alone, serving only what is cached. |
+| `MIRROR_LOCK_WAIT_SECONDS` | `10` | How long a request waits for another process already fetching the same package or archive. |
 | `MIRROR_RETENTION_DAYS` | `30` | How long since last use a cached document or archive survives `mirror:prune`. The knob that bounds disk. |
 | `MIRROR_MAX_ARCHIVE_MB` | `256` | Largest upstream archive that will be cached. |
 | `MIRROR_MAX_METADATA_KB` | `8192` | Largest upstream metadata document that will be cached. |

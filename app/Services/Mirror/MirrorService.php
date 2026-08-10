@@ -10,10 +10,14 @@ use App\Models\ReservedVendor;
 use App\Models\Upstream;
 use App\Services\ArchiveStore;
 use App\Support\BoundedSink;
+use App\Support\HttpTimeouts;
 use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -88,6 +92,19 @@ class MirrorService
      * riding along into either.
      */
     private const REFERENCE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/D';
+
+    /**
+     * How long a held fetch lock survives the process holding it.
+     *
+     * Not a timeout on the work — it is the crash recovery, and so it is sized
+     * past the longest the work can legitimately take: the API budget for a
+     * metadata revalidation, the archive budget for a download. Shorter and a
+     * slow but healthy transfer would have its lock expire underneath it,
+     * which is the stampede this exists to prevent, arriving late.
+     */
+    private const REFRESH_LOCK_SECONDS = HttpTimeouts::API + HttpTimeouts::CONNECT + 30;
+
+    private const ARCHIVE_LOCK_SECONDS = HttpTimeouts::ARCHIVE + HttpTimeouts::CONNECT + 30;
 
     public function __construct(
         private readonly ArchiveStore $archives,
@@ -315,26 +332,76 @@ class MirrorService
 
         $upstreams = $repository->activeUpstreams();
 
+        $stored = $this->storedArchive($upstreams, $name, $reference);
+
+        if ($stored instanceof MirroredArchive) {
+            return $stored;
+        }
+
+        // One fetch of one archive at a time, across the whole installation.
+        // The uncached case is not the rare one — it is a CI fleet starting
+        // fifty builds of the same commit at once, and without this each of
+        // them downloads the same twenty megabytes into its own temporary file
+        // and holds a PHP worker open for as long as it takes. The winner's
+        // bytes serve all of them.
+        $lock = Cache::lock("mirror:archive:{$name}:{$reference}", self::ARCHIVE_LOCK_SECONDS);
+
+        try {
+            return $lock->block(
+                $this->lockWait(),
+                // Re-read inside the lock: whoever held it was fetching this
+                // exact archive, so the ordinary outcome of having waited is
+                // that there is now nothing to fetch.
+                fn (): ?MirroredArchive => $this->storedArchive($upstreams, $name, $reference)
+                    ?? $this->fetchFromUpstreams($upstreams, $name, $reference),
+            );
+        } catch (LockTimeoutException) {
+            // Somebody is still downloading it. Doing the work twice is waste;
+            // answering 404 for a package a build needs is a broken install,
+            // and there is no third option that is not one of those two.
+            return $this->fetchFromUpstreams($upstreams, $name, $reference);
+        }
+    }
+
+    /**
+     * The archive already held for this reference, or null.
+     *
+     * @param  Collection<int, Upstream>  $upstreams
+     */
+    private function storedArchive(Collection $upstreams, string $name, string $reference): ?MirroredArchive
+    {
         $existing = MirroredArchive::query()
             ->whereIn('upstream_id', $upstreams->modelKeys())
             ->where('name', $name)
             ->where('reference', $reference)
             ->first();
 
-        if ($existing instanceof MirroredArchive) {
-            if ($this->archives->disk()->exists((string) $existing->path)) {
-                $existing->markUsed();
-
-                return $existing;
-            }
-
-            // The row outlived its file. Unlike a published version — where
-            // the same situation needs a sync, a provider credential and a
-            // rebuild — a mirror can always repair itself, because the
-            // upstream is still holding the bytes.
-            $existing->delete();
+        if (! $existing instanceof MirroredArchive) {
+            return null;
         }
 
+        if ($this->archives->disk()->exists((string) $existing->path)) {
+            $existing->markUsed();
+
+            return $existing;
+        }
+
+        // The row outlived its file. Unlike a published version — where the
+        // same situation needs a sync, a provider credential and a rebuild — a
+        // mirror can always repair itself, because the upstream is still
+        // holding the bytes.
+        $existing->delete();
+
+        return null;
+    }
+
+    /**
+     * The first upstream that has this reference, fetched and stored.
+     *
+     * @param  Collection<int, Upstream>  $upstreams
+     */
+    private function fetchFromUpstreams(Collection $upstreams, string $name, string $reference): ?MirroredArchive
+    {
         foreach ($upstreams as $upstream) {
             $dist = $this->distFor($upstream, $name, $reference);
 
@@ -485,20 +552,62 @@ class MirrorService
 
     /**
      * The cache row for one package on one upstream, revalidated if stale.
+     *
+     * The revalidation happens once, however many requests arrive to find the
+     * same document stale. Composer resolves a few hundred packages at once
+     * and a CI fleet starts a few dozen builds at once, so "cold document, one
+     * upstream fetch each" is the ordinary case rather than a race — and the
+     * unique index that firstOrCreate leans on further down settles the write
+     * without settling anything about the outbound request.
      */
     private function resolve(Upstream $upstream, string $name, bool $dev): ?MirroredPackage
     {
-        $cached = MirroredPackage::query()
-            ->where('upstream_id', $upstream->getKey())
-            ->where('name', $name)
-            ->where('is_dev', $dev)
-            ->first();
+        $cached = $this->cachedPackage($upstream, $name, $dev);
 
         if ($cached instanceof MirroredPackage && $cached->isFresh()) {
             return $cached;
         }
 
-        return $this->refresh($upstream, $cached, $name, $dev);
+        $lock = Cache::lock("mirror:refresh:{$upstream->getKey()}:{$name}:".($dev ? 'dev' : 'stable'), self::REFRESH_LOCK_SECONDS);
+
+        try {
+            return $lock->block($this->lockWait(), function () use ($upstream, $name, $dev): ?MirroredPackage {
+                // Read again inside the lock, because the process that held it
+                // was fetching this exact document: the ordinary outcome of
+                // having waited is that the answer is already here.
+                $current = $this->cachedPackage($upstream, $name, $dev);
+
+                if ($current instanceof MirroredPackage && $current->isFresh()) {
+                    return $current;
+                }
+
+                return $this->refresh($upstream, $current, $name, $dev);
+            });
+        } catch (LockTimeoutException) {
+            // Whatever is cached, however stale — the same answer this class
+            // gives for an upstream that is down, for the same reason. Waiting
+            // longer would trade a resolved build for a fresher document.
+            return $cached;
+        }
+    }
+
+    private function cachedPackage(Upstream $upstream, string $name, bool $dev): ?MirroredPackage
+    {
+        return MirroredPackage::query()
+            ->where('upstream_id', $upstream->getKey())
+            ->where('name', $name)
+            ->where('is_dev', $dev)
+            ->first();
+    }
+
+    /**
+     * How long a request waits for another process's fetch before giving up on
+     * it — with what it does instead being the difference between the two
+     * places this is used.
+     */
+    private function lockWait(): int
+    {
+        return (int) config('registry.mirror.lock_wait_seconds');
     }
 
     /**
