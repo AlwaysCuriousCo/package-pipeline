@@ -94,7 +94,12 @@ class SbomExport
      * components arrive one per line, which keeps a large export greppable and
      * diffable without a pretty-printer having to hold it all.
      *
-     * @return Generator<int, string>
+     * The generator's return value is how many components it wrote, which
+     * writeTo() reports and which only the loop below can know — counting the
+     * chunks instead would tie the answer to how the punctuation happens to be
+     * split up.
+     *
+     * @return Generator<int, string, mixed, int>
      */
     public function chunks(): Generator
     {
@@ -110,6 +115,7 @@ class SbomExport
             .",\n    \"components\": [\n";
 
         $separator = '';
+        $components = 0;
 
         foreach ($this->versions() as $version) {
             yield $separator.json_encode(
@@ -118,9 +124,12 @@ class SbomExport
             );
 
             $separator = ",\n";
+            $components++;
         }
 
         yield "\n]\n}\n";
+
+        return $components;
     }
 
     /**
@@ -135,16 +144,13 @@ class SbomExport
      */
     public function writeTo($handle): int
     {
-        $written = 0;
+        $chunks = $this->chunks();
 
-        foreach ($this->chunks() as $chunk) {
+        foreach ($chunks as $chunk) {
             fwrite($handle, $chunk);
-
-            // Every chunk but the two wrapping ones is exactly one component.
-            $written++;
         }
 
-        return max($written - 2, 0);
+        return $chunks->getReturn();
     }
 
     /**
