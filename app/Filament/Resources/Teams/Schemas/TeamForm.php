@@ -2,11 +2,15 @@
 
 namespace App\Filament\Resources\Teams\Schemas;
 
+use App\Models\Package;
+use App\Models\Repository;
+use App\Models\User;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Database\Eloquent\Builder;
 
 class TeamForm
 {
@@ -38,13 +42,13 @@ class TeamForm
                     ->schema([
                         Select::make('repositories')
                             ->label('Granted repositories')
-                            ->relationship('repositories', 'name')
+                            ->relationship('repositories', 'name', self::visibleRepositories(...))
                             ->multiple()
                             ->preload()
                             ->helperText('Every package in the chosen repositories. Public repositories are visible to everyone already, team or no team.'),
                         Select::make('packages')
                             ->label('Granted packages')
-                            ->relationship('packages', 'name')
+                            ->relationship('packages', 'name', self::visiblePackages(...))
                             ->multiple()
                             ->searchable()
                             ->preload()
@@ -55,5 +59,46 @@ class TeamForm
                             ->helperText('Individual packages, wherever they are served. Ignored for members whose role can already see everything.'),
                     ]),
             ]);
+    }
+
+    /**
+     * The grants on offer: what the person filling the form in can already see,
+     * and nothing else.
+     *
+     * Managing teams would otherwise be a way to read the registry. An
+     * unscoped, preloaded picker is a list of every private repository and
+     * every package name in the installation, handed to anybody holding
+     * Create:Team — who could then grant themselves all of it. Scoped, the
+     * screen offers what its author could reach anyway and enumerates nothing.
+     *
+     * A grant the author cannot see survives their edit: Filament works out
+     * what to detach from the same scoped query it filled the field from, and
+     * syncs without detaching. So a team may hold more than this screen shows,
+     * which is the right way round — the alternative is a scoped editor
+     * silently revoking what an unscoped one granted.
+     *
+     * @param  Builder<Repository>  $query
+     * @return Builder<Repository>
+     */
+    private static function visibleRepositories(Builder $query): Builder
+    {
+        return $query->visibleToUser(self::actingUser());
+    }
+
+    /**
+     * @param  Builder<Package>  $query
+     * @return Builder<Package>
+     *
+     * @see visibleRepositories() for why both are scoped
+     */
+    private static function visiblePackages(Builder $query): Builder
+    {
+        return $query->visibleToUser(self::actingUser());
+    }
+
+    private static function actingUser(): User
+    {
+        /** @var User */
+        return auth()->user();
     }
 }

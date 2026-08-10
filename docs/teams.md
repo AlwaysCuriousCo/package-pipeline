@@ -26,6 +26,19 @@ That is the whole model. There are no team roles, no owners, and no
 per-team permissions: what a member may *do* is still their own role's
 business, and a team only ever widens what they may *see*.
 
+## Who may manage them
+
+`Create:Team` and `Update:Team` are permissions to hand out like
+`Unscoped:Package`, not like `Update:Package`. Whoever holds them can put
+anything they can see into a team and add themselves to it, so in practice the
+permission reads "may grant themselves what they can already reach".
+
+Which is why the two grant pickers on the Teams screen list only what the person
+filling them in can see. A team may still hold grants beyond that — an unscoped
+administrator's — and those are left alone by a scoped editor's save rather than
+quietly revoked. So the screen is not always the whole of what a team grants;
+the user edit screen's **Effective access** is.
+
 ## Effective access
 
 A user's reach is **their own grants plus their teams'** — a union, never a

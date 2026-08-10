@@ -10,6 +10,7 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Team;
 use App\Models\User;
+use Filament\Forms\Components\Select;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Spatie\Permission\Models\Permission;
@@ -135,6 +136,74 @@ class TeamResourceTest extends TestCase
 
         Livewire::test(EditUser::class, ['record' => $admin->getKey()])
             ->assertSee('Unscoped:Package');
+    }
+
+    /**
+     * The grant pickers are a list of what exists, which is exactly what a
+     * scoped account is not supposed to be able to read. Unscoped and
+     * preloaded, they would hand every private repository and every package
+     * name in the registry to anybody holding Create:Team.
+     */
+    public function test_the_grant_pickers_offer_only_what_their_author_can_see(): void
+    {
+        $role = Role::findOrCreate('team-admin', 'web');
+        $role->givePermissionTo(['ViewAny:Team', 'View:Team', 'Create:Team', 'Update:Team']);
+
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+        $secret = Repository::factory()->create(['path' => 'secret', 'public' => false]);
+
+        $granted = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $internal->id]);
+        $hidden = Package::factory()->create(['name' => 'acme/secret', 'repository_id' => $secret->id]);
+
+        $author = tap(User::factory()->create())->assignRole($role);
+        $author->repositories()->attach($internal);
+
+        $this->actingAs($author);
+
+        $component = Livewire::test(CreateTeam::class);
+
+        $component->assertSchemaComponentExists(
+            'repositories',
+            checkComponentUsing: fn (Select $field): bool => ! array_key_exists($secret->getKey(), $field->getOptions()),
+        );
+
+        $component->assertSchemaComponentExists(
+            'packages',
+            checkComponentUsing: fn (Select $field): bool => array_key_exists($granted->getKey(), $field->getOptions())
+                && ! array_key_exists($hidden->getKey(), $field->getOptions()),
+        );
+    }
+
+    /**
+     * And a grant the author cannot see is not quietly revoked by their edit:
+     * the field never held it, so a save that syncs the field must not detach
+     * what an unscoped administrator granted.
+     */
+    public function test_editing_a_team_leaves_grants_the_editor_cannot_see_alone(): void
+    {
+        $role = Role::findOrCreate('team-admin', 'web');
+        $role->givePermissionTo(['ViewAny:Team', 'View:Team', 'Create:Team', 'Update:Team']);
+
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+        $secret = Repository::factory()->create(['path' => 'secret', 'public' => false]);
+
+        $visible = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $internal->id]);
+        $hidden = Package::factory()->create(['name' => 'acme/secret', 'repository_id' => $secret->id]);
+
+        $team = Team::factory()->create();
+        $team->packages()->attach([$visible->getKey(), $hidden->getKey()]);
+
+        $author = tap(User::factory()->create())->assignRole($role);
+        $author->repositories()->attach($internal);
+
+        $this->actingAs($author);
+
+        Livewire::test(EditTeam::class, ['record' => $team->getKey()])
+            ->fillForm(['packages' => []])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame([$hidden->getKey()], $team->packages()->pluck('packages.id')->all());
     }
 
     public function test_the_resource_is_closed_to_a_role_without_the_permission(): void
