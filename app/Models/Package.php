@@ -81,6 +81,13 @@ class Package extends Model
             $package->repository_id ??= Repository::default()->id;
 
             $package->linkSource();
+
+            // Derived after the source is linked, not before: the parse is
+            // provider-dependent, and the source decides the provider. Written
+            // on every save rather than only when the URL is dirty, so a
+            // package that gains (or loses) a source later has its path
+            // re-derived under the provider that now applies.
+            $package->repository_path = $package->normalizedRepositoryPath();
         });
 
         // A repository hook left behind on GitHub would keep posting to a URL
@@ -330,6 +337,24 @@ class Package extends Model
     }
 
     /**
+     * The stored repository reduced to the one spelling every form of it
+     * agrees on — lowercased "owner/repo", or the full namespace path on
+     * GitLab — and null when the column names no repository at all.
+     *
+     * This is what the `repository_path` column holds, maintained by the
+     * saving hook above; the method exists so the column is never derived
+     * anywhere but here.
+     */
+    public function normalizedRepositoryPath(): ?string
+    {
+        try {
+            return mb_strtolower($this->repositoryPath());
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /**
      * The host and repository path the stored URL names, each null when the
      * URL does not yield one.
      *
@@ -358,12 +383,19 @@ class Package extends Model
     /**
      * Every package published from a given "owner/repo" path.
      *
-     * The column holds whatever URL was typed — a browser URL, an SSH remote,
-     * a bare path — so candidates are narrowed in SQL and then confirmed
-     * against the parsed path, which is the only form the two agree on.
-     * "acme/widgets" must not answer for "acme/widgets-pro".
+     * Answered from the derived `repository_path` column, which holds exactly
+     * the form this is asked in. The `repository` column holds whatever URL
+     * was typed — a browser URL, an SSH remote, a bare path — so this used to
+     * narrow with a leading-wildcard LIKE and confirm each candidate by
+     * re-parsing it in PHP. A leading wildcard cannot use an index, and this
+     * runs for every push, create and delete an installed GitHub App delivers
+     * — for every repository in the installation, most of which publish
+     * nothing here.
      *
-     * The column is unique as typed, not as parsed, so the same repository
+     * "acme/widgets" must still not answer for "acme/widgets-pro", which the
+     * equality does on its own where the LIKE could not.
+     *
+     * The URL column is unique as typed, not as parsed, so the same repository
      * stored two ways is two packages. A caller resolving a delivery has to
      * reach them all — picking one would sync an arbitrary package and
      * silently starve the rest.
@@ -378,17 +410,7 @@ class Package extends Model
             return new Collection;
         }
 
-        return self::query()
-            ->whereLike('repository', "%{$path}%", caseSensitive: false)
-            ->get()
-            ->filter(function (self $package) use ($path): bool {
-                try {
-                    return mb_strtolower($package->repositoryPath()) === $path;
-                } catch (InvalidArgumentException) {
-                    return false;
-                }
-            })
-            ->values();
+        return self::query()->where('repository_path', $path)->get();
     }
 
     /**
