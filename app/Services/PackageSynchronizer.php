@@ -106,7 +106,8 @@ class PackageSynchronizer
      * Give a never-synced package its composer name before any archive is
      * stored, so archive paths carry the real name rather than the placeholder
      * the create form started from. Read from the default branch because no
-     * ref has been imported yet; finalize() keeps the name current afterwards.
+     * ref has been imported yet; after this, a name the repository changes is
+     * reported rather than applied — see nameAfterSync().
      */
     public function resolveComposerName(Package $package): void
     {
@@ -120,20 +121,7 @@ class PackageSynchronizer
             return;
         }
 
-        // The (repository_id, name) unique index would reject the rename with
-        // a bare query error; asked first, the conflict reads as what it is —
-        // one Composer repository cannot serve two packages under one name.
-        $taken = Package::query()
-            ->where('repository_id', $package->repository_id)
-            ->whereKeyNot($package->getKey())
-            ->where('name', $name)
-            ->exists();
-
-        throw_if($taken, new \RuntimeException(
-            "The repository's composer.json is named \"{$name}\", which another package"
-            .' in this Composer repository already publishes. Move one of them to a'
-            .' different repository, or fix the composer.json name.',
-        ));
+        throw_if($this->nameTaken($package, $name), new \RuntimeException($this->nameConflict($name)));
 
         $package->forceFill(['name' => $name])->save();
     }
@@ -256,20 +244,111 @@ class PackageSynchronizer
         // is described by whatever version arrived last.
         $newest = ($latest !== null ? $versions->firstWhere('version', $latest) : $versions->last())->metadata;
 
+        $declared = $newest['name'] ?? null;
+
+        [$name, $refused] = $this->nameAfterSync($package, is_string($declared) ? $declared : null);
+
         $package->forceFill([
-            'name' => $newest['name'] ?? $package->name,
+            'name' => $name,
             'description' => $newest['description'] ?? $package->description,
             'type' => $newest['type'] ?? $package->type,
             'latest_version' => $latest,
             'last_synced_at' => now(),
-            // A partial sync is not a silent one: the versions that failed are
-            // simply still missing, and this is the only place that says so.
-            'sync_error' => $failed > 0
-                ? "{$failed} of {$attempted} version imports failed; the next sync will retry them."
-                : null,
+            'sync_error' => $this->syncError($attempted, $failed, $refused),
         ])->save();
 
         return $this->outcome($known, $versions->pluck('is_dev', 'version')->all());
+    }
+
+    /**
+     * The name to store after a sync, and the reason a rename was refused.
+     *
+     * A package's name is its identity here: it is what a consumer requires,
+     * what every dist URL and archive path is built from, and what a lockfile
+     * pins. So a composer.json that starts declaring a different one is not a
+     * metadata update to be applied like `description` beside it. A tag
+     * pointing at a fork, or one mistaken manifest, would otherwise move this
+     * package's identity onto whatever the newest ref happens to claim — and a
+     * registry silently reassigning who publishes a name is exactly the shape
+     * of a dependency-confusion attack. The upload path already refuses the
+     * same mismatch outright (CreateVersionFromZip::create), and a sync has
+     * less reason to trust its input than an authenticated upload, not more.
+     *
+     * A rename is therefore only adopted before the package has ever been
+     * synced, where it is not a rename at all but the first name this registry
+     * has had for it. resolveComposerName() has usually settled that from the
+     * default branch already, so reaching it here means the default branch
+     * carried no readable composer.json and a ref did.
+     *
+     * Afterwards the stored name stands and the discrepancy is reported.
+     * Upstream packages do genuinely get renamed, but only a human can tell
+     * that from a hijack, and accepting it is then one edit in the panel —
+     * after which the two agree and the notice stops. Refusing also keeps the
+     * rename off the (repository_id, name) unique index, which finalize() used
+     * to walk straight into: colliding with a name another package in the same
+     * Composer repository publishes stored a raw SQL error as `sync_error`.
+     *
+     * @return array{string, ?string}
+     */
+    private function nameAfterSync(Package $package, ?string $declared): array
+    {
+        $current = (string) $package->name;
+
+        if ($declared === null || $declared === '' || $declared === $current) {
+            return [$current, null];
+        }
+
+        if ($package->last_synced_at === null) {
+            throw_if($this->nameTaken($package, $declared), new \RuntimeException($this->nameConflict($declared)));
+
+            return [$declared, null];
+        }
+
+        return [$current, "The repository's composer.json now names \"{$declared}\", but this package"
+            ." publishes as \"{$current}\". The name was left alone: rename the package here to"
+            .' accept it, or fix the composer.json.'];
+    }
+
+    /**
+     * What the sync has to say for itself, or null when it has nothing.
+     *
+     * A partial sync is not a silent one — the versions that failed are simply
+     * still missing — and neither is a rename this registry declined to make.
+     */
+    private function syncError(int $attempted, int $failed, ?string $refusedRename): ?string
+    {
+        $notes = array_filter([
+            $failed > 0
+                ? "{$failed} of {$attempted} version imports failed; the next sync will retry them."
+                : null,
+            $refusedRename,
+        ]);
+
+        return $notes === [] ? null : implode(' ', $notes);
+    }
+
+    /**
+     * Whether another package in the same Composer repository already
+     * publishes the given name.
+     *
+     * The (repository_id, name) unique index would reject the rename with a
+     * bare query error; asked first, the conflict reads as what it is — one
+     * Composer repository cannot serve two packages under one name.
+     */
+    private function nameTaken(Package $package, string $name): bool
+    {
+        return Package::query()
+            ->where('repository_id', $package->repository_id)
+            ->whereKeyNot($package->getKey())
+            ->where('name', $name)
+            ->exists();
+    }
+
+    private function nameConflict(string $name): string
+    {
+        return "The repository's composer.json is named \"{$name}\", which another package"
+            .' in this Composer repository already publishes. Move one of them to a'
+            .' different repository, or fix the composer.json name.';
     }
 
     /**

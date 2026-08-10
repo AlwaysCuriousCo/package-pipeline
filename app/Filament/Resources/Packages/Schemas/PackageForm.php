@@ -134,7 +134,7 @@ class PackageForm
                 modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
             )
             ->placeholder('vendor/package')
-            ->helperText('Overwritten by the composer.json name on sync.');
+            ->helperText('Taken from the composer.json on the first sync. A name the repository changes later is reported, never applied — accept it by editing it here.');
     }
 
     public static function repository(): TextInput

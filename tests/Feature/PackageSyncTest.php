@@ -151,6 +151,102 @@ class PackageSyncTest extends TestCase
         $this->assertSame('acme/widgets-placeholder', $package->name);
     }
 
+    /**
+     * A first sync whose default branch carries no composer.json still learns
+     * the package's real name — from the refs, at finalize. This is the one
+     * case where the name arrives after the imports rather than before them,
+     * and the guard below must not close it.
+     */
+    public function test_a_first_sync_takes_its_name_from_a_ref_when_the_default_branch_has_none(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => fn ($request) => str_contains($request->url(), 'ref=')
+                ? Http::response(['name' => 'acme/widgets', 'type' => 'library'])
+                : Http::response([], 404),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $package->refresh();
+
+        $this->assertSame('acme/widgets', $package->name);
+        $this->assertNull($package->sync_error);
+    }
+
+    /**
+     * A composer.json that starts declaring another name is not a metadata
+     * update: applied silently it would move the package's identity — and
+     * every future dist URL — onto whatever the newest ref claims.
+     */
+    public function test_a_composer_name_changed_upstream_is_reported_rather_than_applied(): void
+    {
+        $name = 'acme/widgets';
+
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => function () use (&$name) {
+                return Http::response(['name' => $name, 'description' => 'Widgets for Acme.', 'type' => 'library']);
+            },
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame('acme/widgets', $package->refresh()->name);
+
+        // A tag pointing at a fork looks exactly like a deliberate rename.
+        $name = 'evil/widgets';
+
+        app(PackageSynchronizer::class)->sync($package, force: true);
+
+        $package->refresh();
+
+        $this->assertSame('acme/widgets', $package->name);
+        $this->assertStringContainsString('evil/widgets', (string) $package->sync_error);
+        $this->assertStringContainsString('left alone', (string) $package->sync_error);
+
+        // Reported, not failed: the versions themselves synced fine.
+        $this->assertNotNull($package->last_synced_at);
+        $this->assertSame('1.1.0', $package->latest_version);
+    }
+
+    /**
+     * The same refusal is what keeps a rename off the (repository_id, name)
+     * unique index, which finalize() used to walk straight into — storing the
+     * resulting SQL error as the package's sync_error.
+     */
+    public function test_a_rename_onto_a_name_the_repository_already_publishes_never_reaches_the_index(): void
+    {
+        $name = 'acme/widgets';
+
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => function () use (&$name) {
+                return Http::response(['name' => $name, 'type' => 'library']);
+            },
+        ]);
+
+        Package::factory()->create([
+            'name' => 'acme/rival',
+            'repository' => 'https://github.com/acme/rival',
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $name = 'acme/rival';
+
+        app(PackageSynchronizer::class)->sync($package, force: true);
+
+        $package->refresh();
+
+        $this->assertSame('acme/widgets', $package->name);
+        $this->assertStringContainsString('acme/rival', (string) $package->sync_error);
+        $this->assertStringNotContainsString('SQLSTATE', (string) $package->sync_error);
+    }
+
     public function test_an_unchanged_version_missing_its_archive_is_backfilled(): void
     {
         $this->fakeGitHub();
