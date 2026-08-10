@@ -116,6 +116,7 @@ Access to the admin panel is controlled by [Filament Shield](https://filamentphp
 Two rules are worth knowing:
 
 - **A user with no role cannot reach `/admin` at all.** An account existing is never by itself a way in, so a leftover user row is harmless.
+- **Accounts are best provisioned by invitation.** **Users → Invite user** creates the account holding a random password nobody ever learns and shows a single-use setup link, which you deliver yourself — nothing is emailed, exactly as `user:add` behaves on the console. The link lives five minutes; **Password link** on any row issues a fresh one.
 - **`super_admin` is an ordinary role that holds every permission**, not a gate that skips the checks. What is ticked in the Roles screen is exactly what the role can do, which keeps access auditable — but it also means the role knows nothing about permissions created after it was granted.
 
 The permissions themselves are seeded from the panel's own resources, pages and widgets, so a fresh database gets them from `php artisan db:seed` (which `composer run setup` already runs).

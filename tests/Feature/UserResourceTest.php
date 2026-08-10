@@ -2,11 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Auth\PasswordSetupLink;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
 use App\Filament\Resources\Users\Pages\ListUsers;
 use App\Models\User;
+use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 use Spatie\Permission\Contracts\Role as RoleContract;
@@ -124,6 +127,72 @@ class UserResourceTest extends TestCase
             ->assertHasNoFormErrors();
 
         $this->assertTrue($this->admin->fresh()->hasRole('super_admin'));
+    }
+
+    public function test_a_user_can_be_invited_without_anyone_choosing_their_password(): void
+    {
+        $role = $this->role('panel_user');
+
+        Livewire::test(ListUsers::class)
+            ->callAction(TestAction::make('invite'), data: [
+                'email' => 'jo@example.com',
+                'roles' => [$role->getKey()],
+            ])
+            ->assertHasNoActionErrors();
+
+        $user = User::query()->where('email', 'jo@example.com')->firstOrFail();
+
+        $this->assertTrue($user->hasRole('panel_user'));
+        // Derived from the address, as `user:add` does.
+        $this->assertSame('Jo', $user->name);
+        // The stored password is a placeholder nobody was shown, so the only
+        // way in is the setup link.
+        $this->assertNotEmpty($user->password);
+        $this->assertTrue(DB::table('password_reset_tokens')->where('email', 'jo@example.com')->exists());
+    }
+
+    public function test_an_invitation_refuses_an_address_already_in_use(): void
+    {
+        User::factory()->create(['email' => 'jo@example.com']);
+
+        Livewire::test(ListUsers::class)
+            ->callAction(TestAction::make('invite'), data: ['email' => 'jo@example.com'])
+            ->assertHasActionErrors(['email' => 'unique']);
+    }
+
+    public function test_a_setup_link_can_be_reissued_for_an_existing_account(): void
+    {
+        $user = User::factory()->create();
+
+        Livewire::test(ListUsers::class)
+            ->callAction(TestAction::make('setupLink')->table($user))
+            ->assertHasNoActionErrors();
+
+        $this->assertTrue(DB::table('password_reset_tokens')->where('email', $user->email)->exists());
+    }
+
+    public function test_a_setup_link_opens_the_reset_page_for_the_invited_account(): void
+    {
+        $user = User::factory()->create();
+
+        // End to end: the sealed payload the notification carries is what
+        // actually gets the account in, so an invitation that produced an
+        // unusable link would be worse than no invitation at all.
+        $this->get(PasswordSetupLink::for($user))
+            ->assertRedirect()
+            ->assertSessionHas(PasswordSetupLink::SESSION_KEY);
+    }
+
+    public function test_inviting_is_hidden_from_a_role_that_cannot_create_users(): void
+    {
+        $user = User::factory()->create();
+        $user->assignRole($this->role('observer'));
+        $user->givePermissionTo('ViewAny:User');
+
+        $this->actingAs($user);
+
+        Livewire::test(ListUsers::class)
+            ->assertActionHidden(TestAction::make('invite'));
     }
 
     public function test_an_admin_cannot_delete_their_own_account(): void
