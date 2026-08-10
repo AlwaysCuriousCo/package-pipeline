@@ -13,6 +13,7 @@ use App\Models\Repository;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -213,5 +214,46 @@ class RepositoryResourceTest extends TestCase
             ->callAction(TestAction::make('delete')->table($repository));
 
         $this->assertDatabaseMissing('repositories', ['id' => $repository->id]);
+    }
+
+    /**
+     * Whether the delete action is available is a question about the same
+     * count the Packages column already shows, so it is answered off the
+     * record rather than asked again — twice — for every row.
+     */
+    public function test_listing_repositories_costs_the_same_however_many_there_are(): void
+    {
+        Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
+
+        // Rendered once before anything is measured: the panel resolves
+        // permissions and settings on first render and caches them, which
+        // would otherwise show up as the difference this is looking for.
+        $this->renderRepositoryList();
+
+        $one = $this->renderRepositoryList();
+
+        foreach (range(1, 4) as $ignored) {
+            Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
+        }
+
+        $this->assertSame($one, $this->renderRepositoryList());
+    }
+
+    /**
+     * How many queries one render of the repository list runs.
+     */
+    private function renderRepositoryList(): int
+    {
+        $queries = 0;
+
+        DB::listen(function () use (&$queries): void {
+            $queries++;
+        });
+
+        Livewire::test(ListRepositories::class)->assertOk();
+
+        // The listener cannot be removed, so each call measures itself against
+        // its own counter and the earlier ones keep counting into theirs.
+        return $queries;
     }
 }

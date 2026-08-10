@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
 use App\Filament\Resources\DeployTokens\Pages\CreateDeployToken;
+use App\Filament\Resources\DeployTokens\Pages\ListDeployTokens;
 use App\Models\DeployToken;
 use App\Models\Package;
 use App\Models\Repository;
@@ -11,6 +12,7 @@ use App\Models\Token;
 use App\Models\User;
 use App\Support\NewToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -176,5 +178,73 @@ class DeployTokenTest extends TestCase
 
         $this->assertNotNull($token);
         $this->assertSame([TokenAbility::RepositoryRead->value], $token->abilities);
+    }
+
+    public function test_the_list_names_what_a_scoped_token_reaches(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $scoped = DeployToken::factory()->create(['name' => 'scoped']);
+        $scoped->repositories()->attach($this->internal);
+        $scoped->packages()->attach([$this->widgets->id, $this->secret->id]);
+
+        DeployToken::factory()->create(['name' => 'unscoped']);
+
+        Livewire::test(ListDeployTokens::class)
+            ->assertSee('1 repository · 2 packages')
+            ->assertSee('Whole registry');
+    }
+
+    /**
+     * The scope badge asks four questions of a token — two counts, and the two
+     * EXISTS behind isScoped() — so asked per record it is the list's cost
+     * multiplied by however many tokens an installation has. Answered in the
+     * list query, adding rows adds no queries.
+     */
+    public function test_listing_deploy_tokens_costs_the_same_however_many_there_are(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $this->scopedToken();
+
+        // Rendered once before anything is measured: the panel resolves
+        // permissions and settings on first render and caches them, which
+        // would otherwise show up as the difference this is looking for.
+        $this->renderDeployTokenList();
+
+        $one = $this->renderDeployTokenList();
+
+        foreach (range(1, 4) as $ignored) {
+            $this->scopedToken();
+        }
+
+        $this->assertSame($one, $this->renderDeployTokenList());
+    }
+
+    private function scopedToken(): DeployToken
+    {
+        $deployToken = DeployToken::factory()->create();
+        $deployToken->repositories()->attach($this->internal);
+        $deployToken->packages()->attach($this->widgets);
+
+        return $deployToken;
+    }
+
+    /**
+     * How many queries one render of the deploy token list runs.
+     */
+    private function renderDeployTokenList(): int
+    {
+        $queries = 0;
+
+        DB::listen(function () use (&$queries): void {
+            $queries++;
+        });
+
+        Livewire::test(ListDeployTokens::class)->assertOk();
+
+        // The listener cannot be removed, so each call measures itself against
+        // its own counter and the earlier ones keep counting into theirs.
+        return $queries;
     }
 }

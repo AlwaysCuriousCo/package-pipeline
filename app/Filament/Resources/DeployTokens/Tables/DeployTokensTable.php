@@ -13,6 +13,7 @@ use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class DeployTokensTable
 {
@@ -20,6 +21,11 @@ class DeployTokensTable
     {
         return $table
             ->defaultSort('name')
+            // The scope column asks the same two questions of every row —
+            // "how many repositories" and "how many packages" — and isScoped()
+            // asks them a third and fourth time. Counted in the list query,
+            // that is four queries per row traded for two subselects.
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->withCount(['repositories', 'packages']))
             ->columns([
                 TextColumn::make('name')
                     ->searchable()
@@ -30,14 +36,14 @@ class DeployTokensTable
                     ->fontFamily(FontFamily::Mono)
                     ->placeholder('Revoked'),
                 TextColumn::make('scope')
-                    ->state(fn (DeployToken $record): string => $record->isScoped()
+                    ->state(fn (DeployToken $record): string => self::scoped($record)
                         ? implode(' · ', array_filter([
-                            ($count = $record->repositories()->count()) ? "{$count} ".str('repository')->plural($count) : null,
-                            ($count = $record->packages()->count()) ? "{$count} ".str('package')->plural($count) : null,
+                            ($count = (int) $record->repositories_count) ? "{$count} ".str('repository')->plural($count) : null,
+                            ($count = (int) $record->packages_count) ? "{$count} ".str('package')->plural($count) : null,
                         ]))
                         : 'Whole registry')
                     ->badge()
-                    ->color(fn (DeployToken $record): string => $record->isScoped() ? 'gray' : 'warning'),
+                    ->color(fn (DeployToken $record): string => self::scoped($record) ? 'gray' : 'warning'),
                 TextColumn::make('token.last_used_at')
                     ->label('Last used')
                     ->since()
@@ -74,5 +80,14 @@ class DeployTokensTable
                     ->modalHeading('Delete deploy token')
                     ->modalDescription('Its access token stops authenticating immediately.'),
             ]);
+    }
+
+    /**
+     * DeployToken::isScoped() read off the counts the list query already
+     * carries, rather than off two fresh EXISTS queries per row.
+     */
+    private static function scoped(DeployToken $record): bool
+    {
+        return (int) $record->repositories_count > 0 || (int) $record->packages_count > 0;
     }
 }

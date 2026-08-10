@@ -83,10 +83,13 @@ class RepositoriesTable
                     // here says why instead of failing with a query error. The
                     // default repository is simply not deletable — the root
                     // mount has to resolve to something.
-                    ->disabled(fn (Repository $record): bool => $record->isDefault() || $record->packages()->exists())
+                    // Asked of `packages_count`, which the Packages column
+                    // above already counts in the list query: two EXISTS per
+                    // row for a number that is sitting on the record.
+                    ->disabled(fn (Repository $record): bool => $record->isDefault() || $record->packages_count > 0)
                     ->tooltip(fn (Repository $record): ?string => match (true) {
                         $record->isDefault() => 'The default repository cannot be deleted.',
-                        $record->packages()->exists() => 'Move or delete its packages first.',
+                        $record->packages_count > 0 => 'Move or delete its packages first.',
                         default => null,
                     }),
             ]);
