@@ -1,6 +1,8 @@
 <?php
 
 use App\Models\Package;
+use App\Notifications\UnserveablePackageNames;
+use App\Services\AdminNotifier;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -39,7 +41,7 @@ return new class extends Migration
                     }
 
                     if ($this->taken($package->repository_id, $normalized, $package->id)) {
-                        $conflicts[] = "#{$package->id} \"{$name}\"";
+                        $conflicts[] = $name;
 
                         // Left named as it was. Renaming it would collide with
                         // the unique index; deleting it would unpublish
@@ -48,14 +50,19 @@ return new class extends Migration
                         // registry should keep is a question with an owner —
                         // this only makes sure that owner can find it.
                         //
+                        // The notice is Package's rather than this file's, and
+                        // PackageSynchronizer writes the same one on every sync
+                        // from the same condition. Written here alone it lasted
+                        // an hour: syncError() answers null for a package that
+                        // synced cleanly and finalize() stores that answer
+                        // unconditionally, so the first scheduled run after the
+                        // deploy erased the only thing pointing at the row.
+                        //
                         // `updated_at` deliberately stands still: nothing about
                         // what this package serves has changed, and the /p2
                         // validators are cut from that column.
                         DB::table('packages')->where('id', $package->id)->update([
-                            'sync_error' => "This package is named \"{$name}\", but another package in the same "
-                                ."Composer repository already publishes \"{$normalized}\". Composer names are "
-                                .'lowercase, so this one cannot be fetched from /p2 or /dist and cannot be '
-                                .'renamed to match without colliding. Delete whichever of the two is obsolete.',
+                            'sync_error' => Package::unserveableNameNotice($name),
                         ]);
 
                         continue;
@@ -104,14 +111,22 @@ return new class extends Migration
     }
 
     /**
-     * Say what could not be normalized, twice over.
+     * Say what could not be normalized, everywhere somebody might be.
      *
-     * The note written to `sync_error` above is what an admin sees in the
-     * panel, but the next successful sync clears that column — so the durable
-     * record is here, and the deploy's own output carries it while somebody is
-     * still watching.
+     * The `sync_error` above is what the panel badges, and it now holds — but
+     * it holds passively, and a package that answers 404 on both of its
+     * endpoints should not wait for the next person to open the packages list.
+     * A deploy running unattended in CI has nobody reading the two lines below
+     * either, which is what the notification is for: the bell, and the Slack
+     * channel an installation that has one is already watching.
      *
-     * @param  list<string>  $conflicts
+     * Rescued, because none of this is worth failing a deploy over. The
+     * notification is queued on every connection but `sync`, and on that one it
+     * is an outbound Slack call inside `php artisan migrate` — a channel that
+     * has gone away must not leave a migration batch half-applied. Whatever
+     * happens here, the log line and the panel notice have already landed.
+     *
+     * @param  list<string>  $conflicts  names as stored
      */
     private function report(array $conflicts): void
     {
@@ -124,6 +139,8 @@ return new class extends Migration
         if (defined('STDERR')) {
             fwrite(STDERR, "\n  WARNING: {$message}\n\n");
         }
+
+        rescue(fn () => app(AdminNotifier::class)->send(new UnserveablePackageNames($conflicts)));
     }
 
     /**

@@ -316,8 +316,10 @@ release looks after itself.
   PostgreSQL; and package names are lowercased, since a mixed-case name could
   never be fetched through `/p2` on a case-sensitive collation. Where two
   packages in one repository differ only in case, the migration renames
-  neither — it leaves a note in each `sync_error` and reports them, rather than
-  choosing which of the two to unpublish.
+  neither — it notifies the admins, leaves a note in each `sync_error`, and
+  logs them, rather than choosing which of the two to unpublish. That note is
+  re-asserted by every later sync, so the packages stay flagged in the panel
+  until somebody deletes one of each pair.
 - **Re-seed the permissions** with `php artisan db:seed --force`. This release
   adds panel resources — activity, teams and outgoing webhooks — and Shield
   denies what has no permission row, including to a super admin.

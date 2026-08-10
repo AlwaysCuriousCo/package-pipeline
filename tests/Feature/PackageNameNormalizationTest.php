@@ -4,12 +4,16 @@ namespace Tests\Feature;
 
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\User;
+use App\Notifications\UnserveablePackageNames;
 use App\Services\Mirror\MirrorService;
 use App\Services\PackageSynchronizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 /**
@@ -259,6 +263,92 @@ class PackageNameNormalizationTest extends TestCase
 
         $this->assertStringContainsString('cannot be fetched', (string) $mixed->fresh()->sync_error);
         $this->assertNull($lowercase->fresh()->sync_error);
+    }
+
+    /**
+     * The note the migration leaves is the only thing pointing at a package
+     * that 404s on both of its endpoints, and it used to last an hour: a clean
+     * sync has nothing to say for itself and says so into the same column.
+     */
+    public function test_a_clean_sync_re_asserts_the_notice_instead_of_clearing_it(): void
+    {
+        $this->fakeGitHub('Acme/Widgets');
+
+        $package = Package::factory()->unreleased()->create([
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/widgets',
+            'token' => 'ghp_secret',
+            'last_synced_at' => now()->subDay(),
+        ]);
+
+        // Straight to the column: this is a row the normalization migration had
+        // to leave alone, and the model would fold the name on the way in.
+        DB::table('packages')->where('id', $package->id)->update(['name' => 'Acme/Widgets']);
+
+        app(PackageSynchronizer::class)->sync($package->refresh());
+
+        $package->refresh();
+
+        $this->assertSame('Acme/Widgets', $package->name);
+        $this->assertStringContainsString('cannot be fetched', (string) $package->sync_error);
+    }
+
+    /**
+     * And the manifest matching that name in every way but its case is not a
+     * second problem to report — accepting the "rename" would collide on the
+     * unique index, which is why the row is stuck in the first place.
+     */
+    public function test_a_legacy_mixed_case_row_is_not_also_told_to_accept_a_rename(): void
+    {
+        $this->fakeGitHub('Acme/Widgets');
+
+        $package = Package::factory()->unreleased()->create([
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/widgets',
+            'token' => 'ghp_secret',
+            'last_synced_at' => now()->subDay(),
+        ]);
+
+        DB::table('packages')->where('id', $package->id)->update(['name' => 'Acme/Widgets']);
+
+        app(PackageSynchronizer::class)->sync($package->refresh());
+
+        $this->assertStringNotContainsString('The name was left alone', (string) $package->fresh()->sync_error);
+    }
+
+    /**
+     * A deploy running unattended in CI has nobody reading the migration's
+     * output, so the finding has to reach the bell and the Slack channel too.
+     */
+    public function test_the_migration_notifies_the_admins_it_could_not_normalize(): void
+    {
+        Notification::fake();
+
+        $admin = User::factory()->create();
+        $admin->assignRole(Role::create(['name' => 'maintainer', 'guard_name' => 'web']));
+
+        Package::factory()->create(['name' => 'acme/widgets']);
+        $mixed = Package::factory()->create(['name' => 'acme/widgets-other']);
+
+        DB::table('packages')->where('id', $mixed->id)->update(['name' => 'Acme/Widgets']);
+
+        $this->migration()->up();
+
+        Notification::assertSentTo(
+            $admin,
+            fn (UnserveablePackageNames $notification): bool => $notification->names === ['Acme/Widgets'],
+        );
+    }
+
+    public function test_the_migration_says_nothing_when_every_name_normalized(): void
+    {
+        Notification::fake();
+
+        Package::factory()->create(['name' => 'acme/widgets']);
+
+        $this->migration()->up();
+
+        Notification::assertNothingSent();
     }
 
     public function test_the_migration_leaves_already_normalized_rows_untouched(): void

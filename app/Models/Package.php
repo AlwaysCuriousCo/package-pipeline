@@ -357,14 +357,57 @@ class Package extends Model
      * an unrelated write (a sync stamping `last_synced_at`, a webhook delivery
      * stamping `webhook_received_at`) collide with the sibling row and fail,
      * turning a dormant data problem into an hourly one. Left alone, such a row
-     * is exactly as broken as it was, and the migration that accompanies this
-     * flags it for a human.
+     * is exactly as broken as it was, and hasUnserveableName() below is what
+     * keeps a human looking at it.
      */
     public function normalizeName(): void
     {
         if ($this->isDirty('name')) {
             $this->name = mb_strtolower((string) $this->name);
         }
+    }
+
+    /**
+     * Whether this package's own name is one Composer will never ask for.
+     *
+     * True only for a row the normalization above could not reach: the
+     * migration that folded every stored name to lowercase leaves behind
+     * exactly those whose lowercase spelling another package in the same
+     * Composer repository already publishes, because renaming one would collide
+     * on the unique index and deleting either would unpublish somebody's
+     * versions. Such a row goes on looking healthy in the panel while `/p2` and
+     * `/dist` answer 404 for it, and it stays that way until a person picks
+     * which of the pair to keep.
+     *
+     * A property of the row rather than of any sync, which is the point of
+     * asking it here: PackageSynchronizer re-asserts the notice on every run
+     * off this, so nothing clears the flag except fixing the name.
+     *
+     * @see PackageSynchronizer::syncError()
+     */
+    public function hasUnserveableName(): bool
+    {
+        return $this->name !== mb_strtolower((string) $this->name);
+    }
+
+    /**
+     * What to tell an admin about such a name.
+     *
+     * Shared with the migration that first finds these, so the panel shows one
+     * explanation of the row rather than the migration's until the next sync and
+     * a different one after it. Deliberately does not assert the collision it
+     * almost certainly is: a plain rename is the fix whenever there is no
+     * sibling, and being told to go looking for one that is not there is worse
+     * than being told to try.
+     */
+    public static function unserveableNameNotice(string $name): string
+    {
+        $normalized = mb_strtolower($name);
+
+        return "This package is named \"{$name}\", but Composer only ever asks for \"{$normalized}\" — so it "
+            .'cannot be fetched from /p2 or /dist. Rename it here to fix that, unless another package in the '
+            .'same Composer repository already publishes the lowercase name, in which case delete whichever '
+            .'of the two is obsolete.';
     }
 
     /**

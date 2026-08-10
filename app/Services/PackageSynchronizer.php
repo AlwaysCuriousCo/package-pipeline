@@ -321,7 +321,7 @@ class PackageSynchronizer
         // publishes, so a change to any of them is a change clients must see.
         $bookkeeping = [
             'last_synced_at' => now(),
-            'sync_error' => $this->syncError($attempted, $failed, $refused),
+            'sync_error' => $this->syncError($package, $attempted, $failed, $refused),
         ];
 
         $package->isClean(self::PUBLISHED_COLUMNS)
@@ -365,13 +365,19 @@ class PackageSynchronizer
     {
         $current = (string) $package->name;
 
-        // Lowercased before anything is compared or refused, so a manifest that
-        // spells the stored name in another case is the same name rather than a
-        // rename this registry declines — which would otherwise re-report the
-        // same non-difference in `sync_error` on every hourly sync forever.
+        // Both sides lowercased before anything is compared or refused, so a
+        // manifest that spells the stored name in another case is the same name
+        // rather than a rename this registry declines — which would otherwise
+        // re-report the same non-difference in `sync_error` on every hourly sync
+        // forever. The stored side needs it too: a registry migrated from before
+        // names were normalized can still hold a mixed-case one, and that row's
+        // manifest matches it in every way except the case nothing here cares
+        // about. What is wrong with such a package is that it is unserveable,
+        // which syncError() says plainly; telling its owner to accept a rename
+        // that would collide on the unique index is not a second problem.
         $declared = $declared === null ? null : mb_strtolower($declared);
 
-        if ($declared === null || $declared === '' || $declared === $current) {
+        if ($declared === null || $declared === '' || $declared === mb_strtolower($current)) {
             return [$current, null];
         }
 
@@ -391,10 +397,21 @@ class PackageSynchronizer
      *
      * A partial sync is not a silent one — the versions that failed are simply
      * still missing — and neither is a rename this registry declined to make.
+     *
+     * The unserveable name is the odd one out: it is not something this run did
+     * or found, it is a standing fact about the row, and it is here precisely
+     * because this column is written unconditionally. The migration that
+     * discovers such a package writes the same notice, and a clean sync would
+     * otherwise erase it within the hour — leaving a package that answers 404
+     * on both of its endpoints with nothing anywhere to say so. Re-asserted
+     * instead, it holds until somebody fixes the name, and every reader of
+     * `sync_error` — the red timestamp, the "Sync failing" filter, the
+     * navigation badge — points at it for free.
      */
-    private function syncError(int $attempted, int $failed, ?string $refusedRename): ?string
+    private function syncError(Package $package, int $attempted, int $failed, ?string $refusedRename): ?string
     {
         $notes = array_filter([
+            $package->hasUnserveableName() ? Package::unserveableNameNotice((string) $package->name) : null,
             $failed > 0
                 ? "{$failed} of {$attempted} version imports failed; the next sync will retry them."
                 : null,
