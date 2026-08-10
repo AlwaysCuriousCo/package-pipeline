@@ -155,10 +155,11 @@ class MirrorService
         // a trade worth making on the strength of an invariant maintained in
         // another file.
         //
-        // Not index-assisted, deliberately. The index on `name` cannot serve a
-        // case-insensitive comparison, and a scan of the packages this
-        // registry publishes — a table measured in hundreds — is a great deal
-        // cheaper than the hole.
+        // Index-assisted without giving any of that up: there is an index over
+        // `lower(name)` itself, so the comparison stays exactly what it was and
+        // stops being a scan. It has to, because this runs on the metadata
+        // request *and* the dist request for every mirrored dependency — a cold
+        // install of three hundred packages is six hundred of these.
         $vendorNames = array_map(fn (string $name): string => mb_strtolower($name), $candidates);
 
         $published = Package::query()

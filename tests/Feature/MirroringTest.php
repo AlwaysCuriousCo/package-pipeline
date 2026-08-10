@@ -10,7 +10,9 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
 use App\Models\Upstream;
+use App\Services\Mirror\MirrorService;
 use Composer\MetadataMinifier\MetadataMinifier;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
@@ -280,6 +282,38 @@ class MirroringTest extends TestCase
         $this->get('/dist/acme/secret/'.self::REFERENCE.'.zip')->assertNotFound();
 
         $this->postJson('/security-advisories', ['packages' => ['acme/secret']])->assertOk();
+    }
+
+    public function test_the_published_name_guard_is_answered_from_an_index(): void
+    {
+        if (DB::connection()->getDriverName() !== 'sqlite') {
+            $this->markTestSkipped('The plan is read in the engine the suite runs on.');
+        }
+
+        $repository = $this->mirroring();
+
+        $queries = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$queries): void {
+            $queries[] = $query;
+        });
+
+        app(MirrorService::class)->mirrorable($repository, ['symfony/console', 'symfony/finder']);
+
+        $guard = collect($queries)->first(fn (QueryExecuted $query): bool => str_contains($query->sql, 'lower(name)'));
+
+        $this->assertInstanceOf(QueryExecuted::class, $guard);
+
+        $plan = collect(DB::select('explain query plan '.$guard->sql, $guard->bindings))
+            ->map(fn (object $row): string => (string) $row->detail)
+            ->implode(' ');
+
+        // The comparison is case-insensitive on purpose and is never going to
+        // stop being; what must not come back is its cost. This runs twice per
+        // mirrored dependency, so a scan here is linear in the size of the
+        // registry on the hottest path the app has.
+        $this->assertStringContainsString('packages_lower_name_index', $plan);
+        $this->assertStringNotContainsString('SCAN', $plan);
     }
 
     /**
