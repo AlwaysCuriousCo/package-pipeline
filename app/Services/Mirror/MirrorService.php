@@ -88,7 +88,15 @@ class MirrorService
      */
     private const REFERENCE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/D';
 
-    public function __construct(private readonly ArchiveStore $archives) {}
+    public function __construct(
+        private readonly ArchiveStore $archives,
+        private readonly EgressPolicy $egress,
+    ) {}
+
+    private function client(Upstream $upstream): UpstreamClient
+    {
+        return new UpstreamClient($upstream, $this->egress);
+    }
 
     /**
      * Whether this repository may answer for this name out of an upstream.
@@ -422,7 +430,7 @@ class MirrorService
         }
 
         try {
-            $response = (new UpstreamClient($upstream))->advisories($ask);
+            $response = $this->client($upstream)->advisories($ask);
         } catch (Throwable $exception) {
             $this->markUnreachable($upstream, $exception->getMessage());
 
@@ -513,7 +521,7 @@ class MirrorService
         $revalidating = $cached instanceof MirroredPackage && $cached->found();
 
         try {
-            $response = (new UpstreamClient($upstream))->metadata(
+            $response = $this->client($upstream)->metadata(
                 $dev ? "{$name}~dev" : $name,
                 $revalidating ? $cached->upstream_etag : null,
                 $revalidating ? $cached->upstream_last_modified : null,
@@ -799,10 +807,16 @@ class MirrorService
      * The upstream's own dist descriptor for one reference, read out of
      * metadata this registry has already cached.
      *
-     * This is what bounds the archive fetcher: a consumer can only ever make
-     * this app download a URL that an upstream published in a document we
-     * hold, for a reference that document named. There is no path from a
-     * request to an arbitrary outbound URL.
+     * This is what bounds the archive fetcher on the consumer's side: a
+     * consumer can only ever make this app download a URL that an upstream
+     * published in a document we hold, for a reference that document named.
+     *
+     * That is a bound on the *request*, not on the address, and the difference
+     * is the whole of why EgressPolicy exists. On a repository mirroring
+     * packagist.org the party who wrote that URL into the document is whoever
+     * published the package — which is to say the general public — so "an
+     * address an upstream published" and "an address worth reaching" are two
+     * different sets, and only one of them is checked here.
      *
      * @return array{url: string, shasum: string}|null
      */
@@ -859,7 +873,23 @@ class MirrorService
         // packagist.org is answering, and marking the upstream unreachable for
         // it would let any anonymous request for one broken reference switch
         // mirroring off for everybody for minutes at a time.
-        if (! preg_match('#^https?://#i', $dist['url'])) {
+        $client = $this->client($upstream);
+
+        try {
+            // Which is also why the scheme, the host and the addresses it
+            // resolves to are somebody else's choice, and are checked before
+            // this app spends anything at all on them. The same policy applies
+            // to every redirect the download then follows; this is only what
+            // makes the first refusal legible in the log.
+            $client->assertReachable($dist['url']);
+        } catch (EgressRefused $refusal) {
+            Log::warning('Refusing to fetch an upstream archive from a destination this registry may not reach.', [
+                'upstream' => $upstream->url,
+                'package' => $name,
+                'reference' => $reference,
+                'reason' => $refusal->getMessage(),
+            ]);
+
             return null;
         }
 
@@ -870,7 +900,7 @@ class MirrorService
         }
 
         try {
-            $response = (new UpstreamClient($upstream))->download($dist['url'], $temporary);
+            $response = $client->download($dist['url'], $temporary);
 
             if (! $response->successful()) {
                 Log::warning('Could not download an upstream archive.', [

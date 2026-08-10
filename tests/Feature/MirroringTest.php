@@ -15,6 +15,7 @@ use Composer\MetadataMinifier\MetadataMinifier;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -45,14 +46,14 @@ class MirroringTest extends TestCase
     /**
      * The default repository, mirroring one upstream.
      */
-    private function mirroring(): Repository
+    private function mirroring(string $url = self::UPSTREAM): Repository
     {
         $repository = Repository::default();
 
         Upstream::factory()->create([
             'repository_id' => $repository->getKey(),
             'name' => 'packagist.org',
-            'url' => self::UPSTREAM,
+            'url' => $url,
         ]);
 
         return $repository->refresh();
@@ -80,7 +81,7 @@ class MirroringTest extends TestCase
      *
      * @return array<string, mixed>
      */
-    private function upstreamDocument(string $name = 'symfony/console', ?string $shasum = null): array
+    private function upstreamDocument(string $name = 'symfony/console', ?string $shasum = null, ?string $url = null): array
     {
         return [
             'minified' => 'composer/2.0',
@@ -95,7 +96,7 @@ class MirroringTest extends TestCase
                         'type' => 'zip',
                         // Pointedly not this registry: rewriting it is the
                         // whole of what makes the archive cacheable here.
-                        'url' => 'https://cdn.upstream.test/zipball/'.self::REFERENCE,
+                        'url' => $url ?? 'https://cdn.upstream.test/zipball/'.self::REFERENCE,
                         'reference' => self::REFERENCE,
                         'shasum' => $shasum ?? sha1(self::ZIP),
                     ],
@@ -637,6 +638,144 @@ class MirroringTest extends TestCase
         // Otherwise one anonymous request for a broken reference switches
         // mirroring off for everyone for the length of the backoff.
         $this->getJson('/p2/symfony/finder.json')->assertOk();
+    }
+
+    public function test_a_dist_url_pointing_off_the_public_internet_is_never_fetched(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            // The URL an upstream publishes for a package is written by
+            // whoever published the package. On a repository mirroring
+            // packagist.org that is the general public, and the trigger is one
+            // anonymous GET — so without a policy on where this app may go,
+            // `/dist/…` is a server-side request forgery with a stranger
+            // holding the pen. The reply never comes back (the sha1 sees to
+            // that), which makes it blind, not harmless.
+            'upstream.test/p2/evil/pkg.json' => Http::response(
+                $this->upstreamDocument('evil/pkg', url: 'http://169.254.169.254/latest/meta-data/iam/'),
+            ),
+            '169.254.169.254/*' => Http::response('temporary credentials, in every cloud there is'),
+        ]);
+
+        $this->getJson('/p2/evil/pkg.json')->assertOk();
+
+        $this->get('/dist/evil/pkg/'.self::REFERENCE.'.zip')->assertNotFound();
+
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '169.254.169.254'));
+        $this->assertDatabaseCount('mirrored_archives', 0);
+    }
+
+    public function test_a_dist_host_that_resolves_to_a_private_address_is_never_fetched(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'cdn.upstream.test/*' => Http::response(self::ZIP),
+        ]);
+
+        // A public name is not a public address, and the name is the half an
+        // attacker controls for free.
+        $this->resolver()->answer('cdn.upstream.test', '127.0.0.1');
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        $sent = count(Http::recorded());
+
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertNotFound();
+
+        $this->assertCount($sent, Http::recorded());
+    }
+
+    public function test_a_redirect_into_a_private_address_is_refused_at_the_hop_that_makes_it(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            // The first hop is an honest CDN on a public address, and every
+            // check that only ever looks at the URL it was handed passes it.
+            'cdn.upstream.test/*' => Http::response('', 302, ['Location' => 'http://10.0.0.1:9200/_cluster/health']),
+            '10.0.0.1:9200/*' => Http::response('should never be reached'),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertNotFound();
+
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '10.0.0.1'));
+        $this->assertDatabaseCount('mirrored_archives', 0);
+    }
+
+    public function test_an_upstream_may_serve_its_archives_from_its_own_internal_origin(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        // The ordinary self-hosted shape: an operator typed this into the
+        // admin panel, which is them saying this app may reach it. Nothing
+        // about it needs configuring twice, and the same origin comparison
+        // that lets the credential travel is the one that says so.
+        $this->mirroring('http://nexus.internal:8081');
+
+        Http::fake([
+            'nexus.internal:8081/packages.json' => Http::response(['metadata-url' => '/p2/%package%.json']),
+            'nexus.internal:8081/p2/symfony/console.json' => Http::response($this->upstreamDocument(
+                url: 'http://nexus.internal:8081/repository/zipball/'.self::REFERENCE,
+            )),
+            'nexus.internal:8081/repository/*' => Http::response(self::ZIP),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertOk();
+
+        $this->assertDatabaseCount('mirrored_archives', 1);
+    }
+
+    public function test_an_operator_can_name_the_internal_object_store_their_upstream_uses(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        // A separate host from the upstream itself — an object store the
+        // upstream signs URLs for — which no comparison against the upstream's
+        // own origin can vouch for. This is what the escape hatch is for, and
+        // it is a host at a time rather than a blanket.
+        config()->set('registry.mirror.egress.allowed_hosts', ['objects.internal']);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument(
+                url: 'http://objects.internal/zipball/'.self::REFERENCE,
+            )),
+            'objects.internal/*' => Http::response(self::ZIP),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertOk();
+
+        $this->assertDatabaseCount('mirrored_archives', 1);
+    }
+
+    public function test_a_metadata_url_template_cannot_point_the_registry_anywhere_it_likes(): void
+    {
+        $this->mirroring();
+
+        Http::fake([
+            // A repository's root document states where its metadata lives,
+            // and it is allowed to state an absolute URL — packagist.org's own
+            // advisory endpoint is one. That makes the template a second place
+            // an upstream chooses a destination, and it is held to the same
+            // rule as the first.
+            'upstream.test/packages.json' => Http::response(['metadata-url' => 'http://127.0.0.1:6379/p2/%package%.json']),
+            '127.0.0.1:6379/*' => Http::response('should never be reached'),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertNotFound();
+
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '127.0.0.1'));
     }
 
     public function test_advisories_are_passed_through_for_mirrored_packages(): void

@@ -21,7 +21,28 @@ use Illuminate\Support\Str;
  */
 final class UpstreamClient
 {
-    public function __construct(private readonly Upstream $upstream) {}
+    public function __construct(
+        private readonly Upstream $upstream,
+        private readonly EgressPolicy $egress,
+    ) {}
+
+    /**
+     * Refuse a destination before anything is spent reaching it.
+     *
+     * The middleware below applies the same policy to every request that
+     * leaves this class, so this is not the enforcement — it is what lets a
+     * caller log *why* an archive was refused instead of logging that a
+     * download failed, and what keeps a temporary file from being created for
+     * a fetch that was never going to happen.
+     *
+     * @throws EgressRefused
+     */
+    public function assertReachable(string $url): void
+    {
+        if (! $this->isUpstreamHost($url)) {
+            $this->egress->addressesFor($url);
+        }
+    }
 
     /**
      * Where this upstream serves package metadata and advisories, discovered
@@ -110,9 +131,10 @@ final class UpstreamClient
      * Stream an upstream archive to a local file.
      *
      * The URL is never taken from the client's request — it comes from a
-     * metadata document this registry has already fetched and cached, so the
-     * set of addresses a consumer can make this app reach is exactly the set
-     * the upstream published.
+     * metadata document this registry has already fetched and cached. That
+     * bounds the set of addresses a consumer can reach to the set the upstream
+     * published, which on a public upstream is a set the public writes; the
+     * egress policy is what bounds it to addresses worth reaching.
      */
     public function download(string $url, string $destination): Response
     {
@@ -192,7 +214,16 @@ final class UpstreamClient
      */
     private function request(string $url): PendingRequest
     {
-        $request = Http::timeout(HttpTimeouts::API)->connectTimeout(HttpTimeouts::CONNECT);
+        $request = Http::timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
+            // Stated rather than left to Guzzle's defaults, which are the same
+            // five hops but say nothing about which schemes may be redirected
+            // to. Every one of those hops is a destination of the upstream's
+            // choosing, which is why the egress policy is a middleware and not
+            // a check on the URL this method was handed: it is re-applied
+            // below the redirect handler, once per hop.
+            ->withOptions(['allow_redirects' => ['max' => 5, 'protocols' => ['http', 'https']]])
+            ->withMiddleware($this->egress->middleware($this->isUpstreamHost(...)));
 
         if (blank($this->upstream->token) || ! $this->isUpstreamHost($url)) {
             return $request;
@@ -211,6 +242,15 @@ final class UpstreamClient
      * All three, because none of them alone is the same origin: a token sent
      * to the http:// spelling of an https:// upstream is a token sent in
      * clear, and a different port is a different service.
+     *
+     * This one predicate answers both questions this class asks about a
+     * destination, and they are the same question: whether the operator chose
+     * it. If they did, their credential may travel to it, and the egress
+     * policy has nothing to add — an operator who configured an upstream at
+     * `http://nexus.internal:8081` has already said this app may reach that
+     * address, and it is the ordinary shape of a self-hosted upstream. If they
+     * did not, the destination was chosen by the upstream — or by whoever
+     * published a package on it — and neither is true of it.
      */
     private function isUpstreamHost(string $url): bool
     {

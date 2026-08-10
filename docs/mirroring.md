@@ -142,6 +142,48 @@ the upstream's URL and is fetched by Composer directly. This registry will not
 advertise a dist URL it cannot stand behind — and if the bytes cannot be
 verified, it would be vouching for whatever arrived.
 
+## Where a mirrored fetch may go
+
+Mirroring is the only feature that makes this app fetch a URL somebody else
+wrote. A `dist.url` is chosen by whoever published the package on the upstream
+— on a repository mirroring packagist.org, that is the general public — and an
+anonymous `GET /dist/…` is what triggers the fetch. Left unbounded, that is a
+server-side request forgery primitive with a stranger holding the pen.
+
+So every destination that is **not the upstream's own origin** is held to
+public addresses:
+
+- The host is resolved, and every address it answers with must be public
+  unicast. Loopback, RFC 1918, link-local (`169.254.169.254` and every cloud's
+  instance metadata service with it), carrier-grade NAT, multicast and the
+  reserved ranges are all refused — as are `.internal`, `.local`, `.localhost`,
+  `.home.arpa`, `.intranet` and any single-label host, whatever they resolve to.
+- **Every redirect hop is judged the same way.** An honest CDN answering
+  `302 http://10.0.0.1:9200/` is the same request with one more step in it.
+- The addresses that passed are **pinned onto the connection**, so a name that
+  answers publicly for the check and privately a millisecond later — DNS
+  rebinding — connects to the address that was checked.
+- Only `http` and `https`, and at most five redirects.
+
+An **upstream's own origin is exempt**, because an operator who typed
+`http://nexus.internal:8081` into the admin panel has already said this app may
+reach it. That covers the ordinary self-hosted case end to end: a Nexus or
+Artifactory that serves its own archives needs no configuration here at all.
+
+What is left is the upstream that signs URLs for a *separate* internal object
+store. Name it:
+
+```dotenv
+MIRROR_PRIVATE_DIST_HOSTS=objects.internal,minio.internal
+```
+
+`MIRROR_ALLOW_PRIVATE_DIST_HOSTS=true` turns the address rules off altogether.
+Prefer the list: it is the same escape hatch scoped to the hosts you meant.
+
+A refused destination is logged and answered `404`, exactly like an archive
+that failed its checksum — from the consumer's side there is no archive this
+registry is prepared to stand behind, and why is the operator's business.
+
 ## Security advisories
 
 `composer audit` — and the audit that runs inside every `composer update` since
@@ -330,6 +372,8 @@ All optional; the defaults are the recommended values.
 | `MIRROR_RETENTION_DAYS` | `30` | How long since last use a cached document or archive survives `mirror:prune`. The knob that bounds disk. |
 | `MIRROR_MAX_ARCHIVE_MB` | `256` | Largest upstream archive that will be cached. |
 | `MIRROR_MAX_METADATA_KB` | `8192` | Largest upstream metadata document that will be cached. |
+| `MIRROR_PRIVATE_DIST_HOSTS` | *(empty)* | Hosts the [egress rules](#where-a-mirrored-fetch-may-go) do not apply to, comma separated. For the upstream that signs URLs for an internal object store. |
+| `MIRROR_ALLOW_PRIVATE_DIST_HOSTS` | `false` | Turns those rules off for every host. Prefer the list above. |
 
 ## Further reading
 

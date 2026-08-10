@@ -2,8 +2,10 @@
 
 namespace Tests;
 
+use App\Support\HostResolver;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\Http;
+use Tests\Support\FakeHostResolver;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -26,5 +28,22 @@ abstract class TestCase extends BaseTestCase
         parent::setUp();
 
         Http::preventStrayRequests();
+
+        // The mirror resolves every host it is about to fetch from before it
+        // fetches, so a suite whose upstreams are `*.test` needs an answer for
+        // them. Reached through the container, so a test with an opinion about
+        // what a host resolves to states it on this instance.
+        $this->app->instance(HostResolver::class, new FakeHostResolver);
+    }
+
+    /**
+     * The resolver the app under test is using, to teach it a host.
+     */
+    protected function resolver(): FakeHostResolver
+    {
+        /** @var FakeHostResolver $resolver */
+        $resolver = app(HostResolver::class);
+
+        return $resolver;
     }
 }

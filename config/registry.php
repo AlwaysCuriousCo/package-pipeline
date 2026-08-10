@@ -91,6 +91,16 @@ return [
     | timeout, so one `composer update` spends minutes discovering the same
     | thing once per dependency — with a PHP worker held open for each.
     |
+    | `egress` bounds where a mirrored fetch may go. A `dist.url` is written by
+    | whoever published the package upstream, so on a repository mirroring
+    | packagist.org it is written by the general public — and a registry that
+    | fetched one unconditionally would dial any address a stranger named.
+    | Anything but the upstream's own origin is therefore held to public
+    | addresses, and these two are the way out of that for the installation
+    | whose self-hosted upstream genuinely names an internal object store:
+    | `allow_private` turns the address rules off wholesale, `allowed_hosts`
+    | names the hosts they do not apply to. See App\Services\Mirror\EgressPolicy.
+    |
     */
 
     /*
@@ -141,6 +151,13 @@ return [
         'retention_days' => (int) env('MIRROR_RETENTION_DAYS', 30),
         'max_archive_megabytes' => (int) env('MIRROR_MAX_ARCHIVE_MB', 256),
         'max_metadata_kilobytes' => (int) env('MIRROR_MAX_METADATA_KB', 8192),
+        'egress' => [
+            'allow_private' => (bool) env('MIRROR_ALLOW_PRIVATE_DIST_HOSTS', false),
+            'allowed_hosts' => array_values(array_filter(array_map(
+                trim(...),
+                explode(',', (string) env('MIRROR_PRIVATE_DIST_HOSTS', '')),
+            ))),
+        ],
     ],
 
 ];

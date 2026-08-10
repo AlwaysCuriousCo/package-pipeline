@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Http\Middleware\AuthenticateComposer;
 use App\Notifications\Channels\WebhookChannel;
+use App\Support\HostResolver;
+use App\Support\SystemHostResolver;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Foundation\DevCommands;
@@ -20,7 +22,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Bound rather than instantiated where it is used, because what a host
+        // resolves to is the one input the mirror's egress guard cannot be
+        // tested against for real — see App\Services\Mirror\EgressPolicy.
+        $this->app->singleton(HostResolver::class, SystemHostResolver::class);
     }
 
     /**
