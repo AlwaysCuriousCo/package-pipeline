@@ -72,6 +72,97 @@ one package overlapping. An unshared cache defeats that too.
 So: on a multi-container deployment, `CACHE_STORE=file` is not a performance
 choice. It is a correctness bug that looks like everything working.
 
+## The worker and the scheduler need a supervisor
+
+Both are long-running foreground processes, and **neither restarts itself**.
+Started by hand in a shell, or as a bare `ExecStart` with no restart policy,
+they are one exit away from a registry that looks perfectly healthy and syncs
+nothing: `/up` still answers, `/p2` still serves, and panel-triggered syncs
+simply queue forever. That is the "dead queue worker" in the table further
+down, and it is the most common way this deployment goes wrong.
+
+`queue:work` is *designed* to exit — that is not a failure mode, it is the
+supervision contract. It stops on its memory ceiling, on `--max-time`, on
+`queue:restart` during a deploy, and on `SIGTERM` from an orchestrator. Every
+one of those expects something to start it again.
+
+**systemd**, one unit per worker, `Restart=always`:
+
+```ini
+[Unit]
+Description=package-pipeline queue worker
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/srv/package-pipeline
+ExecStart=/usr/bin/php artisan queue:work --timeout=310 --memory=256 --max-time=3600
+Restart=always
+RestartSec=2
+# Longer than the longest job, so a deploy lets an import finish instead of
+# killing it halfway through storing an archive.
+TimeoutStopSec=330
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Supervisor**, if that is what the host already runs:
+
+```ini
+[program:package-pipeline-worker]
+command=php /srv/package-pipeline/artisan queue:work --timeout=310 --memory=256 --max-time=3600
+user=www-data
+autostart=true
+autorestart=true
+numprocs=1
+stopwaitsecs=330
+stopsignal=TERM
+stdout_logfile=/var/log/package-pipeline-worker.log
+```
+
+**Containers**: one container per process, `restart: unless-stopped` (or a
+Deployment of its own on Kubernetes), and `terminationGracePeriodSeconds`
+at least as long as `TimeoutStopSec` above. Do not run the worker in the same
+container as the web server under a process manager you did not configure —
+that is how a worker ends up dead with nothing watching.
+
+Reading the flags:
+
+- **`--timeout=310`** is the per-job ceiling for any job that does not set its
+  own, and the backstop for the ones that do. It belongs between the longest
+  job's own timeout (300 seconds, for a version import streaming a large
+  archive) and the connection's `retry_after` (330); see the README for what
+  goes wrong on either side of that window.
+- **`--memory=256`** is the ceiling in MB, and it is the flag most likely to be
+  missing. It is checked between jobs against the whole PHP process, not
+  against the job, so the framework's default of 128 is a budget for a worker
+  doing rather less than this one does — an import holds a version's archive
+  while it stores it. Set it to what the host can spare and let the supervisor
+  restart the process when it is reached: the exit is the design, and it is
+  only a problem if nothing is watching.
+- **`--max-time=3600`** retires the process every hour regardless. Long-lived
+  PHP accumulates, and a scheduled restart is cheaper than working out which
+  library is responsible.
+
+Retries are not a worker flag here: every job in this app declares its own
+`$tries` and `$backoff`, so `--tries` on the command line would only change the
+handful that do not.
+
+**Restart the workers on every deploy.** A worker holds the code it booted
+with, so one started before a release keeps running the old classes against the
+new database until something reminds it. `php artisan queue:restart` at the end
+of the deploy tells every worker to finish its current job and exit; the
+supervisor brings them back on the new release.
+
+**The scheduler** is the same problem with a different shape. A
+`* * * * * php artisan schedule:run` cron entry needs no supervision because
+cron is the supervisor — that is the option to prefer on a normal host. Only
+reach for `schedule:work` where there is no cron (a container image, typically),
+and then give it the same `Restart=always` treatment as the worker, because it
+is a foreground process that will not come back on its own either.
+
 ## Scaling out
 
 **Stateless:** the app containers. Once `DIST_DISK` points at shared storage,
@@ -161,7 +252,7 @@ For the things neither covers, or if you would rather watch by hand:
 
 | Watch | How |
 | --- | --- |
-| A dead queue worker | Queue depth, or the simpler tell: syncs that start in the panel and never finish. `php artisan queue:failed` lists what gave up. |
+| A dead queue worker | Queue depth, or the simpler tell: syncs that start in the panel and never finish. `php artisan queue:failed` lists what gave up. If this is ever the answer, the worker is not supervised — see [above](#the-worker-and-the-scheduler-need-a-supervisor). |
 | Failed syncs | They notify — the panel's bell and Slack, once a job has spent its retries. Configure `SLACK_BOT_USER_OAUTH_TOKEN` and you will hear about them without looking. |
 | Dist disk drift | `php artisan archives:audit --dry-run` reports it without changing anything. Cheap enough to run from a monitor. |
 | A source that stopped authenticating | The **Sources** table shows the connection state and the last error. A GitLab token that expired looks exactly like this. |
