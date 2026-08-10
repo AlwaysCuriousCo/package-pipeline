@@ -92,12 +92,36 @@ timeout budget and no rate limit. A live figure for a dashboard is
 [the metrics endpoint](metrics.md), which answers in constant time and is
 designed to be scraped.
 
+## How far back the data goes
+
+`downloads:prune` runs nightly and deletes rows older than
+`DOWNLOAD_RETENTION_DAYS`, which defaults to **400**. Anything older than that
+cannot be charted or exported, so if you want a longer history than the window,
+schedule the export — a nightly `downloads:export --detail` into an object store
+is what the command is shaped for.
+
+**The counters are not affected.** `total_downloads` on a package and a version
+is a lifetime figure, and pruning keeps it that way: the command counts the rows
+it is about to delete into `pruned_downloads` first, and
+`downloads:recalculate` adds that tally back when it rebuilds. So a package with
+two hundred thousand lifetime downloads still reads two hundred thousand after a
+prune, and still does after a recalculate.
+
+What the window costs is the **detail** — which credential fetched which version
+on which day. The summary export past the window is gone with it.
+
+Set `DOWNLOAD_RETENTION_DAYS=0` to keep everything. That is a real option for an
+installation that would rather manage the growth itself, but it is growth with
+no ceiling on the largest table in the schema, so decide it rather than inherit
+it.
+
 ## Memory, and why this streams
 
-`downloads` is the fastest-growing table in the schema. It is append-only, is
-never pruned, and gains a row for every zip the registry serves — so an export
-that loaded it into memory would be an export that stopped working exactly when
-the registry became worth measuring.
+`downloads` is the fastest-growing table in the schema: it is append-only and
+gains a row for every zip the registry serves, and while `downloads:prune` keeps
+it inside the retention window, a window on a busy registry is still enormous.
+An export that loaded it into memory would be an export that stopped working
+exactly when the registry became worth measuring.
 
 Nothing here holds more than one row at a time. Rows are yielded from a database
 cursor and written out as they arrive, and the HTTP export is a plain streaming

@@ -19,9 +19,11 @@ use Illuminate\Support\Facades\DB;
  * scraped every fifteen seconds forever:
  *
  * 1. **Nothing counts the downloads table.** It is the fastest-growing table in
- *    the schema and is never pruned. `packages.total_downloads` is the
- *    denormalized counter that exists precisely so nothing has to, and
- *    `downloads:recalculate` is what puts the two back in step.
+ *    the schema, and `downloads:prune` shortens it — so a count over it would
+ *    be both expensive and a different number from the lifetime total anybody
+ *    means. `packages.total_downloads` is the denormalized counter that exists
+ *    precisely so nothing has to, and `downloads:recalculate` is what puts the
+ *    two back in step.
  * 2. **No per-package series.** A gauge labelled with a package name would make
  *    this endpoint's cardinality a function of how big the registry is — the
  *    classic way to take a Prometheus server down with a well-meaning exporter

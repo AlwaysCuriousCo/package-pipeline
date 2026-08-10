@@ -17,10 +17,12 @@ use Illuminate\Support\Facades\DB;
  * are the scoping and the streaming, and neither is worth having two of.
  *
  * **Nothing here materialises the downloads table.** It is the fastest-growing
- * table in the schema, is never pruned, and gains a row per zip the registry
- * serves; an export that loaded it would be an export that stopped working
- * exactly when the registry got popular. So rows are yielded one at a time from
- * a cursor, and the caller writes each one out as it arrives.
+ * table in the schema and gains a row per zip the registry serves; an export
+ * that loaded it would be an export that stopped working exactly when the
+ * registry got popular. `downloads:prune` bounds the table, not this — a
+ * retention window on a busy registry is still far more than fits in memory. So
+ * rows are yielded one at a time from a cursor, and the caller writes each one
+ * out as it arrives.
  *
  * @see docs/download-analytics.md
  */

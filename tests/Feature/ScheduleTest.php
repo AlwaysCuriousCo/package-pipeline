@@ -83,6 +83,16 @@ class ScheduleTest extends TestCase
     }
 
     /**
+     * The largest table in the schema, and the last one to get a bound. What
+     * it prunes is the per-download detail; the lifetime counters are tallied
+     * before the rows go, so nothing the panel shows moves.
+     */
+    public function test_download_history_is_pruned_daily(): void
+    {
+        $this->assertSame('50 3 * * *', $this->event('downloads:prune')->expression);
+    }
+
+    /**
      * The documented deployment is several app containers behind one database,
      * so a sweep without these would run once per container.
      */

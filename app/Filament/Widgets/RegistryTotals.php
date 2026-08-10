@@ -113,9 +113,12 @@ class RegistryTotals extends Widget
                         // Summed from the denormalized counters rather than
                         // counted over the downloads table, which is what
                         // packages.total_downloads was added to avoid: that
-                        // table is append-only, never pruned, and grows with
-                        // every zip the registry serves. `downloads:recalculate`
-                        // is what puts the two back in step.
+                        // table is append-only and grows with every zip the
+                        // registry serves. It is also the table
+                        // `downloads:prune` shortens, which the counters
+                        // survive and a count over the rows would not.
+                        // `downloads:recalculate` is what puts the two back in
+                        // step.
                         'value' => number_format((int) (clone $packages)->sum('total_downloads')),
                         'tone' => 'success',
                     ],

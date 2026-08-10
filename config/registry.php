@@ -50,6 +50,34 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Download History Retention
+    |--------------------------------------------------------------------------
+    |
+    | `downloads` gains a row for every zip the registry serves, which makes it
+    | the fastest-growing table in the schema by a wide margin. `downloads:prune`
+    | is what bounds it: rows older than this are counted into the packages' and
+    | versions' `pruned_downloads` and then deleted.
+    |
+    | What that costs is the *detail* — which credential fetched which version,
+    | and on which day. The `total_downloads` counters are unaffected, and so is
+    | `downloads:recalculate`, which adds the pruned tally back. What goes is the
+    | ability to chart or export beyond the window, so size this against how far
+    | back anyone actually asks. The panel charts thirty days on the dashboard
+    | and ninety on a package; 400 leaves a year-over-year comparison intact and
+    | absorbs a monthly warehouse extract that did not run.
+    |
+    | Zero keeps everything forever, which is the right answer for an
+    | installation that would rather manage the growth itself — but it is growth
+    | with no ceiling, so it is a decision rather than a default.
+    |
+    */
+
+    'downloads' => [
+        'retention_days' => (int) env('DOWNLOAD_RETENTION_DAYS', 400),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Upstream Mirroring
     |--------------------------------------------------------------------------
     |

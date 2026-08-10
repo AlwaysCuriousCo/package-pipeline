@@ -128,6 +128,65 @@ class DownloadStatsTest extends TestCase
         $this->assertSame(2, $this->package->versions()->sole()->total_downloads);
     }
 
+    /**
+     * The retention window bounds the largest table in the schema, and the
+     * whole design of it is that the counters do not notice: `total_downloads`
+     * is a lifetime figure and stays one.
+     */
+    public function test_pruning_old_downloads_keeps_their_totals(): void
+    {
+        $version = $this->package->versions()->sole();
+
+        foreach ([-500, -401, -399, -1] as $days) {
+            Download::create([
+                'package_id' => $this->package->id,
+                'package_version_id' => $version->id,
+                'version' => 'v1.0.0',
+                'created_at' => now()->addDays($days),
+            ]);
+        }
+
+        $this->package->forceFill(['total_downloads' => 4])->save();
+        $version->forceFill(['total_downloads' => 4])->save();
+
+        $this->artisan('downloads:prune')->assertSuccessful();
+
+        $this->assertSame(2, Download::query()->count());
+        $this->assertSame(4, $this->package->fresh()->total_downloads);
+        $this->assertSame(4, $version->fresh()->total_downloads);
+
+        // And the recovery tool still answers with the lifetime figure rather
+        // than with what is left of the window — which is the whole reason the
+        // pruner tallies before it deletes.
+        $this->package->forceFill(['total_downloads' => 99])->save();
+        $this->package->versions()->update(['total_downloads' => 99]);
+
+        $this->artisan('downloads:recalculate')->assertSuccessful();
+
+        $this->assertSame(4, $this->package->fresh()->total_downloads);
+        $this->assertSame(4, $version->fresh()->total_downloads);
+    }
+
+    public function test_pruning_downloads_can_be_turned_off_and_previewed(): void
+    {
+        Download::create([
+            'package_id' => $this->package->id,
+            'version' => 'v1.0.0',
+            'created_at' => now()->subDays(500),
+        ]);
+
+        $this->artisan('downloads:prune --dry-run')
+            ->expectsOutputToContain('Would prune 1 download row')
+            ->assertSuccessful();
+
+        config(['registry.downloads.retention_days' => 0]);
+
+        $this->artisan('downloads:prune')->assertSuccessful();
+
+        $this->assertSame(1, Download::query()->count());
+        $this->assertSame(0, (int) $this->package->fresh()->pruned_downloads);
+    }
+
     public function test_the_dashboard_widgets_render_with_scoped_data(): void
     {
         $this->download();

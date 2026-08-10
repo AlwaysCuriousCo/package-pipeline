@@ -125,7 +125,7 @@ A scrape every fifteen seconds, forever, is the design constraint. Two things
 follow from it.
 
 **Nothing counts the `downloads` table.** It is the fastest-growing table in the
-schema and is never pruned. `downloads_total` is summed from the denormalized
+schema. `downloads_total` is summed from the denormalized
 `packages.total_downloads` counters, which exist precisely so nothing has to
 count it; `downloads:recalculate` is what puts the two back in step if they
 drift. Everything else is a count or a `max` over a table measured in hundreds

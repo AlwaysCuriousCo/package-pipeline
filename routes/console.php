@@ -83,6 +83,17 @@ Schedule::command('model:prune', ['--model' => [Notification::class, Activity::c
     ->dailyAt('03:30')
     ->onOneServer();
 
+// The fastest-growing table in the schema, and the last one to get a bound:
+// a row per zip served, read by both download charts and every export, and
+// deleted by nothing. What this prunes is the detail — which credential
+// fetched which version on which day — and not the totals: it folds the rows
+// it removes into `pruned_downloads` first, so the counters and
+// `downloads:recalculate` still answer with a lifetime figure afterwards.
+Schedule::command('downloads:prune')
+    ->dailyAt('03:50')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 // job_batches gains a row per sync and never loses one. Both readers — the
 // panel's progress widget and SyncPackageJob's stale-batch check — only ever
 // look at the batch a package points at right now, and Package::syncBatch()

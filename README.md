@@ -287,7 +287,8 @@ The panel is the usual way in, but everything an operator needs can be done with
 | `archives:clean` | Delete stored archives no version references. Re-synced versions leave their previous archive behind by design and nothing else removes one. `--dry-run` lists without deleting. Runs nightly. |
 | `archives:audit` | The other direction: find versions whose archive is no longer on the dist disk and clear the reference, so the next sync downloads it again. Refuses when the loss is large enough to read as a wrong or half-restored disk rather than lost files, and never clears a version no sync can rebuild. `--dry-run` reports without touching; `--force` is for when the loss really is that big. Run it by hand after restoring a bucket. |
 | `sbom:export` | A CycloneDX bill of materials, streamed. `--package=` (with `--repository=` when the name is ambiguous) narrows it to one package, `--path=` writes to a file or a directory instead of stdout. |
-| `downloads:recalculate` | Rebuild the denormalized `total_downloads` counters from the raw downloads rows. For when the counters and the chart disagree. |
+| `downloads:recalculate` | Rebuild the denormalized `total_downloads` counters from the raw downloads rows plus whatever `downloads:prune` has already tallied. For when the counters and the chart disagree. |
+| `downloads:prune` | Delete download rows past `DOWNLOAD_RETENTION_DAYS` (400), counting them into the totals first so the counters and `downloads:recalculate` still answer with a lifetime figure. The only bound on the largest table in the schema. `--days=` overrides the window, `--dry-run` reports. Runs nightly. |
 
 **Accounts and access**
 
