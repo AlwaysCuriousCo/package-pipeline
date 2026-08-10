@@ -9,6 +9,7 @@ use App\Models\Repository;
 use App\Models\ReservedVendor;
 use App\Models\Upstream;
 use App\Services\ArchiveStore;
+use App\Support\BoundedSink;
 use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
@@ -520,12 +521,31 @@ class MirrorService
         // nothing, since there is no body it could be confirming.
         $revalidating = $cached instanceof MirroredPackage && $cached->found();
 
+        // Bounded on the way in rather than measured on the way out. The
+        // ceiling used to be a `strlen` over a string this process had already
+        // allocated, which is a check that runs after the damage: one upstream
+        // answering with a gigabyte took the worker's memory limit with it and
+        // never reached the comparison.
+        $sink = BoundedSink::to('php://temp', (int) config('registry.mirror.max_metadata_kilobytes') * 1024);
+
         try {
             $response = $this->client($upstream)->metadata(
                 $dev ? "{$name}~dev" : $name,
                 $revalidating ? $cached->upstream_etag : null,
                 $revalidating ? $cached->upstream_last_modified : null,
+                $sink,
             );
+        } catch (OversizedResponse) {
+            Log::warning('Refusing an oversized upstream metadata document.', [
+                'upstream' => $upstream->url,
+                'package' => $name,
+                'ceiling_bytes' => $sink->limit(),
+            ]);
+
+            // Not a failure of the upstream's, so not a reason to stop asking
+            // it about other packages: it answered, and what it answered is
+            // not something this registry will hold.
+            return $cached;
         } catch (Throwable $exception) {
             $this->markUnreachable($upstream, $exception->getMessage());
 
@@ -552,19 +572,11 @@ class MirrorService
             return $cached;
         }
 
-        $body = $response->body();
-
-        $ceiling = (int) config('registry.mirror.max_metadata_kilobytes') * 1024;
-
-        if (strlen($body) > $ceiling) {
-            Log::warning('Refusing an oversized upstream metadata document.', [
-                'upstream' => $upstream->url,
-                'package' => $name,
-                'bytes' => strlen($body),
-            ]);
-
-            return $cached;
-        }
+        // What was written, not what the response says it holds: with a sink
+        // in play the two are the same in production and are deliberately not
+        // in a test, where the ceiling is the only thing that truncated the
+        // body. Reading the sink is reading what this app actually accepted.
+        $body = $sink->contents();
 
         $document = json_decode($body, true);
 
@@ -899,8 +911,17 @@ class MirrorService
             return null;
         }
 
+        // The ceiling, enforced as the bytes arrive. It bounds what
+        // accumulates on the dist disk, but the disk is not what it protects
+        // first: the transfer lands in the system temporary directory, which
+        // is usually the root volume and is bounded by nothing but the archive
+        // timeout — four minutes of somebody else's bandwidth, times however
+        // many requests are in flight. Measuring the file afterwards is a
+        // report, not a limit.
+        $sink = BoundedSink::to($temporary, (int) config('registry.mirror.max_archive_megabytes') * 1024 * 1024);
+
         try {
-            $response = $client->download($dist['url'], $temporary);
+            $response = $client->download($dist['url'], $sink);
 
             if (! $response->successful()) {
                 Log::warning('Could not download an upstream archive.', [
@@ -913,25 +934,12 @@ class MirrorService
                 return null;
             }
 
-            $size = (int) filesize($temporary);
+            $size = $sink->bytes();
 
-            // Checked once the transfer is over rather than refused up front:
-            // the ceiling exists to bound what accumulates on the dist disk,
-            // and a Content-Length is a claim from the same party as the body.
-            // The transfer itself is bounded by the archive timeout, and the
-            // file this landed in is temporary either way.
-            $ceiling = (int) config('registry.mirror.max_archive_megabytes') * 1024 * 1024;
-
-            if ($size > $ceiling) {
-                Log::warning('Refusing an upstream archive over the size ceiling.', [
-                    'upstream' => $upstream->url,
-                    'package' => $name,
-                    'reference' => $reference,
-                    'bytes' => $size,
-                ]);
-
-                return null;
-            }
+            // Closed before it is read back: what the hash is taken over has
+            // to be everything that was written, and the last of it is still
+            // in this process until the handle is.
+            $sink->close();
 
             if (! hash_equals($dist['shasum'], (string) sha1_file($temporary))) {
                 Log::warning('Upstream archive did not match the sha1 the upstream published for it; refusing to store it.', [
@@ -961,6 +969,15 @@ class MirrorService
                 'size' => $size,
                 'used_at' => now(),
             ]);
+        } catch (OversizedResponse) {
+            Log::warning('Refusing an upstream archive over the size ceiling.', [
+                'upstream' => $upstream->url,
+                'package' => $name,
+                'reference' => $reference,
+                'ceiling_bytes' => $sink->limit(),
+            ]);
+
+            return null;
         } catch (Throwable $exception) {
             Log::warning('Could not mirror an upstream archive.', [
                 'upstream' => $upstream->url,
@@ -971,6 +988,8 @@ class MirrorService
 
             return null;
         } finally {
+            $sink->close();
+
             @unlink($temporary);
         }
     }

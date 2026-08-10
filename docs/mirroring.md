@@ -260,6 +260,15 @@ For mirrored packages:
   your own tokens may spend; these bound what a *stranger's* published package
   can, since any name a consuming project requires can reach them.
 
+  Both are enforced **as the bytes arrive**: the transfer is abandoned at the
+  ceiling rather than measured once it is over. That distinction is the
+  difference between a limit and a report — an archive lands in the system
+  temporary directory, which is usually the root volume rather than the dist
+  disk, and until it is refused the only thing bounding it is the four-minute
+  archive timeout. A `Content-Length` past the ceiling refuses the transfer
+  before it starts; a dishonest one changes nothing, because the ceiling is
+  applied to the writes either way.
+
 ## Disk cost, and pruning
 
 This is the part to size before turning it on. Mirroring is on-demand caching
@@ -342,6 +351,11 @@ mirroring on, that changes: an anonymous request can now make this app fetch
 from an upstream, and a `/dist/…` request can make it download and keep up to
 `MIRROR_MAX_ARCHIVE_MB` for `MIRROR_RETENTION_DAYS`. Somebody who wants to can
 walk packagist.org and fill the disk your private packages are served from.
+
+That ceiling is what one request costs, not what one request can be made to
+spend: the transfer stops there rather than being measured afterwards, and
+[where a fetch may go](#where-a-mirrored-fetch-may-go) bounds the addresses it
+can be pointed at. What is left to bound is how *many* such requests arrive.
 
 There is no ceiling for this in the app, because a per-minute limit tight
 enough to matter is also tight enough to break a legitimate cold

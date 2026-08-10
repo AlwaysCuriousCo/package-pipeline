@@ -778,6 +778,54 @@ class MirroringTest extends TestCase
         Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '127.0.0.1'));
     }
 
+    public function test_an_archive_over_the_ceiling_is_cut_off_rather_than_measured_afterwards(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        config()->set('registry.mirror.max_archive_megabytes', 1);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'cdn.upstream.test/*' => Http::response(str_repeat('a', 2 * 1024 * 1024)),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertNotFound();
+
+        // Nothing kept, and — the part a `filesize()` after the fact could
+        // never claim — nothing beyond the ceiling was ever accepted. The
+        // transfer is bounded by the sink refusing bytes, not by the archive
+        // timeout running out four minutes later.
+        $this->assertDatabaseCount('mirrored_archives', 0);
+        $this->assertSame([], Storage::disk(config('filesystems.dists'))->allFiles('mirror'));
+    }
+
+    public function test_an_oversized_metadata_document_is_refused_without_taking_the_upstream_down(): void
+    {
+        config()->set('registry.mirror.max_metadata_kilobytes', 1);
+
+        $document = $this->upstreamDocument();
+        $document['packages']['symfony/console'][0]['description'] = str_repeat('x', 4096);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($document),
+            'upstream.test/p2/symfony/finder.json' => Http::response($this->upstreamDocument('symfony/finder')),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertNotFound();
+
+        $this->assertDatabaseCount('mirrored_packages', 0);
+
+        // An upstream that answers with more than this registry will hold is
+        // answering. Treating that as an outage would put every *other*
+        // package behind the failure backoff on the strength of one fat
+        // document.
+        $this->getJson('/p2/symfony/finder.json')->assertOk();
+    }
+
     public function test_advisories_are_passed_through_for_mirrored_packages(): void
     {
         $this->mirroring();

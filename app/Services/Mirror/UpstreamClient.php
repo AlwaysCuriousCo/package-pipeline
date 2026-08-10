@@ -3,11 +3,15 @@
 namespace App\Services\Mirror;
 
 use App\Models\Upstream;
+use App\Support\BoundedSink;
 use App\Support\HttpTimeouts;
+use Closure;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Psr\Http\Message\ResponseInterface;
+use Throwable;
 
 /**
  * Speaks Composer v2 to one upstream repository.
@@ -93,17 +97,26 @@ final class UpstreamClient
      * The validators are the upstream's own strings, handed straight back to
      * it: an unchanged package answers 304 with no body, which is what makes a
      * TTL affordable at all — expiry costs a round trip, not a download.
+     *
+     * Streamed into the sink rather than read off the response, because
+     * `->body()` is a string this process has already allocated by the time
+     * anyone can measure it: one upstream answering a `/p2` request with a
+     * gigabyte would exhaust the worker's memory limit before the metadata
+     * ceiling was so much as consulted.
+     *
+     * @throws OversizedResponse
      */
-    public function metadata(string $package, ?string $etag, ?string $lastModified): Response
+    public function metadata(string $package, ?string $etag, ?string $lastModified, BoundedSink $sink): Response
     {
         $url = str_replace('%package%', $package, $this->endpoints()['metadata']);
 
         $absolute = $this->absolute($url);
 
-        return $this->request($absolute)
+        return $this->bounded($sink, fn (): Response => $this->request($absolute)
+            ->withOptions($this->into($sink))
             ->when($etag !== null, fn (PendingRequest $request) => $request->withHeader('If-None-Match', (string) $etag))
             ->when($lastModified !== null, fn (PendingRequest $request) => $request->withHeader('If-Modified-Since', (string) $lastModified))
-            ->get($absolute);
+            ->get($absolute));
     }
 
     /**
@@ -135,16 +148,80 @@ final class UpstreamClient
      * bounds the set of addresses a consumer can reach to the set the upstream
      * published, which on a public upstream is a set the public writes; the
      * egress policy is what bounds it to addresses worth reaching.
+     *
+     * @throws OversizedResponse
      */
-    public function download(string $url, string $destination): Response
+    public function download(string $url, BoundedSink $sink): Response
     {
-        return $this->request($url)
+        return $this->bounded($sink, fn (): Response => $this->request($url)
             // How long this takes is a property of the archive, not of the
             // upstream's health, so the API budget would cut a large release
-            // off mid-stream.
+            // off mid-stream. It is also why the size ceiling cannot be left
+            // until afterwards: four minutes is a great many bytes.
             ->timeout(HttpTimeouts::ARCHIVE)
-            ->sink($destination)
-            ->get($url);
+            ->withOptions($this->into($sink))
+            ->get($url));
+    }
+
+    /**
+     * The options that make a response land in the sink, and stop early when
+     * the upstream says up front that it is too big.
+     *
+     * The `Content-Length` is a claim from the same party as the body, so it
+     * can only ever refuse a transfer and never permit one — which is exactly
+     * what it is used for. Believing an honest upstream costs nothing and
+     * saves the whole download; disbelieving a dishonest one costs nothing
+     * either, because the sink is what actually bounds the bytes.
+     *
+     * @return array<string, mixed>
+     */
+    private function into(BoundedSink $sink): array
+    {
+        return [
+            'sink' => $sink->stream(),
+            'on_headers' => function (ResponseInterface $response) use ($sink): void {
+                if ((int) $response->getHeaderLine('Content-Length') > $sink->limit()) {
+                    $sink->refuse();
+
+                    throw new OversizedResponse('The upstream announced more bytes than this registry accepts.');
+                }
+            },
+        ];
+    }
+
+    /**
+     * Send a request that streams into a sink, and report a refused transfer
+     * as one thing rather than as three.
+     *
+     * A sink that has stopped accepting bytes reaches the caller in whichever
+     * way the handler happens to express a broken write — an exception out of
+     * libcurl, a short body, a response that looks fine — so the sink is what
+     * is asked, not the outcome. What the caller gets either way is a refusal
+     * it can tell apart from an upstream being down, because those two want
+     * opposite responses: one is worth logging and moving on from, the other
+     * puts the upstream in backoff.
+     *
+     * @param  Closure(): Response  $send
+     *
+     * @throws OversizedResponse
+     */
+    private function bounded(BoundedSink $sink, Closure $send): Response
+    {
+        try {
+            $response = $send();
+        } catch (Throwable $exception) {
+            if ($sink->exceeded()) {
+                throw new OversizedResponse('The upstream answered with more bytes than this registry accepts.', 0, $exception);
+            }
+
+            throw $exception;
+        }
+
+        if ($sink->exceeded()) {
+            throw new OversizedResponse('The upstream answered with more bytes than this registry accepts.');
+        }
+
+        return $response;
     }
 
     /**
