@@ -70,11 +70,12 @@ return new class extends Migration
 
             $table->timestamps();
 
+            // Every lookup leads with the upstream, so this covers all of them
+            // — a repository with several upstreams asks each in turn rather
+            // than gathering candidates by name, because first match wins and a
+            // set of rows cannot express an order.
             $table->unique(['upstream_id', 'name', 'is_dev']);
 
-            // Both halves of a lookup: `name` alone is how a repository with
-            // several upstreams finds every candidate row in one query.
-            $table->index('name');
             $table->index('used_at');
         });
 
