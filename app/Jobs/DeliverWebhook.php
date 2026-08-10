@@ -72,7 +72,7 @@ class DeliverWebhook implements ShouldQueue
      * within a minute, and hammering it while it is not helps nobody.
      *
      * Applied by this job releasing itself rather than by the framework: a
-     * delivery failure is never rethrown (see failed() for why), so the
+     * delivery failure is never rethrown (see recordRefusal() for why), so the
      * automatic retry this would otherwise configure never runs.
      *
      * @return list<int>
@@ -100,7 +100,7 @@ class DeliverWebhook implements ShouldQueue
                 ->withBody($body, 'application/json')
                 ->post($this->webhook->url);
         } catch (Throwable $exception) {
-            $this->failed($exception->getMessage());
+            $this->recordRefusal($exception->getMessage());
 
             return;
         }
@@ -111,7 +111,7 @@ class DeliverWebhook implements ShouldQueue
             return;
         }
 
-        $this->failed($this->refusal($response), $response->status());
+        $this->recordRefusal($this->refusal($response), $response->status());
     }
 
     /**
@@ -194,14 +194,25 @@ class DeliverWebhook implements ShouldQueue
      *
      * The exception to that is a retry: releasing the job back is how the
      * remaining attempts happen at all, and a released job is not a failed one.
+     *
+     * Deliberately not named `failed`. Laravel finds a job's failure hook with
+     * `method_exists`, which answers true for a private method, and then calls
+     * it from outside the class — so a method of that name here would turn any
+     * genuine failure (a timeout, exhausted attempts, a row deleted from under
+     * a queued delivery) into a fatal inside the worker, and the signature
+     * would not have taken the Throwable it was handed either.
      */
-    private function failed(string $reason, ?int $status = null): void
+    private function recordRefusal(string $reason, ?int $status = null): void
     {
         $this->webhook->recordFailure($status, $reason);
 
         Log::warning('An outgoing webhook delivery failed.', [
             'webhook' => $this->webhook->name,
-            'url' => $this->webhook->url,
+            // The endpoint itself, not its URL: for Slack, Teams and most chat
+            // receivers the URL *is* the credential, and application logs are
+            // routinely shipped somewhere with a wider readership than the
+            // panel that already shows this failure.
+            'endpoint' => $this->webhook->getKey(),
             'event' => $this->event->value,
             'delivery' => $this->delivery,
             'attempt' => $this->attempts(),
