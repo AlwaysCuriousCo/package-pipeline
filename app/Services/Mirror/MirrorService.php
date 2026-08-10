@@ -9,7 +9,9 @@ use App\Models\Repository;
 use App\Models\ReservedVendor;
 use App\Models\Upstream;
 use App\Services\ArchiveStore;
+use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
+use DateTimeInterface;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -42,7 +44,20 @@ class MirrorService
      * number, so nothing else would tell a client whose copy predates a deploy
      * that what this code now sends is different.
      */
-    private const PAYLOAD_REVISION = 1;
+    private const PAYLOAD_REVISION = 2;
+
+    /**
+     * When PAYLOAD_REVISION last moved, for the clients that never see it.
+     *
+     * Composer's metadata downloader sends `If-Modified-Since` for `/p2` and
+     * nothing else, so a number that only ever reached the ETag reached no
+     * Composer at all — a deploy that changed the rewriting left every client
+     * holding a copy of the old shape and revalidating happily against it.
+     * Folded into Last-Modified as a floor, it says the same thing in the
+     * vocabulary that is actually spoken. Bumped with the revision, never on
+     * its own.
+     */
+    private const REVISION_EPOCH = '2026-08-10T00:00:00Z';
 
     /**
      * Composer's own package name grammar, from ValidatingArrayLoader.
@@ -205,6 +220,24 @@ class MirrorService
      * URLs it builds are baked into the body being served, so a repository
      * moved to another mount serves different bytes from the same cache row.
      */
+    /**
+     * When a mirrored response last changed, as a client is told it.
+     *
+     * The upstream document's own `changed_at` is the substance of it, floored
+     * by the deploy that last changed how this app rewrites one and raised by
+     * the repository's own timestamp — the dist URLs written into the body come
+     * from the mount, and a repository moved to another path serves different
+     * bytes from an unchanged cache row.
+     */
+    public function lastModified(Repository $repository, MirroredPackage $mirrored): DateTimeInterface
+    {
+        return max(array_filter([
+            CarbonImmutable::parse(self::REVISION_EPOCH),
+            $mirrored->changed_at,
+            $repository->updated_at,
+        ]));
+    }
+
     public function etag(Repository $repository, MirroredPackage $mirrored): string
     {
         return hash('xxh128', implode('|', [

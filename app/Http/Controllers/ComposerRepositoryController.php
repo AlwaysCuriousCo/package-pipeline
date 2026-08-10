@@ -46,7 +46,27 @@ class ComposerRepositoryController extends Controller
      * than from the bytes, so nothing else would tell a client whose copy
      * predates a deploy that what it holds is no longer what this code sends.
      */
-    private const PAYLOAD_REVISION = 3;
+    private const PAYLOAD_REVISION = 4;
+
+    /**
+     * When PAYLOAD_REVISION last moved, which is the same fact said in the one
+     * vocabulary a client actually speaks.
+     *
+     * The counter above only ever reached the ETag, and Composer's metadata
+     * downloader sends `If-Modified-Since` and nothing else for `/p2` — so a
+     * deploy that changed the rendering was invisible to every client that had
+     * a copy, which is precisely the case the counter exists for. Folded into
+     * Last-Modified as a floor, it says what the counter was always trying to:
+     * anything you kept from before this date is not what this code sends now.
+     *
+     * Bumped with the revision, and with one other thing: the address this
+     * registry answers on. The dist base is folded into the ETag and has
+     * nowhere to go in a Last-Modified, so a registry that moves to a new
+     * APP_URL is the one change of substance this date is the only way to
+     * announce. Nothing else moves it — a date that drifted on its own would
+     * invalidate the whole registry for nothing.
+     */
+    private const REVISION_EPOCH = '2026-08-10T00:00:00Z';
 
     public function __construct(
         private readonly ArchiveStore $archives,
@@ -391,7 +411,7 @@ class ComposerRepositoryController extends Controller
 
         $etag = $this->etag($repository, $record, $dev, $state);
 
-        $response->setLastModified($this->lastModified($record, $state));
+        $response->setLastModified($this->lastModified($repository, $record, $state));
         $response->setEtag($etag, weak: true);
 
         if ($response->isNotModified($request)) {
@@ -430,7 +450,7 @@ class ComposerRepositoryController extends Controller
             'Vary' => 'Authorization',
         ]);
 
-        $response->setLastModified($mirrored->changed_at);
+        $response->setLastModified($this->mirror->lastModified($repository, $mirrored));
         $response->setEtag($this->mirror->etag($repository, $mirrored), weak: true);
 
         if ($response->isNotModified($request)) {
@@ -561,13 +581,26 @@ class ComposerRepositoryController extends Controller
      * panel's version delete and a discovery that prunes and then throws both
      * used to get it wrong.
      *
+     * The repository's own timestamp is in the max for the one thing neither
+     * of the others can express: the dist URLs are baked into the body, and a
+     * repository moved to a different mount serves different bytes from
+     * identical rows. The ETag catches that through the base it folds in;
+     * Last-Modified has nowhere to put a URL, so it takes the moment the mount
+     * last changed instead. Without it a client keeps following dist URLs to a
+     * path that stopped existing.
+     *
      * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
      */
-    private function lastModified(Package $package, array $state): ?DateTimeInterface
+    private function lastModified(Repository $repository, Package $package, array $state): DateTimeInterface
     {
-        $timestamps = array_filter([$package->updated_at, $state['changed']]);
+        $timestamps = array_filter([
+            CarbonImmutable::parse(self::REVISION_EPOCH),
+            $package->updated_at,
+            $repository->updated_at,
+            $state['changed'],
+        ]);
 
-        return $timestamps === [] ? null : max($timestamps);
+        return max($timestamps);
     }
 
     /**
@@ -585,16 +618,15 @@ class ComposerRepositoryController extends Controller
      *
      * So is the package's own timestamp, because the version rows are not the
      * only thing the body is rendered from: the name it is keyed by and the
-     * dist URLs built from that name both live on the package. Without it,
-     * renaming one would leave the validator and the payload cache key unmoved
-     * and clients would go on being served the old document — the one failure
-     * the cache was built to make impossible.
+     * dist URLs built from that name both live on the package.
      *
-     * The abandonment notice is folded in by value rather than left to that
-     * timestamp. Timestamps are second-resolution, so a package marked
-     * abandoned within the same second as the write before it would hash
-     * identically, and the payload cache holds entries for days — long enough
-     * for "stop using this" to go unsaid for a long time.
+     * The name and the abandonment notice are then folded in *by value* rather
+     * than left to that timestamp. Timestamps are second-resolution, so a write
+     * landing in the same second as the one before it hashes identically — and
+     * the payload cache holds entries for days, so "this package is now called
+     * something else" or "stop using this" would go unsaid for a week. Neither
+     * is hypothetical for the name: resolveComposerName() renames a package
+     * during its first sync, in the same run that writes its version rows.
      *
      * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
      */
@@ -607,6 +639,7 @@ class ComposerRepositoryController extends Controller
             $repository->url('/dist/'),
             $package->getKey(),
             $package->updated_at?->getTimestamp() ?? 0,
+            (string) $package->name,
             var_export($package->abandonment(), true),
             $dev ? 'dev' : 'stable',
             $state['count'],
@@ -661,7 +694,14 @@ class ComposerRepositoryController extends Controller
                 // source of truth, so the served date can never drift from it;
                 // a version synced before the date was tracked omits the key
                 // rather than advertising a null.
-                ...($version->released_at ? ['time' => $version->released_at->toIso8601String()] : []),
+                //
+                // Rendered in UTC explicitly, not in whatever APP_TIMEZONE
+                // happens to be. The instant is the same either way, but the
+                // *bytes* are not — and nothing in the validators is derived
+                // from the bytes, so changing that setting would silently
+                // rewrite every document in the registry while every client
+                // went on 304ing against the copy it already had.
+                ...($version->released_at ? ['time' => $version->released_at->utc()->toIso8601String()] : []),
                 'dist' => [
                     'type' => 'zip',
                     'url' => $repository->url("/dist/{$name}/{$version->reference}.zip"),

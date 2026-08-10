@@ -146,6 +146,94 @@ class ComposerMetadataCacheTest extends TestCase
             ->assertJsonCount(1, 'packages.acme/widgets');
     }
 
+    /**
+     * PAYLOAD_REVISION exists to tell a client that what it holds predates a
+     * deploy that changed the rendering — and it only ever reached the ETag,
+     * which Composer's metadata downloader never sends back. Paired with a
+     * date it reaches the one validator that is actually spoken.
+     */
+    public function test_a_copy_older_than_the_deploy_is_never_confirmed_fresh(): void
+    {
+        $package = $this->makeServedPackage();
+
+        // Rows nothing has touched in years, which is every package in a
+        // registry that is simply working.
+        DB::table('packages')->where('id', $package->id)->update(['updated_at' => '2020-01-01 00:00:00']);
+        DB::table('package_versions')->where('package_id', $package->id)->update(['updated_at' => '2020-01-01 00:00:00']);
+
+        $this->get(self::URL, ['If-Modified-Since' => 'Wed, 01 Jan 2020 00:00:00 GMT'])->assertOk();
+    }
+
+    /**
+     * The dist URLs a client keeps are built from the mount, so a repository
+     * served somewhere else serves different bytes from identical rows. The
+     * ETag catches that through the base it folds in; Last-Modified has nowhere
+     * to put a URL, so it takes the repository's own timestamp instead — and
+     * Composer sends only If-Modified-Since for /p2.
+     */
+    public function test_moving_the_repository_invalidates_the_clients_copy(): void
+    {
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => true]);
+
+        $this->makeServedPackage()->update(['repository_id' => $internal->id]);
+
+        $modifiedSince = $this->lastModified('/r/internal/p2/acme/widgets.json');
+
+        $this->travel(1)->minutes();
+
+        $internal->update(['path' => 'private']);
+
+        $this->get('/r/private/p2/acme/widgets.json', ['If-Modified-Since' => $modifiedSince])
+            ->assertOk();
+    }
+
+    /**
+     * Timestamps are second-resolution and the payload cache holds entries for
+     * a week, so a rename landing in the same second as the write before it
+     * would leave both the validator and the cache key untouched — and the
+     * registry would go on serving the old name for days. Not hypothetical:
+     * PackageSynchronizer::resolveComposerName() renames a package during its
+     * first sync, in the run that writes its version rows.
+     */
+    public function test_a_rename_moves_the_validator_without_the_timestamp(): void
+    {
+        $package = $this->makeServedPackage();
+
+        $etag = (string) $this->get(self::URL)->assertOk()->headers->get('ETag');
+
+        Package::withoutTimestamps(fn () => $package->forceFill(['name' => 'acme/gadgets'])->save());
+
+        $renamed = $this->get('/p2/acme/gadgets.json')->assertOk();
+
+        $this->assertNotSame($etag, $renamed->headers->get('ETag'));
+        $this->assertSame('acme/gadgets', array_key_first((array) $renamed->json('packages')));
+    }
+
+    /**
+     * The served document is a function of the stored rows, and no validator
+     * here is cut from the bytes — so a setting that rewrote every document in
+     * the registry would do it while every client went on revalidating happily
+     * against the copy it already had.
+     */
+    public function test_release_dates_are_rendered_in_utc_whatever_the_app_timezone(): void
+    {
+        $original = date_default_timezone_get();
+
+        config(['app.timezone' => 'America/Chicago']);
+        date_default_timezone_set('America/Chicago');
+
+        try {
+            $this->makeServedPackage();
+
+            $this->assertStringEndsWith(
+                '+00:00',
+                (string) $this->get(self::URL)->assertOk()->json('packages.acme/widgets.0.time'),
+            );
+        } finally {
+            date_default_timezone_set($original);
+        }
+    }
+
     public function test_dev_and_release_metadata_are_validated_apart(): void
     {
         $package = $this->makeServedPackage();
