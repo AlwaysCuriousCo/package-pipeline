@@ -23,6 +23,8 @@ class ActivitiesTable
         'restored' => 'Restored',
         'role_granted' => 'Role granted',
         'role_revoked' => 'Role revoked',
+        'grant_added' => 'Access granted',
+        'grant_removed' => 'Access revoked',
     ];
 
     public static function configure(Table $table): Table
@@ -33,7 +35,7 @@ class ActivitiesTable
             // through; without this the list is two queries per row.
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->with(['subject', 'causer']))
             ->emptyStateHeading('Nothing recorded yet')
-            ->emptyStateDescription('Changes to packages, tokens, users, roles, sources and repositories are recorded here as they happen.')
+            ->emptyStateDescription('Changes to packages, tokens, users, roles, teams, grants, sources and repositories are recorded here as they happen.')
             ->columns([
                 TextColumn::make('created_at')
                     ->label('When')
@@ -58,8 +60,8 @@ class ActivitiesTable
                     ->formatStateUsing(fn (?string $state): string => self::EVENTS[$state] ?? Str::headline((string) $state))
                     ->color(fn (?string $state): string => match ($state) {
                         'created', 'restored' => 'success',
-                        'deleted', 'role_revoked' => 'danger',
-                        'role_granted' => 'warning',
+                        'deleted', 'role_revoked', 'grant_removed' => 'danger',
+                        'role_granted', 'grant_added' => 'warning',
                         default => 'gray',
                     })
                     ->sortable(),

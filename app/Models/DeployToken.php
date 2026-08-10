@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\LogsAuditableChanges;
+use App\Models\Concerns\LogsGrantChanges;
 use Database\Factories\DeployTokenFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -23,7 +24,7 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
 class DeployToken extends Model
 {
     /** @use HasFactory<DeployTokenFactory> */
-    use HasFactory, LogsAuditableChanges;
+    use HasFactory, LogsAuditableChanges, LogsGrantChanges;
 
     protected static function booted(): void
     {
@@ -38,8 +39,9 @@ class DeployToken extends Model
 
     /**
      * The principal itself. What it reaches lives in pivots rather than
-     * columns, so a widened grant is attributed through the access token
-     * issued against it rather than here.
+     * columns, and is recorded by LogsGrantChanges — which matters more here
+     * than anywhere: a deploy token holding no grant at all sees every package
+     * in the registry, so removing its last one *widens* it.
      *
      * @return list<string>
      */

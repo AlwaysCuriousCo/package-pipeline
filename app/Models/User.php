@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\LogsAuditableChanges;
+use App\Models\Concerns\LogsGrantChanges;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
@@ -24,7 +25,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasRoles, LogsAuditableChanges, Notifiable;
+    use HasFactory, HasRoles, LogsAuditableChanges, LogsGrantChanges, Notifiable;
 
     protected static function booted(): void
     {
@@ -209,9 +210,9 @@ class User extends Authenticatable implements FilamentUser
     }
 
     /**
-     * Identity only. The password is a hashed cast and never logged; role
-     * changes are not attributes at all and are recorded by
-     * App\Listeners\LogRoleChange.
+     * Identity only. The password is a hashed cast and never logged; roles and
+     * grants are not attributes at all and are recorded by
+     * App\Listeners\LogRoleChange and LogsGrantChanges respectively.
      *
      * @return list<string>
      */

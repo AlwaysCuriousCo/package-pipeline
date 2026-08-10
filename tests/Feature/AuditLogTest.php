@@ -12,6 +12,7 @@ use App\Models\Package;
 use App\Models\PackageAdvisory;
 use App\Models\Repository;
 use App\Models\Source;
+use App\Models\Team;
 use App\Models\Token;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
@@ -134,6 +135,96 @@ class AuditLogTest extends TestCase
         $this->assertSame(['role_granted', 'role_revoked'], $entries->pluck('event')->all());
         // Names, not ids: a role id means nothing once the role is renamed.
         $this->assertSame(['panel_user'], $entries->first()->properties->get('roles'));
+    }
+
+    /**
+     * The scenario the trait's own docblock promises and did not deliver: an
+     * account is added to a team that holds the internal repository, and taken
+     * out again once it has read everything. Both writes are pivot rows, which
+     * the attribute diff cannot see.
+     */
+    public function test_team_membership_is_recorded_from_either_side(): void
+    {
+        $team = Team::factory()->create(['name' => 'platform']);
+        $user = User::factory()->create(['name' => 'contractor']);
+
+        Activity::query()->delete();
+
+        $team->users()->attach($user);
+        $user->teams()->detach($team);
+
+        $entries = Activity::query()->orderBy('id')->get();
+
+        $this->assertSame(['grant_added', 'grant_removed'], $entries->pluck('event')->all());
+
+        // Recorded against whichever side the change was made from, named as
+        // the panel names the relation.
+        $this->assertTrue($entries[0]->subject->is($team));
+        $this->assertSame('users', $entries[0]->properties->get('grant'));
+        $this->assertSame(['contractor'], $entries[0]->properties->get('records'));
+
+        $this->assertTrue($entries[1]->subject->is($user));
+        $this->assertSame('teams', $entries[1]->properties->get('grant'));
+        $this->assertSame(['platform'], $entries[1]->properties->get('records'));
+    }
+
+    /**
+     * Filament's relationship selects sync rather than attach, and Laravel
+     * fires no pivot event for either — so this is the path that actually
+     * matters, and the one a listener would silently have missed.
+     */
+    public function test_a_synced_grant_is_recorded(): void
+    {
+        $team = Team::factory()->create();
+        $internal = Repository::factory()->create(['name' => 'internal']);
+        $public = Repository::factory()->create(['name' => 'public']);
+
+        $team->repositories()->sync([$internal->getKey()]);
+
+        Activity::query()->delete();
+
+        // What saving the form with one box unticked and another ticked does.
+        $team->repositories()->sync([$public->getKey()]);
+
+        $entries = Activity::query()->orderBy('id')->get();
+
+        $this->assertSame(['grant_removed', 'grant_added'], $entries->pluck('event')->all());
+        $this->assertSame(['internal'], $entries[0]->properties->get('records'));
+        $this->assertSame(['public'], $entries[1]->properties->get('records'));
+    }
+
+    public function test_a_deploy_tokens_grants_are_recorded(): void
+    {
+        $deployToken = DeployToken::factory()->create();
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+
+        $deployToken->packages()->attach($package);
+
+        Activity::query()->delete();
+
+        // Losing its last grant is what makes a deploy token unscoped, so the
+        // widening change is the removal.
+        $deployToken->packages()->detach();
+
+        $entry = Activity::query()->sole();
+
+        $this->assertSame('grant_removed', $entry->event);
+        $this->assertSame(['acme/widgets'], $entry->properties->get('records'));
+    }
+
+    public function test_a_sync_that_changes_no_grant_records_nothing(): void
+    {
+        $team = Team::factory()->create();
+        $package = Package::factory()->create();
+
+        $team->packages()->sync([$package->getKey()]);
+
+        Activity::query()->delete();
+
+        // Every form save re-syncs; only the ones that move a row are changes.
+        $team->packages()->sync([$package->getKey()]);
+
+        $this->assertSame(0, Activity::query()->count());
     }
 
     public function test_connecting_and_disconnecting_a_source_is_recorded(): void

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\LogsAuditableChanges;
+use App\Models\Concerns\LogsGrantChanges;
 use Database\Factories\TeamFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -28,12 +29,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 class Team extends Model
 {
     /** @use HasFactory<TeamFactory> */
-    use HasFactory, LogsAuditableChanges;
+    use HasFactory, LogsAuditableChanges, LogsGrantChanges;
 
     /**
-     * The team's identity. Its grants and membership are relations rather than
-     * attributes and are not audited here; what changes them is the panel,
-     * and what a team reaches is answerable from the pivots at any time.
+     * The team's identity. Its membership and grants are pivots that no
+     * attribute diff can see, and are recorded by LogsGrantChanges instead —
+     * the pivots answer what a team reaches *now*, and the point of an audit
+     * trail is the question asked about last March.
      *
      * @return list<string>
      */
