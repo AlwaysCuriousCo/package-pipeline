@@ -151,7 +151,7 @@ The short version for production:
 
   | Task | When | Why |
   | --- | --- | --- |
-  | `packages:sync --queue` | hourly | Releases arrive by webhook, so this is not the normal path. It is what covers packages whose webhook registration failed or was never made, and what makes a partial sync's "the next sync will retry them" true. It is cheap: a ref whose sha hasn't moved is skipped without an API read or a download, so a routine run fans out no import jobs. |
+  | `packages:sync --queue` | hourly | Releases arrive by webhook, so this is not the normal path. It is what covers packages whose webhook registration failed or was never made, and what makes a partial sync's "the next sync will retry them" true. It is cheap: the tag and branch listings are asked conditionally, so an untouched repository answers `304 Not Modified` (which GitHub does not charge against the rate limit at all), and a ref whose sha hasn't moved is skipped without an API read or a download — a routine run fans out no import jobs. |
   | `archives:clean` | 03:10 | Re-synced versions leave their previous archive behind by design and nothing else deletes one. |
   | `archives:audit` | 03:20 | The other direction: a version row can outlive its archive (storage loss, a bucket restored from an older snapshot), and nothing in the request path notices — `/p2` keeps advertising the version while `dist` 404s. Syncs deliberately don't check per version, which on S3 was a HEAD request per version per hour; this checks the whole registry with one listing and clears what it can't find, so the next sync downloads it again. |
   | `model:prune` (notifications) | 03:30 | One row per admin per event, kept 30 days once read and 90 days unread. |

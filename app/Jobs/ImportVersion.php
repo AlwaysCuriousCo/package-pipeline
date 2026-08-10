@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\RateLimited;
 use App\Models\Package;
 use App\Services\PackageSynchronizer;
 use Illuminate\Bus\Batchable;
@@ -56,9 +57,22 @@ class ImportVersion implements ShouldQueue
             return;
         }
 
-        $synchronizer->import($this->package, $this->version, [
-            'reference' => $this->reference,
-            'is_dev' => $this->isDev,
-        ], $this->force);
+        try {
+            $synchronizer->import($this->package, $this->version, [
+                'reference' => $this->reference,
+                'is_dev' => $this->isDev,
+            ], $this->force);
+        } catch (RateLimited $limited) {
+            // A rebuild of a large repository is exactly what trips a
+            // provider's limits — three API calls per ref, times every ref —
+            // so this is the job most likely to meet one. Waiting the limit
+            // out costs the batch nothing but time; failing it costs the
+            // package a version until the next sync. The reason is left on
+            // the package because a batch full of released imports is
+            // otherwise a sync that has simply stopped, with nothing said.
+            $this->package->forceFill(['sync_error' => $limited->getMessage()])->save();
+
+            $this->release($limited->retryAt);
+        }
     }
 }

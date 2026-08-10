@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\RateLimited;
 use App\Models\Package;
 use App\Notifications\PackageSyncFailed;
 use App\Services\AdminNotifier;
@@ -60,6 +61,17 @@ class DiscoverVersions implements ShouldQueue
             $synchronizer->prune($this->package, array_map(strval(...), array_keys($refs)));
 
             $changed = $synchronizer->changed($this->package, $refs, $this->force);
+        } catch (RateLimited $limited) {
+            // Not a failure — the provider named the moment it will answer
+            // again, and the backoffs above (a minute, then five) would only
+            // retry into the same wall and spend the sync's attempts on it.
+            // The reason goes in the column an auth failure would use,
+            // saying which of the two this is.
+            $this->package->forceFill(['sync_error' => $limited->getMessage()])->save();
+
+            $this->release($limited->retryAt);
+
+            return;
         } catch (Throwable $exception) {
             // Every attempt leaves the reason where the panel reads it, not
             // just the one that exhausts the retries.
