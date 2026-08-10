@@ -133,6 +133,30 @@ class RateLimitTest extends TestCase
             ->assertUnprocessable();
     }
 
+    /**
+     * Keyed by the credential for the same reason uploads are, and applied in
+     * front of authentication so an unauthenticated flood is bounded too —
+     * which is what puts a ceiling on guessing at tokens here.
+     */
+    public function test_the_management_api_is_throttled_per_credential(): void
+    {
+        $first = $this->issueToken([TokenAbility::ApiRead])->plainText;
+
+        for ($request = 1; $request <= self::PAST_ANY_BUDGET; $request++) {
+            $this->withToken($first)->getJson('/api/v1/packages');
+        }
+
+        $this->withToken($first)->getJson('/api/v1/packages')
+            ->assertStatus(429)
+            ->assertHeader('Retry-After');
+
+        // A second credential behind the same egress address carries its own
+        // budget, which is the whole point of not keying on the address.
+        $this->withToken($this->issueToken([TokenAbility::ApiRead])->plainText)
+            ->getJson('/api/v1/packages')
+            ->assertOk();
+    }
+
     public function test_a_noisy_repositorys_webhook_does_not_starve_another(): void
     {
         $noisy = Package::factory()->create(['name' => 'acme/noisy', 'webhook_secret' => 'shh']);

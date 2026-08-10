@@ -4,13 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Events\PackageDownloaded;
 use App\Http\Middleware\ResolveComposerRepository;
-use App\Models\DeployToken;
 use App\Models\Package;
 use App\Models\PackageAdvisory;
 use App\Models\PackageVersion;
 use App\Models\Repository;
 use App\Models\Token;
-use App\Models\User;
 use App\Services\ArchiveStore;
 use App\Services\CreateVersionFromZip;
 use Carbon\CarbonImmutable;
@@ -652,33 +650,27 @@ class ComposerRepositoryController extends Controller
     }
 
     /**
-     * Whether the authenticated principal's scope reaches this repository.
+     * Whether the authenticated principal's scope reaches this publish.
      *
-     * The write ability says "may publish"; the scope says where. A scoped
-     * principal needs the repository itself granted — or the existing package
-     * when only packages were granted. A public repository is readable by
-     * anyone, which grants nothing about writing into it.
+     * Replacing a version of a package that already exists is a write to that
+     * package, which a per-package grant reaches; publishing a name nothing
+     * here serves yet is a write to the repository, which it does not.
+     *
+     * @see Token::mayWriteTo() where both rules live
      */
     private function mayUploadTo(Request $request, Repository $repository, string $name): bool
     {
-        $principal = $this->token($request)?->tokenable;
+        $token = $this->token($request);
 
-        $existingPackageGranted = fn ($grants): bool => ($existing = $repository->packages()->where('name', $name)->first())
-            && $grants->whereKey($existing->id)->exists();
-
-        if ($principal instanceof User) {
-            return $principal->hasUnscopedAccess()
-                || $principal->repositories()->whereKey($repository->id)->exists()
-                || $existingPackageGranted($principal->packages());
+        if (! $token instanceof Token) {
+            return false;
         }
 
-        if ($principal instanceof DeployToken) {
-            return ! $principal->isScoped()
-                || $principal->repositories()->whereKey($repository->id)->exists()
-                || $existingPackageGranted($principal->packages());
-        }
+        $existing = $repository->packages()->where('name', $name)->first();
 
-        return false;
+        return $existing instanceof Package
+            ? $token->mayWriteToPackage($existing)
+            : $token->mayWriteTo($repository);
     }
 
     /**

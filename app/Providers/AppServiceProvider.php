@@ -81,6 +81,27 @@ class AppServiceProvider extends ServiceProvider
         // short of a useful amplifier.
         RateLimiter::for('sso', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
 
+        // The management API, keyed by the credential for the same reason
+        // uploads are: a provisioning run and a CI fleet both arrive from one
+        // egress address, and one token's loop must not spend another's budget.
+        // A request carrying no credential is answered 401 by the middleware
+        // behind this, but is counted first — which is what bounds guessing at
+        // tokens here, the job the Composer endpoints give to a failure counter
+        // they can afford because nothing else throttles them.
+        //
+        // The same budget as uploads, because it is the same shape of traffic:
+        // a machine credential doing bounded work, not a fan-out. A page of a
+        // hundred packages per request puts a whole registry within a minute's
+        // walk, and a provisioning run past sixty creations a minute is told to
+        // wait rather than told no — the 429 carries Retry-After.
+        RateLimiter::for('api', function (Request $request): Limit {
+            $credential = (string) ($request->bearerToken() ?: $request->getPassword());
+
+            return Limit::perMinute(60)->by(
+                $credential === '' ? 'address:'.$request->ip() : 'token:'.hash('sha256', $credential),
+            );
+        });
+
         // Keyed by the credential rather than the address, because uploads are
         // exactly the traffic that arrives from one egress IP: a CI fleet, and a
         // monorepo release publishing a package per component in a single run.

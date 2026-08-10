@@ -166,7 +166,9 @@ Tokens come in two kinds, and the difference is what they can see:
 - **Personal tokens**, issued by each panel user from **API tokens** in the user menu. A personal token sees exactly what its owner sees, so revoking a person's panel access revokes their Composer access with it.
 - **Deploy tokens**, created under **Deploy tokens** in the sidebar. These are machine principals with no user behind them, for CI. A deploy token sees the repositories and packages it was granted — or everything, if it was granted nothing at all, which is worth knowing before you create one and walk away.
 
-Either kind carries **read** (install packages) or **write** (publish artifact uploads) abilities and can be given an expiry. The plain token exists only at the moment it is issued; the row keeps its sha256 and a short prefix, so a lost token is replaced rather than recovered. Revoking is a soft delete, which keeps the audit trail of what the token was and when it was last used.
+Either kind carries abilities, and can be given an expiry. Two families, and none of them implies another: `repository:read` (install packages) and `repository:write` (publish artifact uploads) cover the Composer protocol; `api:read`, `api:write` and `api:delete` cover the [management API](docs/api.md). A token pasted into every developer's `auth.json` so `composer install` works should not, by that act, be able to delete a package — which is what keeping them apart buys.
+
+The plain token exists only at the moment it is issued; the row keeps its sha256 and a short prefix, so a lost token is replaced rather than recovered. Revoking is a soft delete, which keeps the audit trail of what the token was and when it was last used.
 
 Failed authentications are rate limited per address (30 a minute), and the 429 that follows says in as many words that it is a rate limit rather than a rejected token — because the place that message gets read is a CI log.
 
@@ -246,7 +248,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | `admin:create --email=` | Create or update an admin account and give it every permission. Prompts for a password when a terminal is attached; `--link` (and any non-interactive runner) prints a sealed, single-use setup link instead. Re-run it after adding a Filament resource so `super_admin` picks up the new permissions. |
 | `user:add [email]` | Create an ordinary panel user and print their password setup link. `--name=`, `--role=` (repeatable; roles must already exist). |
 | `user:reset-password [email]` | Print a fresh single-use password link for an existing user. The recovery path when someone is locked out and there is no mail configured. |
-| `token:add <name>` | Issue a Composer access token. `--user=` for a personal token, `--deploy=` for a deploy token (created if it doesn't exist), `--ability=read\|write` (repeatable, read by default), `--expires-days=`. Prints the plain token once. |
+| `token:add <name>` | Issue an access token. `--user=` for a personal token, `--deploy=` for a deploy token (created if it doesn't exist), `--ability=` (repeatable, read by default; `read` and `write` are the Composer abilities, or name one in full — `api:read`, `api:write`, `api:delete`), `--expires-days=`. Prints the plain token once. |
 | `token:revoke <prefix>` | Revoke a token by the prefix shown in listings (`pp_ab1cd`). What you run when a credential leaks and you have only the log line naming it. |
 
 `php artisan shield:generate --all --panel=admin` and `php artisan db:seed --force` round these out — see [Roles and permissions](#roles-and-permissions).
@@ -331,6 +333,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 
 ## Further reading
 
+- [docs/api.md](docs/api.md) — the `/api/v1` management API: authentication, abilities, every endpoint, and a release pipeline end to end.
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.

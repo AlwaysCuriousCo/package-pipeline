@@ -55,6 +55,42 @@ class Repository extends Model
     }
 
     /**
+     * Narrow to the repositories the presenting token may see, following
+     * Package::scopeVisibleTo() principal for principal: a user's token sees
+     * exactly what its owner does, an ungranted deploy token sees everything,
+     * and anything else sees the public repositories plus its grants.
+     *
+     * A repository holding a granted package is visible too, because the
+     * package inside it already is — hiding the mount a consumer is told to
+     * configure would only make the grant unusable.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeVisibleTo(Builder $query, ?Token $token): Builder
+    {
+        $principal = $token?->tokenable;
+
+        if ($principal instanceof User) {
+            return $query->visibleToUser($principal);
+        }
+
+        if ($principal instanceof DeployToken && ! $principal->isScoped()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($principal): void {
+            $query->where('public', true);
+
+            if ($principal instanceof DeployToken) {
+                $query
+                    ->orWhereIn('repositories.id', $principal->repositories()->select('repositories.id'))
+                    ->orWhereIn('repositories.id', $principal->packages()->select('packages.repository_id'));
+            }
+        });
+    }
+
+    /**
      * Narrow to the repositories a panel user may see: everything for a user
      * holding Unscoped:Package, otherwise public repositories plus the ones
      * their grants reach — granted wholesale, or holding a granted package.

@@ -116,6 +116,53 @@ class Token extends Model
         return in_array($ability->value, $this->abilities ?? [], true);
     }
 
+    /**
+     * Whether this token's principal may create something in a repository.
+     *
+     * An ability says "may write"; this says where. It is the write-side
+     * counterpart of Package::scopeVisibleTo(), and deliberately not its
+     * mirror: a public repository is readable by anyone, which grants nothing
+     * about writing into it, so `public` never appears below.
+     *
+     * Read by the artifact upload and by every mutating API endpoint, so that
+     * "which repositories can this credential change" has one answer.
+     */
+    public function mayWriteTo(Repository $repository): bool
+    {
+        $principal = $this->tokenable;
+
+        if ($principal instanceof User) {
+            return $principal->hasUnscopedAccess()
+                || $principal->repositories()->whereKey($repository->getKey())->exists();
+        }
+
+        if ($principal instanceof DeployToken) {
+            return ! $principal->isScoped()
+                || $principal->repositories()->whereKey($repository->getKey())->exists();
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether this token's principal may change an existing package.
+     *
+     * Wider than mayWriteTo() by exactly one case: a principal granted this
+     * package alone reaches it without reaching the repository around it,
+     * which is what a per-package deploy grant is for.
+     */
+    public function mayWriteToPackage(Package $package): bool
+    {
+        if ($this->mayWriteTo($package->composerRepository)) {
+            return true;
+        }
+
+        $principal = $this->tokenable;
+
+        return ($principal instanceof User || $principal instanceof DeployToken)
+            && $principal->packages()->whereKey($package->getKey())->exists();
+    }
+
     public function isExpired(): bool
     {
         return $this->expires_at !== null && $this->expires_at->isPast();

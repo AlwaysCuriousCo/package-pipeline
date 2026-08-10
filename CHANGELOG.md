@@ -38,6 +38,12 @@ shape rather than a delta from a previous one.
   with package visibility scoped per panel user.
 - Artifact uploads from CI (`POST /upload/{vendor}/{package}`), for packages
   that are built rather than tagged.
+- A versioned JSON management API at `/api/v1` — list and show packages with
+  their versions, create one, trigger a sync, delete one, list repositories —
+  so CI and provisioning scripts need neither the panel nor SSH. It reuses the
+  existing access tokens under their own `api:read`, `api:write` and
+  `api:delete` abilities, so a credential that installs packages cannot
+  administer or delete them. See [docs/api.md](docs/api.md).
 - Download tracking, surfaced as a registry-wide chart, a per-package chart, and
   a totals widget on the dashboard; `downloads:recalculate` rebuilds the
   denormalized counters from the raw rows.
