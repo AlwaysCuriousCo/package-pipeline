@@ -123,6 +123,12 @@ Two rules are worth knowing:
 
 The permissions themselves are seeded from the panel's own resources, pages and widgets, so a fresh database gets them from `php artisan db:seed` (which `composer run setup` already runs).
 
+### Teams
+
+Row-level access can be granted to a **team** rather than to a person: a team holds package and repository grants, users belong to it, and a user's effective access is their own grants plus their teams'. Onboarding becomes adding somebody to a team instead of repeating the last person's grants.
+
+Teams only ever widen what an account can see, and removing somebody from one takes back only what that team gave. A user in no team is unaffected. See **[docs/teams.md](docs/teams.md)**.
+
 ### Audit log
 
 **Access Management → Audit log** records who changed what: packages created, renamed, abandoned and deleted; access tokens issued, rolled and revoked; users created and deleted and their roles granted and taken away; sources connected and disconnected; repositories and security advisories. Entries carry the signed-in user where there was one, and read as "System" for changes made by the console, a webhook, or the scheduler.
@@ -377,6 +383,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/monorepos.md](docs/monorepos.md) — publishing several packages from one repository: the subdirectory field, how a dist for part of a repository is built, and what a push to a monorepo syncs.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
+- [docs/teams.md](docs/teams.md) — granting access to a group rather than a person: what a team holds, how effective access composes, and what it costs on the Composer hot path.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.
 - [docs/packistry-feature-analysis.md](docs/packistry-feature-analysis.md) — feature comparison against [Packistry](https://github.com/packistry/packistry) that informs the roadmap.

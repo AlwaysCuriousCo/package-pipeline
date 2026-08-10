@@ -169,9 +169,12 @@ class Repository extends Model
     /**
      * Narrow to the repositories a panel user may see: everything for a user
      * holding Unscoped:Package, otherwise public repositories plus the ones
-     * their grants reach — granted wholesale, or holding a granted package.
+     * their grants reach — granted wholesale, or holding a granted package —
+     * where "their grants" means their own and their teams' alike.
      *
-     * The repository-level counterpart of Package::scopeVisibleToUser().
+     * The repository-level counterpart of Package::scopeVisibleToUser(), and
+     * it has to stay one: a repository hidden from somebody who can see a
+     * package inside it is a mount they are told to configure and cannot.
      *
      * @param  Builder<self>  $query
      * @return Builder<self>
@@ -184,8 +187,11 @@ class Repository extends Model
 
         return $query->where(function (Builder $query) use ($user): void {
             $query->where('public', true)
-                ->orWhereIn('repositories.id', $user->repositories()->select('repositories.id'))
-                ->orWhereIn('repositories.id', $user->packages()->select('packages.repository_id'));
+                ->orWhereIn('repositories.id', $user->repositoryGrants())
+                // Through the packages rather than the pivot, because what is
+                // wanted is the repository each granted package is served
+                // from, and only the package row knows that.
+                ->orWhereIn('repositories.id', $user->grantedPackages()->select('packages.repository_id'));
         });
     }
 

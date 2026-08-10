@@ -42,6 +42,11 @@ shape rather than a delta from a previous one.
   repository; per-repository hooks are the fallback for packages with no source.
 - Access tokens for Composer clients and scoped deploy tokens for machines,
   with package visibility scoped per panel user.
+- **Teams**: a group that holds package and repository grants, so onboarding is
+  adding somebody to a team rather than re-granting what the last person was
+  given. A user's effective access is their own grants plus their teams'; a
+  user in no team is unaffected, and leaving a team takes back only what that
+  team gave. See [docs/teams.md](docs/teams.md).
 - A **Licenses** page reporting what the registry publishes under, which
   packages and versions carry each license, and — the number worth watching —
   how many versions declare none at all. Each version's declaration is kept in
@@ -218,6 +223,13 @@ shape rather than a delta from a previous one.
 
 ### Security
 
+- Team grants were added inside `Package::scopeVisibleToUser` and
+  `Repository::scopeVisibleToUser` — the single chokepoint every read in the app
+  goes through — rather than beside them, so no surface can be out of step with
+  the others. They confer the right to publish exactly as an equivalent personal
+  grant does; a grant that meant one thing held personally and another held
+  through a team would be a second, invisible kind of grant. Deploy tokens have
+  no teams: they authenticate a machine, which cannot be a member of anything.
 - Password setup links are sealed: address, token and expiry are encrypted into
   a single opaque path segment, and the link is single-use and valid for five
   minutes — safe to print into a deploy provider's command log.

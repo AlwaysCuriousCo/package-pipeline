@@ -126,6 +126,13 @@ class Token extends Model
      *
      * Read by the artifact upload and by every mutating API endpoint, so that
      * "which repositories can this credential change" has one answer.
+     *
+     * A user's grant is their own or their team's, without distinction. A team
+     * holds the same grants a person can be given individually — that is the
+     * whole of what a team is — so a grant that conferred publishing rights
+     * one way and not the other would be a second, invisible kind of grant.
+     * Deploy tokens have no teams: they authenticate a machine, which cannot
+     * be a member of anything.
      */
     public function mayWriteTo(Repository $repository): bool
     {
@@ -133,7 +140,7 @@ class Token extends Model
 
         if ($principal instanceof User) {
             return $principal->hasUnscopedAccess()
-                || $principal->repositories()->whereKey($repository->getKey())->exists();
+                || $principal->isGrantedRepository($repository);
         }
 
         if ($principal instanceof DeployToken) {
@@ -159,7 +166,11 @@ class Token extends Model
 
         $principal = $this->tokenable;
 
-        return ($principal instanceof User || $principal instanceof DeployToken)
+        if ($principal instanceof User) {
+            return $principal->isGrantedPackage($package);
+        }
+
+        return $principal instanceof DeployToken
             && $principal->packages()->whereKey($package->getKey())->exists();
     }
 

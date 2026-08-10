@@ -31,6 +31,12 @@ class UsersTable
                     ->label('Roles')
                     ->badge()
                     ->placeholder('No role — cannot sign in'),
+                TextColumn::make('teams.name')
+                    ->label('Teams')
+                    ->badge()
+                    ->color('gray')
+                    ->placeholder('None')
+                    ->toggleable(),
                 TextColumn::make('created_at')
                     ->label('Created')
                     ->since()
@@ -40,6 +46,9 @@ class UsersTable
             ->filters([
                 SelectFilter::make('roles')
                     ->relationship('roles', 'name')
+                    ->preload(),
+                SelectFilter::make('teams')
+                    ->relationship('teams', 'name')
                     ->preload(),
             ])
             // Keeps "select all + delete" from taking your own account along.

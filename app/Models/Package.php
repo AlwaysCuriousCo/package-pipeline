@@ -237,11 +237,22 @@ class Package extends Model
 
     /**
      * Narrow to the packages a panel user may see: everything for a user
-     * holding Unscoped:Package, otherwise public repositories plus their
-     * explicit package and repository grants.
+     * holding Unscoped:Package, otherwise public repositories plus every
+     * package and repository grant they hold — their own, and their teams'.
      *
-     * Applied by the package table, the dashboard widgets, and — through
-     * visibleTo() — the user's own personal access tokens.
+     * Applied by the package table, the dashboard widgets, the licence report
+     * and the SBOM export, and — through visibleTo() — the user's own personal
+     * access tokens. It is the single place all of that is decided, which is
+     * what makes it the one method here where a mistake widens access
+     * everywhere at once and shows up nowhere.
+     *
+     * Three branches, exactly as before teams existed. Team grants did not
+     * become two more `orWhereIn` clauses on this query: they were folded into
+     * the two grant subqueries themselves, because this runs once per Composer
+     * metadata request and once per dist download, and the shape of it is a
+     * property of every install's hot path.
+     *
+     * @see User::packageGrants()
      *
      * @param  Builder<self>  $query
      * @return Builder<self>
@@ -254,8 +265,8 @@ class Package extends Model
 
         return $query->where(function (Builder $query) use ($user): void {
             $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true))
-                ->orWhereIn('packages.id', $user->packages()->select('packages.id'))
-                ->orWhereIn('packages.repository_id', $user->repositories()->select('repositories.id'));
+                ->orWhereIn('packages.id', $user->packageGrants())
+                ->orWhereIn('packages.repository_id', $user->repositoryGrants());
         });
     }
 
