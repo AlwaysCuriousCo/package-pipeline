@@ -252,6 +252,50 @@ class ComposerRepositoryTest extends TestCase
             ->assertExactJson(['packageNames' => ['aaa/first', 'acme/widgets']]);
     }
 
+    /**
+     * What `composer search --only-name acme/*` sends. An unfiltered answer is
+     * not a fat answer, it is the wrong one: Composer prints this list as it
+     * arrives.
+     */
+    public function test_list_honours_composers_filter_and_vendor(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('acme/gadgets');
+        $this->makeServedPackageNamed('other/widgets');
+
+        $this->get('/list.json?vendor=acme&filter='.urlencode('acme/*'))
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['acme/gadgets', 'acme/widgets']]);
+
+        // A wildcard anywhere, not only as a whole trailing segment.
+        $this->get('/list.json?filter='.urlencode('*/widgets'))
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['acme/widgets', 'other/widgets']]);
+
+        // And a filter with no wildcard at all names one package.
+        $this->get('/list.json?filter=acme/gadgets')
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['acme/gadgets']]);
+    }
+
+    /**
+     * The filter is Composer's pattern grammar, where `*` is the only
+     * metacharacter — so a regexp or a LIKE wildcard in it is a literal, and
+     * matches the nothing it names.
+     */
+    public function test_list_treats_everything_but_the_star_as_a_literal(): void
+    {
+        $this->makeServedPackage();
+
+        $this->get('/list.json?filter='.urlencode('acme/.*'))
+            ->assertOk()
+            ->assertExactJson(['packageNames' => []]);
+
+        $this->get('/list.json?vendor=%25')
+            ->assertOk()
+            ->assertExactJson(['packageNames' => []]);
+    }
+
     public function test_stable_metadata_lists_tagged_versions_with_local_dists(): void
     {
         $this->makeServedPackage();

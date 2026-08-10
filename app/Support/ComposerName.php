@@ -38,4 +38,23 @@ final class ComposerName
     {
         return preg_match(self::PATTERN, $name) === 1;
     }
+
+    /**
+     * A Composer name pattern — a name with `*` standing for any run of
+     * characters — as the expression that decides which names it covers.
+     *
+     * Composer's own BasePackage::packageNameToRegexp, deliberately: this
+     * decides what `/list.json?filter=` answers, and a client that filters the
+     * reply again with *its* rule would otherwise disagree with us about
+     * `acme/widget-*`. Everything but `*` is quoted, so a filter of `.` means
+     * a dot and a filter of `acme/{a,b}` matches nothing rather than throwing.
+     *
+     * `D` is the one addition, for the reason ComposerName::PATTERN carries it:
+     * without it `$` also matches before a final newline, and this subject is
+     * a query string parameter.
+     */
+    public static function patternToRegexp(string $pattern): string
+    {
+        return '{^'.str_replace('\*', '.*', preg_quote($pattern)).'$}iD';
+    }
 }

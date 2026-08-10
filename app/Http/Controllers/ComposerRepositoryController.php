@@ -15,6 +15,7 @@ use App\Models\Token;
 use App\Services\ArchiveStore;
 use App\Services\CreateVersionFromZip;
 use App\Services\Mirror\MirrorService;
+use App\Support\ComposerName;
 use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
 use DateTimeInterface;
@@ -364,12 +365,44 @@ class ComposerRepositoryController extends Controller
      * runs, and is never the set of names the repository can actually resolve,
      * which is all of them. Resolution does not depend on it either: the root
      * document's universal pattern is what tells Composer to ask.
+     *
+     * Composer narrows the list itself when it can — `composer search
+     * --only-name acme/*` sends `?vendor=acme&filter=acme/*`, and its
+     * getPackageNames() derives the vendor from a `vendor/*` filter. Both are
+     * honoured because the reply is *not* filtered again at the client end when
+     * it comes from this endpoint: an unfiltered answer is a wrong answer, not
+     * merely a fat one.
      */
     public function list(Request $request): JsonResponse
     {
-        return response()->json([
-            'packageNames' => $this->servedPackages($request)->orderBy('name')->pluck('name'),
-        ]);
+        $names = $this->servedPackages($request)
+            ->when(
+                $request->filled('vendor'),
+                // `%` and `_` are literals here, as in search() — a vendor of
+                // `%` narrows to nothing rather than to everything.
+                fn (Builder $query) => $query->whereLike(
+                    'name',
+                    addcslashes($request->string('vendor')->toString(), '\\%_').'/%',
+                ),
+            )
+            ->orderBy('name')
+            ->pluck('name');
+
+        $filter = $request->string('filter')->toString();
+
+        if ($filter !== '') {
+            // In PHP rather than in SQL: Composer's pattern is a regexp with
+            // its own escaping and case-insensitivity, and the three databases
+            // this app supports disagree about both in LIKE. The set being
+            // filtered is one this endpoint already plucks whole.
+            $expression = ComposerName::patternToRegexp($filter);
+
+            $names = $names->filter(
+                fn (string $name): bool => preg_match($expression, $name) === 1,
+            )->values();
+        }
+
+        return response()->json(['packageNames' => $names]);
     }
 
     /**
