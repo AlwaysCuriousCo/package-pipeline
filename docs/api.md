@@ -211,6 +211,13 @@ by artifact upload. `repository` is the Composer repository serving it. The
 model carries the same collision and names the relation `composerRepository()`
 for the same reason.
 
+`sync.error` is what the last sync had to say, in the provider's own words, and
+is **absent** — not `null` — for a package the token reaches only because its
+repository is public. A public repository is readable by every credential in the
+registry, and the reason a sync failed can name a host or a URL that is nobody
+else's business. Hold a grant on the package or the repository and the field is
+there as before.
+
 ### `GET /packages/{id}`
 
 The package above, plus every stored version newest first, and whether a sync

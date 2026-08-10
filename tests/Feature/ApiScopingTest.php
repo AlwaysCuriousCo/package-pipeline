@@ -146,6 +146,43 @@ class ApiScopingTest extends TestCase
         $this->assertDatabaseHas('packages', ['id' => $this->openPackage->id]);
     }
 
+    /**
+     * A sync error is written from the exception verbatim, so it carries the
+     * provider's own words about somebody's repository — a URL, a host, a
+     * refused credential. A public repository makes its packages readable by
+     * every credential in the registry, and none of them was granted that.
+     */
+    public function test_a_sync_error_is_withheld_from_a_caller_that_only_reads_the_public_repository(): void
+    {
+        $reason = 'Failed to fetch https://git.internal.example/acme/widgets.git';
+
+        $this->openPackage->forceFill(['sync_error' => $reason])->save();
+        $this->myPackage->forceFill(['sync_error' => $reason])->save();
+
+        $plain = $this->deployTokenFor($this->mine);
+
+        // Reached through the public branch and no further: the field is absent
+        // rather than empty, because "no error" is not what is being said.
+        $this->withToken($plain)
+            ->getJson("/api/v1/packages/{$this->openPackage->id}")
+            ->assertOk()
+            ->assertJsonMissingPath('data.sync.error');
+
+        // Both branches in one response, which is where a listing decides it
+        // per row or not at all: mine/widgets first, open/widgets second.
+        $this->withToken($plain)
+            ->getJson('/api/v1/packages')
+            ->assertOk()
+            ->assertJsonPath('data.0.sync.error', $reason)
+            ->assertJsonMissingPath('data.1.sync.error');
+
+        // Its own repository, where the reason is the whole reason to ask.
+        $this->withToken($plain)
+            ->getJson("/api/v1/packages/{$this->myPackage->id}")
+            ->assertOk()
+            ->assertJsonPath('data.sync.error', $reason);
+    }
+
     public function test_a_scoped_token_creates_syncs_and_deletes_inside_its_grant(): void
     {
         $plain = $this->deployTokenFor($this->mine);

@@ -30,10 +30,10 @@ class PackageDetailResource extends PackageResource
     /**
      * @return array<string, mixed>
      */
-    protected function syncState(): array
+    protected function syncState(Request $request): array
     {
         return [
-            ...parent::syncState(),
+            ...parent::syncState($request),
             // What a CI script polls after triggering a sync: true until the
             // batch importing this package's versions has finished.
             'running' => $this->resource->syncRunning(),
