@@ -80,9 +80,15 @@ class SbomExport
      */
     public function filename(): string
     {
-        $scope = $this->package === null ? 'registry' : str_replace('/', '-', (string) $this->package->name);
+        // Folded to the characters a filename may safely carry rather than
+        // just having its slash swapped: a package name is adopted verbatim
+        // from a repository's composer.json, and one carrying a backslash or a
+        // quote would have the response's Content-Disposition refuse to build.
+        $scope = $this->package === null
+            ? 'registry'
+            : preg_replace('#[^A-Za-z0-9._-]+#', '-', (string) $this->package->name);
 
-        return "sbom-{$scope}.cdx.json";
+        return 'sbom-'.(trim((string) $scope, '-.') ?: 'package').'.cdx.json';
     }
 
     /**

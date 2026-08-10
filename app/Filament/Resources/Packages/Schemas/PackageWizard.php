@@ -158,8 +158,13 @@ class PackageWizard
         // Normalized here as the model would on save, so the manifest is read
         // from the same place the sync will read it from — the field admits
         // "/packages/widgets/", the provider APIs do not.
-        $package->subdirectory = (string) $get('subdirectory');
-        rescue(fn () => $package->normalizeSubdirectory(), report: false);
+        //
+        // Through the model, which answers with the root for a subdirectory it
+        // refuses — see Package::storableSubdirectory(). A traversal is caught
+        // by the field's own rule long before this runs, so reaching here
+        // means that rule was not applied, which is exactly when the value
+        // read below must not be the one that was refused.
+        $package->subdirectory = Package::storableSubdirectory($get('subdirectory'));
 
         $package->linkSource();
 

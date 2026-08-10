@@ -172,7 +172,20 @@ class ArchiveSubtree
                 continue;
             }
 
-            $kept[$index] = $root.'/'.substr($name, strlen($prefix));
+            $relative = substr($name, strlen($prefix));
+
+            // Everything after the prefix is the provider's, and it is about
+            // to become a path inside an archive this registry stores and
+            // hands to Composer clients to unpack. A git tree cannot hold a
+            // `..` component or an absolute path, so an archive that does is
+            // not one to re-root and publish under a package's name — it is
+            // one to refuse, and let the next sync try again.
+            throw_if(
+                preg_match('#(^|/)\.\.(/|$)#', $relative) === 1 || str_starts_with($relative, '/'),
+                new RuntimeException("The repository's archive contains an entry that escapes \"{$subdirectory}\": {$name}."),
+            );
+
+            $kept[$index] = $root.'/'.$relative;
         }
 
         throw_if($kept === [], new RuntimeException(

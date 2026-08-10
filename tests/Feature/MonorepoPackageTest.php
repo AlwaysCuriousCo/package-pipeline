@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Services\ArchiveSubtree;
 use App\Services\PackageSynchronizer;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -334,6 +335,45 @@ class MonorepoPackageTest extends TestCase
         $this->expectException(RuntimeException::class);
 
         app(PackageSynchronizer::class)->sync($package);
+    }
+
+    /**
+     * The re-rooted archive is stored and handed to Composer clients to
+     * unpack, so an entry climbing out of the subtree is refused rather than
+     * republished under a package's name. A git tree cannot hold one, which is
+     * exactly why an archive that does is not to be trusted.
+     */
+    public function test_an_archive_entry_that_escapes_the_subdirectory_is_refused(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'hostile-zip-');
+
+        $zip = new ZipArchive;
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString('acme-mono-a1b2c3d/packages/widgets/composer.json', '{"name":"acme/widgets"}');
+        $zip->addFromString('acme-mono-a1b2c3d/packages/widgets/../../../escaped.php', '<?php // elsewhere');
+        $zip->close();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessageMatches('/escapes/');
+
+        (new ArchiveSubtree)->reroot($path, 'packages/widgets', 'acme-widgets-1.0.0');
+    }
+
+    /**
+     * A subdirectory the model refuses must never reach a provider's API, and
+     * the field's validation rule is not the only thing between the two: the
+     * panel reads a repository through an unsaved package, and what that
+     * package carries must never be what normalization threw on — it would be
+     * interpolated into an authenticated API path.
+     */
+    public function test_a_refused_subdirectory_is_never_handed_on(): void
+    {
+        $this->assertSame('', Package::storableSubdirectory('../../../etc'));
+        $this->assertSame('', Package::storableSubdirectory('packages/../../escape'));
+        $this->assertSame('', Package::storableSubdirectory(null));
+
+        // And a merely untidy one is still folded rather than dropped.
+        $this->assertSame('packages/widgets', Package::storableSubdirectory('/packages//widgets/'));
     }
 
     /**

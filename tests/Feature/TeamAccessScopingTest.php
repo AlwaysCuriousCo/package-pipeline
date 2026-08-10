@@ -78,6 +78,28 @@ class TeamAccessScopingTest extends TestCase
     }
 
     /**
+     * The repositories a user can reach, the default one (whose path is null)
+     * last.
+     *
+     * Ordered here rather than in SQL on purpose: where a null sorts is not
+     * settled by the standard, and PostgreSQL puts it last on an ascending
+     * sort where SQLite and MySQL put it first — so an assertion that trusted
+     * the database's ordering would pass on two of the three engines this is
+     * supported on and fail on the third.
+     *
+     * @return list<string|null>
+     */
+    private function visibleRepositoryPaths(User $user): array
+    {
+        return Repository::query()
+            ->visibleToUser($user)
+            ->pluck('path')
+            ->sortBy(fn (?string $path): string => $path ?? "\xff", SORT_STRING)
+            ->values()
+            ->all();
+    }
+
+    /**
      * A publishable artifact: a zip whose composer.json names the package.
      */
     private function makeZip(string $name): UploadedFile
@@ -314,10 +336,7 @@ class TeamAccessScopingTest extends TestCase
         $team->packages()->attach($this->widgets);
         $team->users()->attach($user);
 
-        $this->assertSame(
-            [null, 'internal'],
-            Repository::query()->visibleToUser($user)->orderBy('path')->pluck('path')->all(),
-        );
+        $this->assertSame(['internal', null], $this->visibleRepositoryPaths($user));
     }
 
     public function test_a_team_repository_grant_makes_the_repository_visible(): void
@@ -328,10 +347,7 @@ class TeamAccessScopingTest extends TestCase
         $team->repositories()->attach($this->other);
         $team->users()->attach($user);
 
-        $this->assertSame(
-            [null, 'other'],
-            Repository::query()->visibleToUser($user)->orderBy('path')->pluck('path')->all(),
-        );
+        $this->assertSame(['other', null], $this->visibleRepositoryPaths($user));
     }
 
     public function test_the_panel_package_list_shows_a_teams_grants(): void

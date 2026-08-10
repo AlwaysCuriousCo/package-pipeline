@@ -236,13 +236,9 @@ class PackageForm
      */
     private static function normalizedSubdirectory(Get $get): string
     {
-        $package = new Package(['subdirectory' => (string) $get('subdirectory')]);
-
         // A traversal is refused by the field's own rule; here it only has to
         // not blow up while another field is being validated.
-        rescue(fn () => $package->normalizeSubdirectory(), report: false);
-
-        return (string) $package->subdirectory;
+        return Package::storableSubdirectory($get('subdirectory'));
     }
 
     public static function source(): Select

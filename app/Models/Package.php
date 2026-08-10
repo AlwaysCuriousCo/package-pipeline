@@ -370,6 +370,35 @@ class Package extends Model
     }
 
     /**
+     * A typed subdirectory folded to what would be stored, and to the
+     * repository root when it is something normalizeSubdirectory() refuses.
+     *
+     * The panel builds a package it has not saved and reads a repository's
+     * manifest through it, so the value has to be folded before the save as
+     * well as during it. Answering with the root rather than with what was
+     * typed is the whole point: normalizeSubdirectory() throws *before* it
+     * assigns, so a caller that swallowed the exception would be left holding
+     * the very traversal it refused — and would go on to interpolate it into a
+     * provider API path, with the source's credential attached.
+     *
+     * The refusal proper belongs to the form and the API, which report it on
+     * the field that has to change. This is what the paths downstream of that
+     * refusal are handed, and it is deliberately not the input.
+     */
+    public static function storableSubdirectory(?string $typed): string
+    {
+        $package = new self(['subdirectory' => (string) $typed]);
+
+        try {
+            $package->normalizeSubdirectory();
+        } catch (InvalidArgumentException) {
+            return '';
+        }
+
+        return (string) $package->subdirectory;
+    }
+
+    /**
      * Whether this package is published from somewhere inside its repository
      * rather than from the repository root — the monorepo case, which every
      * path that reads a composer.json or stores an archive has to handle
