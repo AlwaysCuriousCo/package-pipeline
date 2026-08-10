@@ -75,14 +75,47 @@ class ComposerRepositoryController extends Controller
 
     /**
      * The repository root that Composer fetches first.
+     *
+     * Conditional, because this is the one document Composer cannot lazily
+     * skip: every `composer update` and every `composer install` fetches it,
+     * and building it means asking which vendors this principal may be served
+     * — a query over every visible package with a correlated existence check
+     * per row, to produce about a kilobyte. A 304 skips all of it.
+     *
+     * Composer sends `If-Modified-Since` here, but only for a response that
+     * carried Last-Modified, and getting that right for a *set* is the whole
+     * difficulty. A set can shrink, and a validator cut from the rows would
+     * then move backwards — which, compared with `>=`, is a client 304ing
+     * forever on a document it may no longer be entitled to. So the fingerprint
+     * below is what is compared, and the date served is only ever the moment
+     * that fingerprint was first seen. It cannot move backwards by
+     * construction, whatever the rows do.
+     *
+     * Private and Vary'd for the same reason /p2 is: what this URL answers
+     * depends on who asked.
      */
-    public function root(Request $request): JsonResponse
+    public function root(Request $request): Response
     {
         $repository = $this->repository($request);
 
-        return response()->json([
+        $response = response('', 200, [
+            'Content-Type' => 'application/json',
+            'Cache-Control' => 'private, no-cache',
+            'Vary' => 'Authorization',
+        ]);
+
+        $state = $this->rootState($request, $repository);
+
+        $response->setLastModified($state['changed']);
+        $response->setEtag($state['fingerprint'], weak: true);
+
+        if ($response->isNotModified($request)) {
+            return $response;
+        }
+
+        return $response->setContent(json_encode([
             'metadata-url' => $repository->pathPrefix().'/p2/%package%.json',
-            'available-package-patterns' => $this->availablePackagePatterns($request),
+            'available-package-patterns' => $this->availablePackagePatterns($request, $state['fingerprint']),
             // Without this key Composer's auditor skips every package resolved
             // from here — silently, because "this repository publishes no
             // advisories" and "this repository was never asked" look identical
@@ -104,7 +137,89 @@ class ComposerRepositoryController extends Controller
             ],
             'search' => $repository->url('/search.json').'?q=%query%&type=%type%',
             'list' => $repository->url('/list.json'),
-        ]);
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * A cheap fingerprint of everything the root document is built from, and
+     * the moment it last changed.
+     *
+     * The fingerprint is one aggregate over the same visibility-scoped query
+     * that answers list.json — how many packages this principal is served, when
+     * one of them last changed, and the highest id among them — plus the facts
+     * about the repository itself that reach the body. It moves for every
+     * change that matters and reads no rows to do it: a package published, a
+     * package deleted, a rename, a grant given or taken away (all of which
+     * change the *set*, so the count and the maxima move with them), the mount
+     * moving, or upstreams being switched on.
+     *
+     * The date is not derived from the aggregate at all, and that is
+     * deliberate. Every part of the aggregate can go *down* — a package deleted
+     * takes the count and both maxima back to where they were — and a
+     * Last-Modified that goes backwards is worse than none, because Symfony
+     * compares it with `>=` and a client holding the later date is then told
+     * "not modified" forever. So the fingerprint is remembered against the
+     * moment it was first served, and that moment is what goes on the wire: it
+     * only ever moves forward, whatever the rows did to get there.
+     *
+     * A cold cache answers `now`, which is later than anything already handed
+     * out — so the worst a flushed store costs is one re-fetch per client.
+     *
+     * @return array{fingerprint: string, changed: CarbonImmutable}
+     */
+    private function rootState(Request $request, Repository $repository): array
+    {
+        $packages = (array) $this->servedPackages($request)
+            ->toBase()
+            ->selectRaw('count(*) as package_count, max(packages.updated_at) as changed_at, coalesce(max(packages.id), 0) as newest_id')
+            ->first();
+
+        $scope = $repository->getKey().':'.($this->token($request)?->getKey() ?? 'anonymous');
+
+        $fingerprint = hash('xxh128', implode('|', [
+            self::PAYLOAD_REVISION,
+            $repository->url(),
+            $repository->updated_at?->getTimestamp() ?? 0,
+            // Whether the patterns are this registry's own vendors or the
+            // universal one, which no count of packages would ever reveal.
+            $repository->mirrors() ? 'mirror' : 'local',
+            $scope,
+            (int) ($packages['package_count'] ?? 0),
+            (string) ($packages['changed_at'] ?? ''),
+            (int) ($packages['newest_id'] ?? 0),
+        ]));
+
+        return ['fingerprint' => $fingerprint, 'changed' => $this->firstSeen($scope, $fingerprint)];
+    }
+
+    /**
+     * When this principal's root document last became what it now is.
+     *
+     * Held per principal rather than per fingerprint, so that a set which
+     * returns to a shape it held before — a package added and then removed
+     * again, a grant given back — is dated by when it returned and not by when
+     * it was last there. Dating it by the earlier visit would hand back a date
+     * before one a client already holds, which is exactly the 304-forever this
+     * exists to avoid.
+     */
+    private function firstSeen(string $scope, string $fingerprint): CarbonImmutable
+    {
+        $key = "composer:root:{$scope}";
+        $seen = cache()->get($key);
+
+        if (is_array($seen) && ($seen['fingerprint'] ?? null) === $fingerprint && is_string($seen['changed'] ?? null)) {
+            return CarbonImmutable::parse($seen['changed']);
+        }
+
+        $changed = CarbonImmutable::now();
+
+        cache()->put(
+            $key,
+            ['fingerprint' => $fingerprint, 'changed' => $changed->toIso8601String()],
+            now()->addDays((int) config('registry.metadata_cache.days')),
+        );
+
+        return $changed;
     }
 
     /**
@@ -139,13 +254,33 @@ class ComposerRepositoryController extends Controller
      * inline list of every name would have to be rebuilt and re-sent on each
      * root fetch, and it is the one document Composer cannot lazily skip.
      *
+     * Cached under the fingerprint the validators are cut from, on the same
+     * discipline as the /p2 payload: the entry is superseded rather than
+     * invalidated, so nothing that publishes, deletes or re-scopes a package
+     * has to remember this cache exists. It is only reached at all when the
+     * request was not already answered 304 above.
+     *
      * @return list<string>
      */
-    private function availablePackagePatterns(Request $request): array
+    private function availablePackagePatterns(Request $request, string $fingerprint): array
     {
-        return $this->repository($request)->mirrors()
-            ? ['*/*']
-            : $this->servedVendorPatterns($request);
+        if ($this->repository($request)->mirrors()) {
+            return ['*/*'];
+        }
+
+        $key = "composer:patterns:{$fingerprint}";
+
+        $cached = cache()->get($key);
+
+        if (is_array($cached)) {
+            return array_values(array_map(strval(...), $cached));
+        }
+
+        $patterns = $this->servedVendorPatterns($request);
+
+        cache()->put($key, $patterns, now()->addDays((int) config('registry.metadata_cache.days')));
+
+        return $patterns;
     }
 
     /**
@@ -352,12 +487,17 @@ class ComposerRepositoryController extends Controller
      * version row, every `metadata` column decoded, and the megabytes they
      * render back into.
      *
-     * The other three read endpoints deliberately get no validators.
-     * `packages.json` is three URL templates built from a row already in
-     * memory, so a 304 would skip no work at all. `list.json` and
-     * `search.json` answer a *set* of packages chosen by the caller's grants,
-     * and there is no cheap fingerprint of that set — the query that would
-     * produce one is the query that answers them.
+     * `list.json` and `search.json` deliberately get none. Both answer a *set*
+     * of packages chosen by the caller's grants, and for them the query that
+     * would fingerprint the set is the query that answers them — a 304 would
+     * skip nothing. Neither is on a hot path either: an ordinary resolve goes
+     * through metadata-url, and these are reached by a wildcard requirement or
+     * a `composer show`.
+     *
+     * `packages.json` used to be in that list, on the grounds that it was three
+     * URL templates built from a row already in memory. It has not been that
+     * since it began advertising vendor patterns, and it is the one document
+     * Composer always fetches; it now carries validators of its own.
      */
     public function metadata(Request $request, string $vendor, string $package): Response
     {

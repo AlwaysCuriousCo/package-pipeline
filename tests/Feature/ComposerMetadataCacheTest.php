@@ -16,13 +16,15 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Conditional requests and the rendered-payload cache on the `/p2` metadata
- * endpoint.
+ * Conditional requests and the rendered-payload caches on the two documents a
+ * `composer update` always fetches: `/p2` per package, and the repository root
+ * once.
  *
- * Composer's downloader sends If-Modified-Since on every metadata refetch, so
- * this is where a `composer update` against an unchanged registry stops paying
- * for a rebuilt, re-transferred payload per package — without ever letting a
- * 304, or a cache hit, answer a question the requester was not allowed to ask.
+ * Composer's downloader sends If-Modified-Since on every refetch of both, so
+ * this is where an update against an unchanged registry stops paying for a
+ * rebuilt, re-transferred payload per package and a full enumeration of the
+ * caller's grants on top — without ever letting a 304, or a cache hit, answer a
+ * question the requester was not allowed to ask.
  */
 class ComposerMetadataCacheTest extends TestCase
 {
@@ -439,6 +441,134 @@ class ComposerMetadataCacheTest extends TestCase
         $this->withToken(Token::issue($stranger, 'stranger', [TokenAbility::RepositoryRead])->plainText)
             ->get('/r/internal/p2/acme/widgets.json')
             ->assertNotFound();
+    }
+
+    /**
+     * A second served package, under a vendor of its own.
+     */
+    private function makeSecondPackage(string $name = 'other/thing'): Package
+    {
+        $package = Package::factory()->create(['name' => $name]);
+
+        $package->versions()->create([
+            'version' => '1.0.0',
+            'order' => '1.0.0.0',
+            'reference' => str_repeat('e', 40),
+            'is_dev' => false,
+            'metadata' => ['name' => $name, 'version' => '1.0.0'],
+        ]);
+
+        return $package;
+    }
+
+    public function test_the_root_document_carries_validators_and_answers_304(): void
+    {
+        $this->makeServedPackage();
+
+        $response = $this->get('/packages.json')->assertOk();
+
+        $this->assertNotNull($response->headers->get('Last-Modified'));
+        $this->assertStringStartsWith('W/"', (string) $response->headers->get('ETag'));
+        $this->assertSame('no-cache, private', $response->headers->get('Cache-Control'));
+        $this->assertSame('Authorization', $response->headers->get('Vary'));
+
+        $this->get('/packages.json', ['If-Modified-Since' => (string) $response->headers->get('Last-Modified')])
+            ->assertStatus(304);
+    }
+
+    public function test_a_new_vendor_invalidates_the_root_document(): void
+    {
+        $this->makeServedPackage();
+
+        $modifiedSince = $this->lastModified('/packages.json');
+
+        $this->travel(1)->minutes();
+
+        $this->makeSecondPackage();
+
+        $this->get('/packages.json', ['If-Modified-Since' => $modifiedSince])
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*', 'other/*']);
+    }
+
+    /**
+     * The case a validator cut from the rows cannot survive: the set gets
+     * smaller, so its count and both its maxima go back to where they were. A
+     * date derived from them would go backwards, and Symfony compares with
+     * `>=` — so the client would be told its copy was current forever, and go
+     * on asking about a vendor this registry no longer serves.
+     */
+    public function test_a_withdrawn_vendor_invalidates_the_root_document(): void
+    {
+        $this->makeServedPackage();
+        $withdrawn = $this->makeSecondPackage();
+
+        $modifiedSince = $this->lastModified('/packages.json');
+
+        $this->travel(1)->minutes();
+
+        $withdrawn->delete();
+
+        $this->get('/packages.json', ['If-Modified-Since' => $modifiedSince])
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*']);
+    }
+
+    /**
+     * The patterns are cut from the caller's own grants, so the cache that
+     * holds them must never answer across principals — a vendor prefix is less
+     * than a name, but it is still something this token was not shown.
+     */
+    public function test_the_root_document_is_scoped_to_the_principal(): void
+    {
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+
+        $this->makeServedPackage()->update(['repository_id' => $internal->id]);
+        $this->makeSecondPackage()->update(['repository_id' => $internal->id]);
+
+        $granted = DeployToken::factory()->create();
+        $granted->packages()->attach(Package::query()->where('name', 'acme/widgets')->firstOrFail());
+
+        $everything = DeployToken::factory()->create();
+        $everything->repositories()->attach($internal);
+
+        $this->withToken(Token::issue($everything, 'all', [TokenAbility::RepositoryRead])->plainText)
+            ->get('/r/internal/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*', 'other/*']);
+
+        $this->withToken(Token::issue($granted, 'one', [TokenAbility::RepositoryRead])->plainText)
+            ->get('/r/internal/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*']);
+    }
+
+    /**
+     * The point of all of it: the one document Composer always fetches stops
+     * enumerating every package the caller can see in order to produce a
+     * kilobyte of vendor prefixes.
+     */
+    public function test_an_unchanged_root_document_reads_no_package_names(): void
+    {
+        $this->makeServedPackage();
+
+        $modifiedSince = $this->lastModified('/packages.json');
+
+        $queries = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        $this->get('/packages.json', ['If-Modified-Since' => $modifiedSince])->assertStatus(304);
+
+        $touched = array_values(array_filter(
+            $queries,
+            fn (string $sql): bool => str_contains($sql, 'from "packages"'),
+        ));
+
+        $this->assertCount(1, $touched);
+        $this->assertStringContainsString('count(*)', $touched[0]);
     }
 
     public function test_a_revoked_token_cannot_keep_revalidating(): void
