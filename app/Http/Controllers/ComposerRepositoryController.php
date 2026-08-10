@@ -44,7 +44,7 @@ class ComposerRepositoryController extends Controller
      * than from the bytes, so nothing else would tell a client whose copy
      * predates a deploy that what it holds is no longer what this code sends.
      */
-    private const PAYLOAD_REVISION = 2;
+    private const PAYLOAD_REVISION = 3;
 
     public function __construct(private readonly ArchiveStore $archives) {}
 
@@ -467,7 +467,7 @@ class ComposerRepositoryController extends Controller
             // order is semantic order (1.10.0 above 1.9.0). Branches have no
             // release line to sort along, so dev versions keep name order.
             ->when($dev, fn (Builder $query) => $query->orderByDesc('version'))
-            ->unless($dev, fn (Builder $query) => $query->orderByDesc('order'))
+            ->unless($dev, fn (Builder $query) => $this->orderReleases($query))
             ->get()
             ->map(fn (PackageVersion $version): array => [
                 ...$version->metadata,
@@ -497,6 +497,44 @@ class ComposerRepositoryController extends Controller
             'minified' => 'composer/2.0',
             'packages' => [$name => MetadataMinifier::minify($versions)],
         ], JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Newest release first, spelled so that all three supported databases
+     * agree on what "first" means.
+     *
+     * `order` is nullable — a row synced before the column existed has none
+     * until the next sync backfills it — and where a null sorts is not
+     * settled by the standard. Postgres treats NULL as the largest value and
+     * so puts it *first* on a descending sort; MySQL and SQLite treat it as
+     * the smallest and put it last. The same registry served from Postgres
+     * would therefore have floated its un-backfilled rows to the top of every
+     * metadata document, where Composer reads the newest release — and the
+     * minifier would have made that row the complete one every later version
+     * is expressed as a diff against.
+     *
+     * So the placement is stated rather than inherited: unordered rows sort
+     * last everywhere, which is what the other two databases already did and
+     * what an unknown position deserves.
+     *
+     * The version is the tiebreak, because `order` is not unique — two
+     * spellings of one release normalise to the same string — and a document
+     * whose version sequence depends on the planner's whim would change its
+     * bytes without anything about the package changing.
+     *
+     * @param  Builder<PackageVersion>  $query
+     * @return Builder<PackageVersion>
+     */
+    private function orderReleases(Builder $query): Builder
+    {
+        // `order` is a reserved word, so the raw fragment borrows the
+        // connection's own quoting rather than picking one dialect's.
+        $order = $query->getQuery()->getGrammar()->wrap('order');
+
+        return $query
+            ->orderByRaw("case when {$order} is null then 1 else 0 end")
+            ->orderByDesc('order')
+            ->orderByDesc('version');
     }
 
     /**
