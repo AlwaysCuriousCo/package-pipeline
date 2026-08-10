@@ -103,13 +103,37 @@ In any consuming project:
 
 ```bash
 composer config repositories.private composer https://packages.example.com
+composer config http-basic.packages.example.com token pp_your-token
 composer require acme/core
 ```
 
-Composer will resolve versions from the registry and download dists through it; every zipball is served from the archive stored at sync time (and verified against its published `shasum`), so GitHub is never in the download path.
+Composer will resolve versions from the registry and download dists through it; every zipball is served from the archive stored at sync time (and verified against its published `shasum`), so the provider is never in the download path. `composer audit` works too — the registry answers the advisory endpoint for the packages it serves, from advisories recorded against them in the panel.
 
-> [!WARNING]
-> The Composer endpoints (`/packages.json`, `/p2/...`, `/dist/...`) are currently **unauthenticated** — anyone who can reach the app over the network can list and install your packages. Until repository-level auth lands, run the app somewhere access-controlled: a VPN, a private network, or behind a proxy that enforces auth.
+Each package's admin page prints both configuration lines with its own name and repository URL already filled in.
+
+### Authentication
+
+Every Composer endpoint is behind an access token: `/packages.json`, `/search.json`, `/list.json`, `/p2/...`, `/dist/...`, `/security-advisories`, and the artifact upload endpoint. The token travels as the HTTP Basic password (the username is ignored) or as a bearer token, and a request without one is answered `401` with a `WWW-Authenticate` challenge — which is also what makes an interactive `composer install` stop and ask for credentials rather than fail obscurely.
+
+Tokens come in two kinds, and the difference is what they can see:
+
+- **Personal tokens**, issued by each panel user from **API tokens** in the user menu. A personal token sees exactly what its owner sees, so revoking a person's panel access revokes their Composer access with it.
+- **Deploy tokens**, created under **Deploy tokens** in the sidebar. These are machine principals with no user behind them, for CI. A deploy token sees the repositories and packages it was granted — or everything, if it was granted nothing at all, which is worth knowing before you create one and walk away.
+
+Either kind carries **read** (install packages) or **write** (publish artifact uploads) abilities and can be given an expiry. The plain token exists only at the moment it is issued; the row keeps its sha256 and a short prefix, so a lost token is replaced rather than recovered. Revoking is a soft delete, which keeps the audit trail of what the token was and when it was last used.
+
+Failed authentications are rate limited per address (30 a minute), and the 429 that follows says in as many words that it is a rate limit rather than a rejected token — because the place that message gets read is a CI log.
+
+### Repositories, and the public default
+
+A **repository** here is a Composer repository this registry serves. Every package belongs to exactly one. The default repository answers at the site root; every other one you create is mounted under `/r/{path}`, so a single installation can serve independent registries — a public one and an internal one, say — with independent access rules.
+
+Whether a repository can be read without a token is the `public` flag on it. Repositories you create are private.
+
+> [!IMPORTANT]
+> The **default repository is created public**. It stands in for the whole registry as it behaved before repositories and tokens existed, and packages created without choosing a repository land in it — so on a fresh installation, anyone who can reach the app can list and install everything in it. Open **Repositories → Default** and turn **Public** off (or move the packages to a repository of your own) before the app is reachable from anywhere you don't control.
+
+A presented token is always checked, public repository or not. A CI system holding a revoked token hears about it as a `401` rather than continuing to work by accident until someone makes the repository private.
 
 ## Configuration reference
 
@@ -134,7 +158,7 @@ vendor/bin/pint      # apply the fixes `composer lint` reports
 
 CI runs all three on every pull request, so a branch that passes them locally is a branch that goes green.
 
-`composer run dev` runs the web server, a queue worker, and `pail` log streaming together — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever. It multiplexes them with `npx concurrently`, which is the one thing here that wants Node installed; without it, run the three in separate terminals:
+`composer run dev` runs the web server, a queue worker, and `pail` log streaming together in one terminal — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever. `php artisan dev:list` shows what it starts; the equivalent three terminals are:
 
 ```bash
 php artisan serve
