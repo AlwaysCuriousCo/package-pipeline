@@ -93,6 +93,46 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Prometheus Metrics
+    |--------------------------------------------------------------------------
+    |
+    | A scrape endpoint at /metrics, answering registry totals, sync health,
+    | queue depth and — when a repository mirrors — what the cache is holding.
+    | It is what `/up` cannot be: that endpoint proves the container boots and
+    | touches neither the session nor the database, which makes it a liveness
+    | probe and nothing more.
+    |
+    | Off by default, and that is a decision rather than caution. Metrics
+    | endpoints are conventionally unauthenticated because they conventionally
+    | sit on an internal network — but a Composer registry is routinely
+    | published to the internet so CI can reach it, and an on-by-default
+    | endpoint would tell any passer-by how many private packages exist, how
+    | much traffic they get and whether the queue is stuck. Enabling it is one
+    | line; widening an existing installation's exposure on upgrade is not
+    | something a release should do quietly.
+    |
+    | `token` is then optional. Set, it is a bearer token every scrape must
+    | present. Left empty, the endpoint is open — the right answer when the
+    | port genuinely is not routable, and the wrong one whenever there is doubt.
+    |
+    | `cache_seconds` is how long one rendered document is reused. Two
+    | Prometheus replicas scraping the same instance is the ordinary
+    | deployment, and the second should cost a cache read. This bounds
+    | resolution rather than correctness: Prometheus timestamps a sample when it
+    | collects it. Sized just under the conventional 15-second scrape interval
+    | so consecutive scrapes of one replica still each do the work. Zero turns
+    | the cache off.
+    |
+    */
+
+    'metrics' => [
+        'enabled' => (bool) env('METRICS_ENABLED', false),
+        'token' => env('METRICS_TOKEN'),
+        'cache_seconds' => (int) env('METRICS_CACHE_SECONDS', 10),
+    ],
+
     'mirror' => [
         'metadata_ttl_minutes' => (int) env('MIRROR_METADATA_TTL_MINUTES', 60),
         'missing_ttl_minutes' => (int) env('MIRROR_MISSING_TTL_MINUTES', 10),

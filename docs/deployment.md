@@ -119,7 +119,13 @@ it is the thing a load balancer will be pointed at:
 That is a reasonable liveness probe and a poor readiness probe. It will report
 a perfectly healthy container that has not synced anything in a week.
 
-For the things it doesn't cover:
+**`/metrics` is where that is answered.** A Prometheus scrape endpoint covering
+registry totals, sync health, queue depth and the mirror cache — off by default,
+one line to enable, optionally behind a bearer token. It is the mechanised
+version of most of the table below, and
+[docs/metrics.md](metrics.md) has the alert expressions.
+
+For the things neither covers, or if you would rather watch by hand:
 
 | Watch | How |
 | --- | --- |

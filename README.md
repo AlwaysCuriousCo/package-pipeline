@@ -369,6 +369,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
+- [docs/metrics.md](docs/metrics.md) — the Prometheus endpoint: what it exposes, why it is off by default, what to alert on, and what a scrape costs.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.

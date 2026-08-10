@@ -1,9 +1,11 @@
 <?php
 
+use App\Http\Controllers\MetricsController;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -14,6 +16,16 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
+        // The Prometheus scrape endpoint, registered here rather than in
+        // web.php so that it inherits none of the `web` group. A scraper holds
+        // no cookie and needs no CSRF token, and putting it behind the session
+        // middleware would start — and on the default `database` driver,
+        // *store* — a session for every scrape, which is one row every fifteen
+        // seconds for as long as the registry runs.
+        //
+        // It answers 404 until METRICS_ENABLED is set; see MetricsController
+        // for why an internet-facing registry does not ship this switched on.
+        then: fn () => Route::get('/metrics', MetricsController::class)->name('metrics'),
     )
     ->withMiddleware(function (Middleware $middleware): void {
         // TLS ends at the platform's load balancer, so without this the app

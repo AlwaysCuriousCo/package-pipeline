@@ -111,6 +111,19 @@ shape rather than a delta from a previous one.
   stdout for a scheduled extract. Nothing holds more than one row in memory:
   `downloads` is the fastest-growing table in the schema, so rows are streamed
   from a cursor. See [docs/download-analytics.md](docs/download-analytics.md).
+- A Prometheus scrape endpoint at `/metrics`: registry totals, sync health
+  (failing, never-synced and stale packages, and how long since anything
+  synced), queue depth on the database driver, failing outgoing webhook
+  endpoints, and what the mirror cache holds when a repository mirrors. This is
+  what `/up` cannot be — that endpoint proves the container boots and touches
+  neither the session nor the database.
+
+  **Off by default** (`METRICS_ENABLED`), because a Composer registry is
+  routinely published to the internet and these numbers describe the
+  installation to anyone who asks; while it is off the path answers 404.
+  `METRICS_TOKEN` adds bearer authentication. Nothing is labelled with a package
+  name, and nothing counts the `downloads` table. See
+  [docs/metrics.md](docs/metrics.md).
 
 ### Changed
 
