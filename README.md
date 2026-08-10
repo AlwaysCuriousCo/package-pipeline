@@ -171,15 +171,73 @@ A presented token is always checked, public repository or not. A CI system holdi
 
 ## Configuration reference
 
-Everything lives in `.env`; the interesting knobs beyond a stock Laravel app:
+Everything lives in `.env`, and `.env.example` carries the same notes in situ. Below are the knobs that belong to this app rather than to a stock Laravel one; the stock ones that matter most in production — `QUEUE_CONNECTION`, `CACHE_STORE`, `FILESYSTEM_DISK`, `AWS_*` — are covered under [Deploying](#deploying).
+
+**Sources and syncing**
 
 | Variable | Purpose |
 | --- | --- |
 | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | The GitHub App that powers sources. The key takes a path to the `.pem` or the key itself with `\n`-escaped newlines. |
+| `GITHUB_APP_WEBHOOK_SECRET` | The secret set on the app's own webhook — **this is the switch that turns account-wide auto-sync on**. With it, a push to any repository in any installation syncs that package straight away; without it, deliveries to `/incoming/github` are refused `503` and packages fall back to hooks of their own. Must match the value set on the app. See [docs/webhooks.md](docs/webhooks.md). |
 | `GITHUB_APP_SLUG` / `GITHUB_APP_API_URL` | Normally read from GitHub automatically; only set to skip that lookup or on GitHub Enterprise. |
-| `GITHUB_TOKEN` | Fallback token for packages with neither a connected source nor a token of their own. |
+| `GITHUB_TOKEN` | Last-resort token, used only for packages with neither a connected source nor a token of their own. Deliberately GitHub-only: it is never handed to another provider's API. Leave it empty once sources are set up. |
+
+GitLab needs no environment variables at all — a GitLab source carries its own token and API base URL on the source record. See [Connect a GitLab source](#connect-a-gitlab-source).
+
+**Storage and limits**
+
+| Variable | Purpose |
+| --- | --- |
 | `DIST_DISK` | Disk where version archives (Composer zipballs) are stored at sync time. Defaults to `FILESYSTEM_DISK`; set to `s3` on any deployment whose containers don't share a local disk. |
-| `ARTIFACT_UPLOAD_MAX_MB` | Largest artifact zip `POST /upload/{vendor}/{package}` accepts, in megabytes (default `100`). PHP's `upload_max_filesize` and `post_max_size` have to allow the same size. |
+| `ARTIFACT_UPLOAD_MAX_MB` | Largest artifact zip `POST /upload/{vendor}/{package}` accepts, in megabytes (default `100`). PHP's `upload_max_filesize` and `post_max_size` have to allow the same size, or PHP discards the body before the app sees it. |
+| `METADATA_CACHE_DAYS` | How long a rendered `/p2` payload is kept (default `7`). Entries are keyed by a fingerprint of the versions behind them, so they supersede themselves rather than needing to be cleared — this only bounds how long the leftovers linger. |
+| `METADATA_CACHE_MAX_KB` | Largest rendered payload worth storing (default `4096`). A bigger one is served from the version rows every time, which for a package that fat is the lesser problem. `0` turns the cache off entirely. |
+
+**Queue timing**
+
+| Variable | Purpose |
+| --- | --- |
+| `DB_QUEUE_RETRY_AFTER` | Seconds before the queue treats a job as abandoned and hands it to another worker (default `330`). Must stay above the longest job timeout (300s, a version import streaming a large archive) or a slow import runs twice at once, downloading and storing the same archive twice. Only raise it. `REDIS_QUEUE_RETRY_AFTER` is the same knob for a Redis queue, with the same default and the same rule. |
+
+**Notifications**
+
+| Variable | Purpose |
+| --- | --- |
+| `SLACK_BOT_USER_OAUTH_TOKEN` | Slack bot token (`xoxb-…`). Published releases and failed syncs are announced there on top of the panel's own notification bell. |
+| `SLACK_BOT_USER_DEFAULT_CHANNEL` | The channel to post in (`#releases`). Both variables are needed; leave either empty to skip Slack entirely. |
+
+## Command reference
+
+The panel is the usual way in, but everything an operator needs can be done without a browser — which is what makes this deployable to a platform whose only interactive surface is a command runner.
+
+**Packages and versions**
+
+| Command | What it does |
+| --- | --- |
+| `packages:sync [name]` | Sync versions from their sources. Takes a composer name or `owner/repo`; `--source=` narrows to one source, `--queue` dispatches instead of running inline. The scheduler runs `--queue` hourly. |
+| `package:rebuild [name]` | Re-import every version, trusting nothing already stored. The recovery path for corrupted archives or metadata drift — reach for it when a sync says everything is current but the output isn't. |
+| `package:add <url>` | Create a package from a VCS repository URL and queue its first sync. `--name=`, `--repo=` (which Composer repository to serve it from), `--token=`, `--no-webhook`, `--no-sync`. The scriptable equivalent of the create wizard. |
+| `package:delete <name>` | Delete a package, its versions and its stored archives. `--repo=` disambiguates a name served in more than one repository; `--force` skips the confirmation. |
+
+**Archives**
+
+| Command | What it does |
+| --- | --- |
+| `archives:clean` | Delete stored archives no version references. Re-synced versions leave their previous archive behind by design and nothing else removes one. `--dry-run` lists without deleting. Runs nightly. |
+| `archives:audit` | The other direction: find versions whose archive is no longer on the dist disk and clear the reference, so the next sync downloads it again. `--dry-run` reports without touching. Run it by hand after restoring a bucket. |
+| `downloads:recalculate` | Rebuild the denormalized `total_downloads` counters from the raw downloads rows. For when the counters and the chart disagree. |
+
+**Accounts and access**
+
+| Command | What it does |
+| --- | --- |
+| `admin:create --email=` | Create or update an admin account and give it every permission. Prompts for a password when a terminal is attached; `--link` (and any non-interactive runner) prints a sealed, single-use setup link instead. Re-run it after adding a Filament resource so `super_admin` picks up the new permissions. |
+| `user:add [email]` | Create an ordinary panel user and print their password setup link. `--name=`, `--role=` (repeatable; roles must already exist). |
+| `user:reset-password [email]` | Print a fresh single-use password link for an existing user. The recovery path when someone is locked out and there is no mail configured. |
+| `token:add <name>` | Issue a Composer access token. `--user=` for a personal token, `--deploy=` for a deploy token (created if it doesn't exist), `--ability=read\|write` (repeatable, read by default), `--expires-days=`. Prints the plain token once. |
+| `token:revoke <prefix>` | Revoke a token by the prefix shown in listings (`pp_ab1cd`). What you run when a credential leaks and you have only the log line naming it. |
+
+`php artisan shield:generate --all --panel=admin` and `php artisan db:seed --force` round these out — see [Roles and permissions](#roles-and-permissions).
 
 ## Development
 
@@ -263,6 +321,8 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 ## Further reading
 
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
+- [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
+- [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.
 - [docs/packistry-feature-analysis.md](docs/packistry-feature-analysis.md) — feature comparison against [Packistry](https://github.com/packistry/packistry) that informs the roadmap.
 
 ## License
