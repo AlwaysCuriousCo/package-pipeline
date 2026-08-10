@@ -11,6 +11,7 @@ use App\Filament\Resources\Sources\Pages\EditSource;
 use App\Filament\Resources\Sources\Pages\ListSources;
 use App\Filament\Resources\Sources\Pages\ViewSource;
 use App\Filament\Resources\Sources\RelationManagers\PackagesRelationManager;
+use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
@@ -18,6 +19,7 @@ use App\Services\GitHub\GitHubApp;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -347,6 +349,22 @@ class SourceResourceTest extends TestCase
                 TestAction::make('createPackage')->table(),
                 PackageResource::getUrl('create', ['source' => $source->getKey()]),
             );
+    }
+
+    public function test_a_package_can_be_synced_from_the_sources_package_list(): void
+    {
+        Queue::fake([SyncPackageJob::class]);
+
+        $source = Source::factory()->create(['account' => 'acme']);
+        $package = Package::factory()->create(['repository' => 'https://github.com/acme/widgets']);
+
+        Livewire::test(PackagesRelationManager::class, [
+            'ownerRecord' => $source,
+            'pageClass' => ViewSource::class,
+        ])
+            ->callAction(TestAction::make('sync')->table($package));
+
+        Queue::assertPushed(SyncPackageJob::class, fn (SyncPackageJob $job): bool => $job->package->is($package));
     }
 
     public function test_the_test_connection_action_records_the_result(): void

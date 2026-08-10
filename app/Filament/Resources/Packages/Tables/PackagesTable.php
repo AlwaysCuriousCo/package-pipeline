@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
+use App\Filament\Resources\Packages\Actions\QueueSyncsBulkAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Models\Package;
@@ -118,6 +119,24 @@ class PackagesTable
                 Filter::make('unreleased')
                     ->label('Unreleased only')
                     ->query(fn (Builder $query): Builder => $query->whereNull('latest_version')),
+                // The other half of the navigation badge: it says how many
+                // packages stopped syncing, this is how they are found.
+                Filter::make('sync_failing')
+                    ->label('Sync failing')
+                    ->query(fn (Builder $query): Builder => $query->whereNotNull('sync_error')),
+                // A package can stop syncing without recording an error —
+                // a webhook that no longer delivers and a scheduled run that
+                // never reached it look exactly like a quiet repository until
+                // the timestamp is compared against the hourly schedule.
+                // Packages published by artifact upload never sync at all, so
+                // they are not stale, they are simply not synced.
+                Filter::make('stale')
+                    ->label('Not synced in 24 hours')
+                    ->query(fn (Builder $query): Builder => $query
+                        ->whereNotNull('repository')
+                        ->where(fn (Builder $query): Builder => $query
+                            ->whereNull('last_synced_at')
+                            ->orWhere('last_synced_at', '<', now()->subDay()))),
             ])
             ->recordActions([
                 SyncPackageAction::make(),
@@ -127,6 +146,8 @@ class PackagesTable
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
+                    QueueSyncsBulkAction::sync(),
+                    QueueSyncsBulkAction::rebuild(),
                     DeleteBulkAction::make(),
                 ]),
             ]);

@@ -64,6 +64,25 @@ class PackageResource extends Resource
         ];
     }
 
+    /**
+     * Surfaces a package that has stopped syncing, which otherwise shows only
+     * as one red timestamp somewhere down the list.
+     *
+     * Counted through the resource's own query, so a scoped user is told
+     * about the packages they can actually open rather than the registry's.
+     */
+    public static function getNavigationBadge(): ?string
+    {
+        $failing = static::getEloquentQuery()->whereNotNull('sync_error')->count();
+
+        return $failing === 0 ? null : (string) $failing;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'danger';
+    }
+
     public static function getPages(): array
     {
         return [
