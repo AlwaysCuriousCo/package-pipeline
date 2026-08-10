@@ -99,10 +99,24 @@ advertising.
 
 The sharper edge is `archives:audit`. It compares the version rows against the
 disk it can see and clears the rows whose archive is missing. Run against a
-container holding only its own slice of a local disk, it will happily clear the
-archives every *other* container stored. Its one guard — refusing to act when
-the disk lists nothing at all — does not fire here, because the disk is not
-empty. It is merely wrong.
+container holding only its own slice of a local disk, every archive the *other*
+containers stored looks lost.
+
+What stops that being data loss is that the command refuses at scale: once more
+than ten percent of the versions it checked have no archive — and more than
+twenty of them — it declines to act and says so, because losing that share at
+once is what a wrong disk looks like, not what a registry losing files looks
+like. So the split-disk deployment above produces a nightly failure with an
+explanation rather than a nightly wipe. Below that threshold it still clears,
+which is the point: a handful of genuinely lost objects is exactly what it is
+for. `--force` is how an operator who really did lose the bucket gets through
+it, and `--dry-run` prints the list without touching anything.
+
+Two things it will never clear, for the same reason: a version of a package
+published by artifact upload has no repository to be re-synced from, so the
+`archive_path` and `shasum` are not a cache that can be rebuilt — they are the
+record of which object held those bytes and what they hashed to, which is what
+a restore is done with. Those are reported and left alone.
 
 ### Dist redirects and where `composer install` runs
 
@@ -201,21 +215,31 @@ from an orphan.
 php artisan archives:audit --dry-run
 ```
 
-Read the output before going further. `archives:audit` refuses outright to act
-when the disk lists no files at all, on the grounds that a misconfigured disk
-and total archive loss look identical — but a disk that is merely pointed at
-the wrong bucket, or half-restored, will get past that guard. The dry run is
-where you catch it.
+Read the output before going further, because this is the one situation the
+command is built to refuse. A misconfigured disk and genuine archive loss look
+identical from here, so `archives:audit` declines to clear anything when the
+disk lists no files at all, and equally when more than ten percent of the
+versions it checked (and more than twenty of them) come up missing. A restore
+that landed in the wrong bucket, or that is only half finished, trips the
+second of those. The dry run is where you find out which of the two you have.
 
 **2. Clear them.**
 
 ```bash
-php artisan archives:audit
+php artisan archives:audit --force
 ```
 
 This nulls `archive_path` and `shasum` on the affected rows, which is all it
 takes to make a version look unfinished. Nothing is deleted and no credential
-is needed; the repair itself is the sync's job.
+is needed; the repair itself is the sync's job. `--force` is what says you have
+read the dry run and the loss is real — drop it if the list was short enough
+that the command was going to act anyway.
+
+Versions of packages published by artifact upload are reported and skipped,
+with or without `--force`. There is no repository to re-sync them from, so
+their `archive_path` and `shasum` are the record of what to restore and what it
+should hash to. Restore those files from the backup by hand, or delete the
+versions; do not clear the rows first.
 
 **3. Re-download.**
 
