@@ -183,6 +183,12 @@ Whether a repository can be read without a token is the `public` flag on it. Rep
 
 A presented token is always checked, public repository or not. A CI system holding a revoked token hears about it as a `401` rather than continuing to work by accident until someone makes the repository private.
 
+### Reserved vendors
+
+Each repository can reserve vendor prefixes — `acme`, meaning every `acme/…` name. Only that repository may then introduce a package under it, whether through the panel, the API, `package:add`, an artifact upload, or a sync adopting the name a repository's `composer.json` declares. Packages published under the vendor before it was reserved keep working; a reservation governs what may be *introduced*.
+
+This is the server half of a dependency-confusion defence, and on its own it is the smaller half. A project that lists this registry alongside packagist.org will resolve a private name from whichever repository answers for it, and only that project's `composer.json` can settle that. [docs/dependency-confusion.md](docs/dependency-confusion.md) has the configuration to hand consuming projects, and why each part of it is there.
+
 ## Configuration reference
 
 Everything lives in `.env`, and `.env.example` carries the same notes in situ. Below are the knobs that belong to this app rather than to a stock Laravel one; the stock ones that matter most in production — `QUEUE_CONNECTION`, `CACHE_STORE`, `FILESYSTEM_DISK`, `AWS_*` — are covered under [Recommended drivers](docs/deployment.md#recommended-drivers).
@@ -334,6 +340,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 ## Further reading
 
 - [docs/api.md](docs/api.md) — the `/api/v1` management API: authentication, abilities, every endpoint, and a release pipeline end to end.
+- [docs/dependency-confusion.md](docs/dependency-confusion.md) — reserving vendor prefixes here, and the Composer configuration each consuming project needs so a public package cannot win a private name.
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.

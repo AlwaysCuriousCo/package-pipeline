@@ -35,6 +35,17 @@ class RepositoriesTable
                     ->label('Packages')
                     ->counts('packages')
                     ->sortable(),
+                TextColumn::make('reserved_vendors_count')
+                    ->label('Reserved vendors')
+                    ->counts('reservedVendors')
+                    ->badge()
+                    ->color('gray')
+                    ->tooltip('Vendor prefixes only this repository may introduce package names under.')
+                    // Nothing reserved is the ordinary case and reads better as
+                    // a blank cell than as a column of zeroes.
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (int $state): ?string => $state === 0 ? null : (string) $state)
+                    ->sortable(),
                 TextColumn::make('description')
                     ->limit(60)
                     ->toggleable(isToggledHiddenByDefault: true),

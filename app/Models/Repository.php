@@ -55,6 +55,16 @@ class Repository extends Model
     }
 
     /**
+     * The vendor prefixes only this repository may introduce names under.
+     *
+     * @return HasMany<ReservedVendor, $this>
+     */
+    public function reservedVendors(): HasMany
+    {
+        return $this->hasMany(ReservedVendor::class);
+    }
+
+    /**
      * Narrow to the repositories the presenting token may see, following
      * Package::scopeVisibleTo() principal for principal: a user's token sees
      * exactly what its owner does, an ungranted deploy token sees everything,

@@ -4,11 +4,13 @@ namespace App\Models;
 
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
+use App\Exceptions\VendorReserved;
 use App\Models\Concerns\LogsAuditableChanges;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubClient;
 use App\Services\GitHub\WebhookRegistrar;
 use App\Services\GitLab\GitLabClient;
+use App\Services\PackageSynchronizer;
 use App\Sources\RepositoryClient;
 use App\Sources\StubClient;
 use Database\Factories\PackageFactory;
@@ -101,6 +103,10 @@ class Package extends Model
             // without choosing one lands in the default repository at the
             // registry root.
             $package->repository_id ??= Repository::default()->id;
+
+            // After the repository is settled, because which repository the
+            // package lands in is half of the question this asks.
+            $package->guardReservedVendor();
 
             $package->linkSource();
 
@@ -244,6 +250,41 @@ class Package extends Model
             && ! $batch->finished()
             && ! $batch->cancelled()
             && $batch->pendingJobs > $batch->failedJobs;
+    }
+
+    /**
+     * Refuse to introduce a name under a vendor another repository has
+     * reserved — the backstop behind every path that creates or renames a
+     * package: the panel, the API, an artifact upload, `package:add`, and a
+     * sync adopting the name a repository's composer.json declares.
+     *
+     * Each of those checks first and reports the refusal in its own idiom, so
+     * this throwing is the case somebody forgot. It is deliberately a throw
+     * rather than a silent correction: a registry that quietly reassigns which
+     * repository publishes a vendor is the shape of the attack the reservation
+     * exists to stop.
+     *
+     * Only when the name or the repository is actually moving. Reserving a
+     * vendor must not retroactively wedge packages already published under it
+     * elsewhere: their next sync writes `last_synced_at` and nothing else, and
+     * failing that would take a registry down rather than protect one.
+     *
+     * @see ReservedVendor
+     * @see PackageSynchronizer::nameAfterSync() the rename guard this composes with
+     *
+     * @throws VendorReserved
+     */
+    public function guardReservedVendor(): void
+    {
+        if (! $this->isDirty('name') && ! $this->isDirty('repository_id')) {
+            return;
+        }
+
+        $conflict = ReservedVendor::conflictFor((string) $this->name, (int) $this->repository_id);
+
+        if ($conflict instanceof ReservedVendor) {
+            throw new VendorReserved($conflict, (string) $this->name);
+        }
     }
 
     /**

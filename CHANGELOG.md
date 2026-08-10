@@ -36,6 +36,14 @@ shape rather than a delta from a previous one.
   repository; per-repository hooks are the fallback for packages with no source.
 - Access tokens for Composer clients and scoped deploy tokens for machines,
   with package visibility scoped per panel user.
+- Reserved vendor prefixes per Composer repository, as a dependency-confusion
+  defence: only the owning repository may introduce names under a reserved
+  vendor, enforced on the create wizard, the API, `package:add`, artifact
+  uploads and a sync adopting a repository's declared name. Existing packages
+  are never broken by a later reservation. The consumer half — the Composer
+  configuration that makes this registry canonical for your vendors — is in
+  [docs/dependency-confusion.md](docs/dependency-confusion.md), and matters
+  more than the server half.
 - Artifact uploads from CI (`POST /upload/{vendor}/{package}`), for packages
   that are built rather than tagged.
 - A versioned JSON management API at `/api/v1` — list and show packages with

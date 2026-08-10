@@ -5,7 +5,9 @@ namespace App\Filament\Resources\Packages\Schemas;
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\ReservedVendor;
 use App\Models\Source;
+use Closure;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -133,6 +135,21 @@ class PackageForm
                 ignoreRecord: true,
                 modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
             )
+            // Package's own saving hook refuses this too, but by throwing —
+            // which from a form is a 500 where the admin wanted a field error
+            // naming the repository that owns the vendor.
+            ->rules([
+                fn (Get $get): Closure => function (string $attribute, mixed $value, Closure $fail) use ($get): void {
+                    $conflict = ReservedVendor::conflictFor(
+                        (string) $value,
+                        (int) ($get('repository_id') ?? Repository::default()->id),
+                    );
+
+                    if ($conflict instanceof ReservedVendor) {
+                        $fail($conflict->refusal((string) $value));
+                    }
+                },
+            ])
             ->placeholder('vendor/package')
             ->helperText('Taken from the composer.json on the first sync. A name the repository changes later is reported, never applied — accept it by editing it here.');
     }

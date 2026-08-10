@@ -273,6 +273,9 @@ The package's name is not read from the repository's `composer.json` here; that
 is a round trip to the provider, and the first sync does it properly a moment
 later.
 
+A name whose vendor is [reserved by another repository](dependency-confusion.md)
+is refused with `422` on `name`, whether it was given or guessed.
+
 ### `POST /packages/{id}/sync`
 
 Queues a sync — what CI calls after pushing a tag when no webhook covers the

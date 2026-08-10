@@ -7,6 +7,7 @@ use App\Http\Resources\Api\V1\PackageResource;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\ReservedVendor;
 use App\Services\GitHub\WebhookRegistrar;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -146,6 +147,16 @@ class PackageController extends ApiController
         }
 
         $package->name = mb_strtolower($name);
+
+        // The model refuses this on save too, by throwing; asked here it is a
+        // 422 on the field that has to change, like every other name problem
+        // this endpoint reports.
+        $conflict = ReservedVendor::conflictFor($package->name, $repository->id);
+
+        if ($conflict instanceof ReservedVendor) {
+            throw ValidationException::withMessages(['name' => $conflict->refusal($package->name)]);
+        }
+
         $package->save();
 
         $registrar = app(WebhookRegistrar::class);

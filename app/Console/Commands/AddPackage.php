@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\ReservedVendor;
 use App\Services\GitHub\WebhookRegistrar;
 use Illuminate\Console\Command;
 
@@ -68,6 +69,16 @@ class AddPackage extends Command
 
         if ($collision instanceof Package) {
             $this->components->error("\"{$collision->name}\" already serves from this Composer repository ({$collision->repository}).");
+
+            return self::FAILURE;
+        }
+
+        // The save below refuses this anyway, by throwing; asked here it is an
+        // error line rather than a stack trace in somebody's provisioning log.
+        $reserved = ReservedVendor::conflictFor($name, $repository->id);
+
+        if ($reserved instanceof ReservedVendor) {
+            $this->components->error($reserved->refusal($name));
 
             return self::FAILURE;
         }

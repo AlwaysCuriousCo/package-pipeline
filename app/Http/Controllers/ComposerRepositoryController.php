@@ -8,6 +8,7 @@ use App\Models\Package;
 use App\Models\PackageAdvisory;
 use App\Models\PackageVersion;
 use App\Models\Repository;
+use App\Models\ReservedVendor;
 use App\Models\Token;
 use App\Services\ArchiveStore;
 use App\Services\CreateVersionFromZip;
@@ -629,11 +630,24 @@ class ComposerRepositoryController extends Controller
         $repository = $this->repository($request);
         $name = mb_strtolower("{$vendor}/{$package}");
 
+        $existing = $repository->packages()->where('name', $name)->first();
+
         abort_unless(
-            $this->mayUploadTo($request, $repository, $name),
+            $this->mayUploadTo($request, $repository, $existing),
             403,
             'This token may not publish into this repository.',
         );
+
+        // Only for a name this repository does not serve yet. A reservation
+        // governs what may be *introduced* under a vendor; a package that
+        // predates one keeps publishing, exactly as the model's own guard has
+        // it, because breaking a running pipeline is not what protecting a
+        // namespace is supposed to cost.
+        if (! $existing instanceof Package) {
+            $conflict = ReservedVendor::conflictFor($name, (int) $repository->id);
+
+            abort_if($conflict instanceof ReservedVendor, 403, $conflict?->refusal($name) ?? '');
+        }
 
         $version = $creator->create(
             $repository,
@@ -658,15 +672,13 @@ class ComposerRepositoryController extends Controller
      *
      * @see Token::mayWriteTo() where both rules live
      */
-    private function mayUploadTo(Request $request, Repository $repository, string $name): bool
+    private function mayUploadTo(Request $request, Repository $repository, ?Package $existing): bool
     {
         $token = $this->token($request);
 
         if (! $token instanceof Token) {
             return false;
         }
-
-        $existing = $repository->packages()->where('name', $name)->first();
 
         return $existing instanceof Package
             ? $token->mayWriteToPackage($existing)
