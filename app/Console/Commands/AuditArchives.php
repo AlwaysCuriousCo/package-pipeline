@@ -55,7 +55,11 @@ class AuditArchives extends Command
 
         // Listed before the rows are read, so that anything committed in
         // between is newer than the cutoff and left for the next run.
-        $stored = array_flip($disk->allFiles('packages'));
+        //
+        // The published prefix only: mirrored archives share the disk and
+        // answer to `mirrored_archives`, so counting them here would compare
+        // one table against two tables' worth of files.
+        $stored = array_flip($disk->allFiles(ArchiveStore::PUBLISHED_PREFIX));
 
         $referenced = PackageVersion::query()->whereNotNull('archive_path')->count();
 

@@ -34,6 +34,12 @@ class CleanArchives extends Command
      * Orphans accumulate by design: a re-stored version writes a new file and
      * leaves its old one, and bulk version deletes never fire per-row cleanup.
      * This command is where they go away.
+     *
+     * Only the published prefix is listed, and that is load-bearing rather
+     * than incidental: mirrored upstream archives sit on the same disk and are
+     * referenced by `mirrored_archives`, a table this command knows nothing
+     * about. Listing the whole disk would make every one of them look like an
+     * orphan and delete the mirror cache. `mirror:prune` is their sweep.
      */
     public function handle(ArchiveStore $archives): int
     {
@@ -46,7 +52,7 @@ class CleanArchives extends Command
             ->flip();
 
         $unreferenced = array_filter(
-            $disk->allFiles('packages'),
+            $disk->allFiles(ArchiveStore::PUBLISHED_PREFIX),
             fn (string $file): bool => ! $referenced->has($file),
         );
 

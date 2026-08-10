@@ -19,6 +19,23 @@ use Throwable;
 class ArchiveStore
 {
     /**
+     * Where archives of packages *this registry publishes* live.
+     *
+     * archives:clean and archives:audit both list exactly this prefix, and
+     * both reconcile the disk against `package_versions`. Widening either
+     * listing to the whole disk would make every mirrored archive an orphan
+     * with no row to claim it — so the separation below is not tidiness, it is
+     * what keeps those two commands from deleting the mirror cache.
+     */
+    public const PUBLISHED_PREFIX = 'packages';
+
+    /**
+     * Where archives fetched from an upstream live. Reconciled by
+     * `mirror:prune` against `mirrored_archives`, and by nothing else.
+     */
+    public const MIRROR_PREFIX = 'mirror';
+
+    /**
      * How long a pre-signed archive URL is good for.
      *
      * A storage service checks the signature when the transfer *starts* and
@@ -74,8 +91,42 @@ class ArchiveStore
      */
     public function store(PackageVersion $version, string $zip): void
     {
-        $path = "packages/{$version->package->name}/".Str::uuid7().'.zip';
+        $path = self::PUBLISHED_PREFIX."/{$version->package->name}/".Str::uuid7().'.zip';
 
+        $this->write($path, $zip);
+
+        $version->forceFill([
+            'archive_path' => $path,
+            'shasum' => sha1_file($zip),
+        ])->save();
+    }
+
+    /**
+     * Store a verified upstream archive, returning where it went.
+     *
+     * No row is written here — the caller does that, because it is the caller
+     * that checked the bytes against the shasum the upstream published, and a
+     * `mirrored_archives` row exists precisely to record that the check passed.
+     *
+     * Keyed by the upstream's reference rather than a fresh uuid, unlike a
+     * published archive: an upstream reference names an immutable release, so
+     * re-fetching one can only ever write the same bytes over themselves,
+     * where a re-synced *version* legitimately changes what a tag points at.
+     */
+    public function storeMirrored(string $name, string $reference, string $zip): string
+    {
+        $path = self::MIRROR_PREFIX."/{$name}/{$reference}.zip";
+
+        $this->write($path, $zip);
+
+        return $path;
+    }
+
+    /**
+     * Copy a local file onto the dist disk, leaving nothing behind if it fails.
+     */
+    private function write(string $path, string $zip): void
+    {
         $stream = fopen($zip, 'r');
 
         throw_if($stream === false, new RuntimeException("Unable to read the downloaded archive at {$zip}."));
@@ -96,10 +147,5 @@ class ArchiveStore
                 fclose($stream);
             }
         }
-
-        $version->forceFill([
-            'archive_path' => $path,
-            'shasum' => sha1_file($zip),
-        ])->save();
     }
 }
