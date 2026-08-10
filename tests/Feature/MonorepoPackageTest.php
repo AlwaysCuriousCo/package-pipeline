@@ -361,6 +361,28 @@ class MonorepoPackageTest extends TestCase
     }
 
     /**
+     * And with the separator spelled the other way. Package::normalizeSubdirectory()
+     * has always read `\` and `/` alike, so the check on the archive side reads
+     * them alike too — an entry whose meaning depends on which extractor opens
+     * it is not one to republish under a package's name.
+     */
+    public function test_an_archive_entry_that_escapes_with_backslashes_is_refused(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'hostile-zip-');
+
+        $zip = new ZipArchive;
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString('acme-mono-a1b2c3d/packages/widgets/composer.json', '{"name":"acme/widgets"}');
+        $zip->addFromString('acme-mono-a1b2c3d/packages/widgets/..\..\escaped.php', '<?php // elsewhere');
+        $zip->close();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessageMatches('/escapes/');
+
+        (new ArchiveSubtree)->reroot($path, 'packages/widgets', 'acme-widgets-1.0.0');
+    }
+
+    /**
      * A subdirectory the model refuses must never reach a provider's API, and
      * the field's validation rule is not the only thing between the two: the
      * panel reads a repository through an unsaved package, and what that

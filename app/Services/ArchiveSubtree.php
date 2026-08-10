@@ -180,8 +180,14 @@ class ArchiveSubtree
             // `..` component or an absolute path, so an archive that does is
             // not one to re-root and publish under a package's name — it is
             // one to refuse, and let the next sync try again.
+            //
+            // Backslash counts as a separator here for the same reason it does
+            // in Package::normalizeSubdirectory(): the two ends of this feature
+            // must agree on what a path component is, and a rule that reads
+            // `..\..\evil` as one long filename is a rule an extractor on a
+            // different platform will disagree with.
             throw_if(
-                preg_match('#(^|/)\.\.(/|$)#', $relative) === 1 || str_starts_with($relative, '/'),
+                preg_match('#(^|[\\\\/])\.\.([\\\\/]|$)#', $relative) === 1 || str_starts_with($relative, '/'),
                 new RuntimeException("The repository's archive contains an entry that escapes \"{$subdirectory}\": {$name}."),
             );
 
