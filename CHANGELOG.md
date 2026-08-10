@@ -264,7 +264,21 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 Everything here is something a deployment has to do or know; the rest of this
 release looks after itself.
 
-- **Run `php artisan migrate`.** Eighteen migrations, all safe on a populated
+- **Take a database backup first, because this release is roll-forward only.**
+  `migrate:rollback` is not a supported way back out of it and will not get you
+  there. Several of these migrations are lossy in reverse by their nature —
+  dropping the teams tables takes every grant those teams held, dropping
+  `package_versions.license` takes what each version declared, and the
+  lowercasing migration's `down()` is empty because the casing is precisely
+  what it discarded. Worse, one of them *cannot* reverse at all once the
+  feature it added is in use: the subdirectory migration widened a unique
+  index, and the narrow one it would restore is by definition impossible to
+  rebuild while any repository URL publishes more than one package. It now
+  refuses with that explanation rather than failing partway through a schema
+  change, but a rollback that reaches it has already unwound the migrations
+  after it. Restoring the backup is the recovery path; plan the upgrade that
+  way.
+- **Run `php artisan migrate`.** Nineteen migrations, all safe on a populated
   database. Two are worth knowing about: `notifications.data` becomes a json
   column, which is what stops the panel answering `500` on every page under
   PostgreSQL; and package names are lowercased, since a mixed-case name could

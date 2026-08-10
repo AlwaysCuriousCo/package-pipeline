@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -40,10 +41,44 @@ return new class extends Migration
     }
 
     /**
-     * Reverse the migrations.
+     * Reverse the migrations, or refuse before changing anything.
+     *
+     * The narrow index this puts back is the one the widening existed to
+     * remove, so it cannot be re-added once any repository URL publishes more
+     * than one package — that is not an edge case, it is the definition of the
+     * feature. Left to find out for itself, `down()` dropped the wide index
+     * and then failed adding the narrow one, which on an engine with
+     * transactional DDL rolls back cleanly and on MySQL does not: the drop has
+     * committed, the add has not, and `packages` is left with neither
+     * constraint. That is worse than either end of this migration, and it is
+     * why the question is asked first rather than caught after.
+     *
+     * Refusing does not undo the damage `migrate:rollback` has already done by
+     * the time it reaches here — the migrations after this one in the batch go
+     * first, and several of them are lossy — so the message says so. This
+     * release is roll-forward only; see the CHANGELOG.
      */
     public function down(): void
     {
+        $shared = DB::table('packages')
+            ->select('repository_id', 'repository')
+            ->groupBy('repository_id', 'repository')
+            ->havingRaw('count(*) > 1')
+            ->get();
+
+        throw_if($shared->isNotEmpty(), new RuntimeException(sprintf(
+            'Cannot reverse this migration: %d repository URL%s in this registry publish%s more than one '
+            .'package, and the unique index this would restore forbids exactly that. Nothing was changed '
+            .'here — but the migrations after this one in the batch have already been rolled back, and '
+            .'some of them drop data (teams and every grant they held, per-version licenses). This '
+            .'release is roll-forward only: restore the backup taken before the upgrade. To go back '
+            .'deliberately instead, first delete or move the extra packages so that each repository URL '
+            .'publishes one.',
+            $shared->count(),
+            $shared->count() === 1 ? '' : 's',
+            $shared->count() === 1 ? 'es' : '',
+        )));
+
         Schema::table('packages', function (Blueprint $table) {
             $table->dropUnique(['repository_id', 'repository', 'subdirectory']);
             $table->unique(['repository_id', 'repository']);

@@ -11,6 +11,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 use RuntimeException;
@@ -459,5 +460,37 @@ class MonorepoPackageTest extends TestCase
         $onGitHub = $this->makePackage('acme/gadgets', 'packages/gadgets');
 
         $this->assertSame(WebhookCoverage::None, $onGitHub->webhookCoverage());
+    }
+
+    /**
+     * The migration that made this feature possible widened a unique index,
+     * and its `down()` put the narrow one back — which, once any repository
+     * URL publishes two packages, is by definition impossible.
+     *
+     * It used to find that out by trying: the wide index dropped, the narrow
+     * one failed to build, and on an engine without transactional DDL the
+     * table kept neither. Asked first, the reversal refuses having changed
+     * nothing.
+     */
+    public function test_the_widening_migration_refuses_to_reverse_over_a_monorepo(): void
+    {
+        $this->makePackage('acme/widgets', 'packages/widgets');
+        $this->makePackage('acme/gadgets', 'packages/gadgets');
+
+        $migration = require database_path('migrations/2026_08_10_170000_add_subdirectory_to_packages_table.php');
+
+        try {
+            $migration->down();
+            $this->fail('Reversing the widening over a monorepo should have been refused.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('roll-forward only', $exception->getMessage());
+        }
+
+        // Nothing was dropped on the way to the refusal, so the schema is
+        // still the one every other migration in the batch was written for.
+        $this->assertTrue(Schema::hasColumn('packages', 'subdirectory'));
+
+        $this->makePackage('acme/doodads', 'packages/doodads');
+        $this->assertSame(3, Package::query()->where('repository', 'https://github.com/acme/mono')->count());
     }
 }
