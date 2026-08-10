@@ -171,7 +171,7 @@ A presented token is always checked, public repository or not. A CI system holdi
 
 ## Configuration reference
 
-Everything lives in `.env`, and `.env.example` carries the same notes in situ. Below are the knobs that belong to this app rather than to a stock Laravel one; the stock ones that matter most in production — `QUEUE_CONNECTION`, `CACHE_STORE`, `FILESYSTEM_DISK`, `AWS_*` — are covered under [Deploying](#deploying).
+Everything lives in `.env`, and `.env.example` carries the same notes in situ. Below are the knobs that belong to this app rather than to a stock Laravel one; the stock ones that matter most in production — `QUEUE_CONNECTION`, `CACHE_STORE`, `FILESYSTEM_DISK`, `AWS_*` — are covered under [Recommended drivers](docs/deployment.md#recommended-drivers).
 
 **Sources and syncing**
 
@@ -260,28 +260,27 @@ php artisan pail --timeout=0
 
 ## Deploying
 
-The short version for production:
+The short version is below. **[docs/deployment.md](docs/deployment.md)** is the long one: which queue and cache drivers to run and why the defaults stop scaling, what has to be shared once there is more than one container, what `/up` does and doesn't prove, and — the part worth reading before you need it — how to back up the database and the dist disk so that a restore is coherent, and how to repair the drift when it isn't.
 
 - **Run a queue worker** (`php artisan queue:work --timeout=310`) — package syncs from the admin panel are queued jobs. Keep that timeout between the longest job's own (300 seconds, for a version import streaming a large archive) and the connection's `retry_after` (330): a worker that gives up sooner kills healthy imports, and a `retry_after` that fires first hands a still-running import to a second worker, which downloads and stores the same archive again. Raising `ImportVersion::$timeout` means raising both.
 - **Run the scheduler** (`php artisan schedule:work`, or a `* * * * * php artisan schedule:run` cron entry). `routes/console.php` ships the maintenance schedule; `php artisan schedule:list` shows it:
 
   | Task | When | Why |
   | --- | --- | --- |
-  | `packages:sync --queue` | hourly | Releases arrive by webhook, so this is not the normal path. It is what covers packages whose webhook registration failed or was never made, and what makes a partial sync's "the next sync will retry them" true. It is cheap: the tag and branch listings are asked conditionally, so an untouched repository answers `304 Not Modified` (which GitHub does not charge against the rate limit at all), and a ref whose sha hasn't moved is skipped without an API read or a download — a routine run fans out no import jobs. |
+  | `packages:sync --queue` | hourly | Releases arrive by webhook, so this is not the normal path. It is what covers packages whose webhook registration failed or was never made, and what makes a partial sync's "the next sync will retry them" true. It is cheap: the tag and branch listings are asked conditionally on both providers, so an untouched repository answers `304 Not Modified` (which GitHub does not charge against the rate limit at all), and a ref whose sha hasn't moved is skipped without an API read or a download — a routine run fans out no import jobs. |
   | `archives:clean` | 03:10 | Re-synced versions leave their previous archive behind by design and nothing else deletes one. |
   | `archives:audit` | 03:20 | The other direction: a version row can outlive its archive (storage loss, a bucket restored from an older snapshot), and nothing in the request path notices — `/p2` keeps advertising the version while `dist` 404s. Syncs deliberately don't check per version, which on S3 was a HEAD request per version per hour; this checks the whole registry with one listing and clears what it can't find, so the next sync downloads it again. |
   | `model:prune` (notifications) | 03:30 | One row per admin per event, kept 30 days once read and 90 days unread. |
   | `queue:prune-batches` | 03:40 | One row per sync, kept 48 hours (72 unfinished). |
 
-  Every task is `onOneServer()`, which needs a shared cache store that supports locks — the default `database`, or `redis`. On a multi-container deployment running `CACHE_STORE=file` or `array`, each container holds its own lock and runs its own copy of every sweep.
+  Every task is `onOneServer()`, which needs a shared cache store that supports locks — the default `database`, or `redis`. On a multi-container deployment running `CACHE_STORE=file` or `array`, each container holds its own lock and runs its own copy of every sweep. That is a correctness problem rather than a performance one; see [The cache store is not just a cache](docs/deployment.md#the-cache-store-is-not-just-a-cache).
 
 - **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
 - **Create the first admin account** with `php artisan admin:create --email=you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a sealed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same stored archives. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically. Downloads are then redirected to short-lived pre-signed URLs rather than streamed through PHP, so the bucket's endpoint has to resolve from wherever `composer install` runs — an internal-only hostname (a MinIO service name, say) breaks clients that the app itself can reach the bucket from.
-- **Prune orphaned archives** with `php artisan archives:clean` (`--dry-run` to preview) — re-synced versions write fresh files and leave their old ones behind by design. The scheduler runs this nightly; the command is here for when you want it now.
-- **Check for lost archives** with `php artisan archives:audit` (`--dry-run` to preview) — the reverse of the above, for versions whose file is no longer on the dist disk. It clears their `archive_path`, which is all the next sync needs to download them again. Worth running by hand after restoring a bucket. It refuses to act when the disk lists nothing at all, since a misconfigured disk looks exactly like total loss.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
-- A health check endpoint is available at `/up`.
+- **Point health checks at `/up`**, but know what it answers for: the container is up and the framework boots. It runs with no middleware and touches neither the database nor the queue, so it will report a healthy container that has not synced anything in a week. See [Health and monitoring](docs/deployment.md#health-and-monitoring) for what to watch instead.
+- **Back the dist disk up before the database**, not after. The two hold one dataset between them, and only one of the two inconsistent orderings is harmless. [Backup and restore](docs/deployment.md#backup-and-restore) explains why, and what repairs the drift.
 
 ### Deploying on Laravel Cloud
 
@@ -320,6 +319,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 
 ## Further reading
 
+- [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.
