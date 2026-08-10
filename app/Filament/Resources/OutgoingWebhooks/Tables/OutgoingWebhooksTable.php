@@ -30,6 +30,18 @@ class OutgoingWebhooksTable
                     ->searchable()
                     ->limit(50)
                     ->tooltip(fn (OutgoingWebhook $record): string => (string) $record->url),
+                // Warning-coloured for the registry-wide case, which is the one
+                // that carries other repositories' package names, mount paths
+                // and VCS URLs to whoever owns this endpoint.
+                TextColumn::make('repository.name')
+                    ->label('Scope')
+                    ->badge()
+                    ->color(fn (OutgoingWebhook $record): string => $record->repository_id === null ? 'warning' : 'gray')
+                    ->placeholder('Whole registry')
+                    ->tooltip(fn (OutgoingWebhook $record): string => $record->repository_id === null
+                        ? 'Hears about every package in the registry, whichever repository it is published in.'
+                        : 'Hears only about packages published in this repository.')
+                    ->sortable(),
                 TextColumn::make('events')
                     ->badge()
                     ->color('gray')

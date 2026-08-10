@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Enums\WebhookEvent;
 use App\Models\OutgoingWebhook;
+use App\Models\Repository;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -35,6 +36,18 @@ class OutgoingWebhookFactory extends Factory
     {
         return $this->state(fn (array $attributes): array => [
             'events' => array_column($events, 'value'),
+        ]);
+    }
+
+    /**
+     * Confined to one Composer repository. The default is the unscoped row an
+     * upgrade leaves behind, because that is what most of the suite is about;
+     * this is the one an operator on a multi-team registry should be creating.
+     */
+    public function scopedTo(Repository $repository): static
+    {
+        return $this->state(fn (array $attributes): array => [
+            'repository_id' => $repository->getKey(),
         ]);
     }
 

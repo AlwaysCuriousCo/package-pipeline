@@ -10,6 +10,7 @@ use App\Support\EgressRefused;
 use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
@@ -28,6 +29,7 @@ class OutgoingWebhookForm
                     ->maxLength(255)
                     ->placeholder('Deploy pipeline')
                     ->helperText('A label for this endpoint; only shown in the admin.'),
+                self::repository(),
                 self::url(),
                 self::secret(),
                 self::events(),
@@ -36,6 +38,33 @@ class OutgoingWebhookForm
                     ->helperText('Switched off, nothing is delivered and deliveries already queued are dropped. The URL and secret are kept.'),
                 self::lastDelivery(),
             ]);
+    }
+
+    /**
+     * How far this endpoint's deliveries reach.
+     *
+     * Left empty it is the whole registry, which is what every endpoint meant
+     * before this field existed and what a single-audience installation wants.
+     * On one serving several teams it is the field that matters most on this
+     * page: a delivery carries a private package name, the path its repository
+     * is mounted at and the VCS URL behind it, so an unscoped endpoint is one
+     * team's pipeline being told what every other team published and what every
+     * other team's syncs are failing on.
+     *
+     * Placed above the URL deliberately — who may hear about a thing is a
+     * decision to make before where it is sent.
+     */
+    private static function repository(): Select
+    {
+        return Select::make('repository_id')
+            ->label('Composer repository')
+            ->relationship('repository', 'name')
+            ->searchable()
+            ->preload()
+            ->placeholder('Every repository in this registry')
+            ->helperText('Confine this endpoint to one repository. Left empty it hears about every package in the '
+                .'registry — including names, mount paths and VCS URLs from repositories its owner has no other '
+                .'access to.');
     }
 
     /**

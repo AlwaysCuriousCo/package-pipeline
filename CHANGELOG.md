@@ -113,7 +113,15 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 - Outgoing webhooks: an HTTP endpoint of your own can be told when a version
   publishes, a sync fails, or a package is abandoned — for a deploy pipeline, an
   incident tracker, or a chat tool that is not Slack. Configured under **Outgoing
-  webhooks** in the panel with a URL, a set of events and a shared secret.
+  webhooks** in the panel with a URL, a set of events, a scope and a shared
+  secret.
+
+  An endpoint can be confined to one Composer repository, and on a registry
+  serving more than one audience it should be. A payload carries a private
+  package name, the path its repository is mounted at and the VCS URL behind
+  it — so an unscoped endpoint one team configured hears all of that about every
+  other team. Left empty the scope is the whole registry, which is what a
+  single-audience installation wants and what every endpoint means today.
 
   Deliveries are signed the way GitHub signs the ones this app receives —
   `X-Hub-Signature-256`, an HMAC-SHA256 over the raw body — so a receiver already

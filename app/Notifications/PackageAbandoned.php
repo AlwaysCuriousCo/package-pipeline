@@ -5,6 +5,7 @@ namespace App\Notifications;
 use App\Enums\WebhookEvent;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
+use App\Notifications\Concerns\AboutOnePackage;
 use App\Notifications\Concerns\RoutedByAdminNotifier;
 use App\Notifications\Contracts\SendsWebhook;
 use Filament\Actions\Action;
@@ -26,7 +27,7 @@ use Illuminate\Notifications\Slack\SlackMessage;
  */
 class PackageAbandoned extends Notification implements SendsWebhook, ShouldQueue
 {
-    use Queueable, RoutedByAdminNotifier;
+    use AboutOnePackage, Queueable, RoutedByAdminNotifier;
 
     public function __construct(public readonly Package $package) {}
 

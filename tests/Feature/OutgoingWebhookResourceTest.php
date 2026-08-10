@@ -9,6 +9,7 @@ use App\Filament\Resources\OutgoingWebhooks\Pages\EditOutgoingWebhook;
 use App\Filament\Resources\OutgoingWebhooks\Pages\ListOutgoingWebhooks;
 use App\Jobs\DeliverWebhook;
 use App\Models\OutgoingWebhook;
+use App\Models\Repository;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -53,6 +54,59 @@ class OutgoingWebhookResourceTest extends TestCase
         $this->assertSame('a-shared-secret', $webhook->secret);
         $this->assertTrue($webhook->subscribesTo(WebhookEvent::VersionPublished));
         $this->assertFalse($webhook->subscribesTo(WebhookEvent::SyncFailed));
+    }
+
+    /**
+     * The form leaves the scope empty by default, which is the registry-wide
+     * meaning every endpoint had before the field existed — so creating one
+     * without touching it must not start scoping it to something.
+     */
+    public function test_an_endpoint_is_registry_wide_unless_a_repository_is_chosen(): void
+    {
+        Livewire::test(CreateOutgoingWebhook::class)
+            ->fillForm([
+                'name' => 'Deploy pipeline',
+                'url' => 'https://ci.example.com/hooks/registry',
+                'events' => [WebhookEvent::VersionPublished->value],
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertNull(OutgoingWebhook::query()->sole()->repository_id);
+    }
+
+    public function test_an_endpoint_can_be_confined_to_one_repository(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+
+        Livewire::test(CreateOutgoingWebhook::class)
+            ->fillForm([
+                'name' => 'Internal pipeline',
+                'repository_id' => $repository->getKey(),
+                'url' => 'https://ci.example.com/hooks/registry',
+                'events' => [WebhookEvent::VersionPublished->value],
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertTrue(OutgoingWebhook::query()->sole()->repository->is($repository));
+    }
+
+    /**
+     * An endpoint scoped to a repository that has gone is not an endpoint
+     * scoped to the registry — widening it on a delete is exactly the
+     * disclosure the column exists to prevent.
+     */
+    public function test_deleting_a_repository_takes_the_endpoints_scoped_to_it(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+
+        OutgoingWebhook::factory()->scopedTo($repository)->create();
+        $registryWide = OutgoingWebhook::factory()->create();
+
+        $repository->delete();
+
+        $this->assertSame([$registryWide->getKey()], OutgoingWebhook::query()->pluck('id')->all());
     }
 
     /**

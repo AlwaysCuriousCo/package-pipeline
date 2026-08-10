@@ -3,6 +3,7 @@
 namespace App\Notifications\Contracts;
 
 use App\Enums\WebhookEvent;
+use App\Models\Repository;
 use App\Services\AdminNotifier;
 
 /**
@@ -23,6 +24,20 @@ interface SendsWebhook
      * Which event this is, as endpoints subscribe to it.
      */
     public function webhookEvent(): WebhookEvent;
+
+    /**
+     * Which Composer repository this happened in, which is how far the delivery
+     * is allowed to reach.
+     *
+     * Not derivable from the payload, and deliberately not read out of it: the
+     * `repository` key is a path an operator can rename, whereas this decides
+     * who is told at all. Null means "no one repository", and an event that
+     * answers null reaches only the endpoints scoped to the whole registry —
+     * the reading that fails closed.
+     *
+     * @see OutgoingWebhook::listeningFor() where this bounds the fan-out
+     */
+    public function webhookRepository(): ?Repository;
 
     /**
      * The `data` object of the delivered payload.

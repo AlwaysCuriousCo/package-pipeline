@@ -6,6 +6,7 @@ use App\Enums\WebhookEvent;
 use App\Jobs\DeliverWebhook;
 use App\Models\OutgoingWebhook;
 use App\Models\Package;
+use App\Models\Repository;
 use App\Notifications\PackageSyncFailed;
 use App\Notifications\PackageVersionsPublished;
 use App\Services\AdminNotifier;
@@ -412,5 +413,93 @@ class OutgoingWebhookTest extends TestCase
             [WebhookEvent::VersionPublished],
             OutgoingWebhook::query()->sole()->subscribedEvents(),
         );
+    }
+
+    /**
+     * A package in a repository of its own, so a delivery about it is a
+     * delivery about somebody else's audience.
+     */
+    private function packageIn(Repository $repository): Package
+    {
+        return Package::factory()->create([
+            'repository_id' => $repository->getKey(),
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/widgets',
+            'latest_version' => '1.1.0',
+        ]);
+    }
+
+    /**
+     * The disclosure this scope exists for. A payload names a private package,
+     * the path it is mounted at and the VCS URL behind it — everything one team
+     * would learn about another team's registry by subscribing to it.
+     */
+    public function test_an_endpoint_hears_nothing_from_another_repository(): void
+    {
+        $this->fakeDeliveries();
+
+        $theirs = Repository::factory()->create(['path' => 'theirs']);
+
+        OutgoingWebhook::factory()
+            ->scopedTo(Repository::factory()->create(['path' => 'ours']))
+            ->create();
+
+        $this->announceRelease($this->packageIn($theirs));
+
+        Queue::assertNotPushed(DeliverWebhook::class);
+    }
+
+    public function test_an_endpoint_hears_about_its_own_repository(): void
+    {
+        $this->fakeDeliveries();
+
+        $ours = Repository::factory()->create(['path' => 'ours']);
+
+        OutgoingWebhook::factory()->scopedTo($ours)->create();
+
+        $this->announceRelease($this->packageIn($ours));
+
+        Queue::assertPushed(DeliverWebhook::class, 1);
+    }
+
+    /**
+     * Null is what every endpoint configured before the column existed holds,
+     * so it has to go on meaning the whole registry — an upgrade that silently
+     * stopped delivering would be read as the webhook being broken.
+     */
+    public function test_an_unscoped_endpoint_still_hears_about_every_repository(): void
+    {
+        $this->fakeDeliveries();
+
+        OutgoingWebhook::factory()->create();
+
+        $this->announceRelease($this->packageIn(Repository::factory()->create(['path' => 'theirs'])));
+
+        Queue::assertPushed(DeliverWebhook::class, 1);
+    }
+
+    /**
+     * `reason` is whatever a provider put in a failed response, and this
+     * registry signs it, queues it and retries it twice per endpoint.
+     */
+    public function test_a_providers_error_page_cannot_size_the_delivery(): void
+    {
+        $this->fakeDeliveries();
+        Http::fake();
+
+        OutgoingWebhook::factory()->subscribedTo(WebhookEvent::SyncFailed)->create();
+
+        app(AdminNotifier::class)->send(new PackageSyncFailed($this->package(), str_repeat('a', 50_000)));
+
+        $this->queued()->handle();
+
+        Http::assertSent(function (Request $request): bool {
+            $reason = $request->data()['data']['reason'];
+
+            $this->assertLessThan(2100, strlen($reason));
+            $this->assertStringEndsWith('...', $reason);
+
+            return true;
+        });
     }
 }

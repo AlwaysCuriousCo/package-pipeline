@@ -45,6 +45,12 @@ class AdminNotifier
      * table is touched: most of what passes through here is panel news with no
      * event name and no documented payload, and the empty query would run on
      * every one of them.
+     *
+     * The event names the Composer repository it happened in, and the query
+     * takes it. That is the one part of this fan-out with a blast radius: the
+     * admins above are this installation's own staff and the Slack channel is
+     * its own, but an outgoing endpoint belongs to whoever asked for it, and a
+     * payload carries a private package name, its mount path and its VCS URL.
      */
     private function deliverWebhooks(Notification $notification): void
     {
@@ -52,7 +58,12 @@ class AdminNotifier
             return;
         }
 
-        foreach (OutgoingWebhook::listeningFor($notification->webhookEvent()) as $webhook) {
+        $listening = OutgoingWebhook::listeningFor(
+            $notification->webhookEvent(),
+            $notification->webhookRepository(),
+        );
+
+        foreach ($listening as $webhook) {
             Notifications::route('webhook', $webhook)->notify($notification);
         }
     }

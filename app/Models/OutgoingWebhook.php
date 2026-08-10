@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * An HTTP endpoint this registry posts to when something happens.
@@ -20,16 +21,23 @@ use Illuminate\Database\Eloquent\Model;
  * pipeline, a chat tool that is not Slack, or an internal service that a
  * release landed or a sync died.
  *
- * It is an installation-wide subscription rather than a per-package one,
- * because what it subscribes to are facts about the registry. A consumer that
- * only cares about one package reads the name out of the payload — which is a
- * line of configuration on their side, against a row, a form and a scoping rule
+ * It is a subscription to events rather than to packages: an endpoint that only
+ * cares about one package reads the name out of the payload, which is a line of
+ * configuration on the receiver's side against a row, a form and a scoping rule
  * on ours.
+ *
+ * A Composer repository is the one boundary it *is* scoped by, and that is not
+ * a convenience. Every payload carries a private package name, the path its
+ * repository is mounted at and the VCS URL behind it, so on a registry serving
+ * several teams an unscoped endpoint is one team being told about another
+ * team's releases and another team's failures. `repository_id` confines an
+ * endpoint to one of them; null means the whole registry, which is what every
+ * endpoint configured before this existed meant and goes on meaning.
  *
  * @see docs/outgoing-webhooks.md
  * @see DeliverWebhook for the delivery and its retries
  */
-#[Fillable(['name', 'url', 'secret', 'events', 'active'])]
+#[Fillable(['repository_id', 'name', 'url', 'secret', 'events', 'active'])]
 class OutgoingWebhook extends Model
 {
     /** @use HasFactory<OutgoingWebhookFactory> */
@@ -60,7 +68,18 @@ class OutgoingWebhook extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'url', 'events', 'active'];
+        return ['repository_id', 'name', 'url', 'events', 'active'];
+    }
+
+    /**
+     * The Composer repository this endpoint is confined to, or null for the
+     * whole registry.
+     *
+     * @return BelongsTo<Repository, $this>
+     */
+    public function repository(): BelongsTo
+    {
+        return $this->belongsTo(Repository::class);
     }
 
     /**
@@ -96,7 +115,19 @@ class OutgoingWebhook extends Model
     }
 
     /**
-     * The endpoints that should hear about this event.
+     * The endpoints that should hear about this event, in this repository.
+     *
+     * The repository is what bounds the disclosure, so it is applied in SQL and
+     * before anything else: an endpoint scoped to one repository never appears
+     * in another's fan-out, whatever it is subscribed to. A null `repository_id`
+     * is registry-wide and hears everything, which is the meaning every row
+     * created before the column existed already had.
+     *
+     * An event with no repository behind it reaches only the registry-wide
+     * endpoints. That is the safe reading of "this is not about any one
+     * repository" and it is the one that fails closed — a future event that
+     * forgets to name a repository under-delivers rather than telling every
+     * endpoint on the installation.
      *
      * The events filter is applied in PHP rather than in SQL because "does this
      * JSON array contain this string" is spelled three different ways across
@@ -106,10 +137,13 @@ class OutgoingWebhook extends Model
      *
      * @return Collection<int, self>
      */
-    public static function listeningFor(WebhookEvent $event): Collection
+    public static function listeningFor(WebhookEvent $event, ?Repository $repository = null): Collection
     {
         return self::query()
             ->where('active', true)
+            ->where(fn (Builder $query) => $query
+                ->whereNull('repository_id')
+                ->when($repository !== null, fn (Builder $query) => $query->orWhere('repository_id', $repository?->getKey())))
             ->get()
             ->filter(fn (self $webhook): bool => $webhook->subscribesTo($event))
             ->values();

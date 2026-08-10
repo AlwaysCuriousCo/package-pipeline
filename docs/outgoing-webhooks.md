@@ -6,11 +6,38 @@ tells **you** — a deploy pipeline, a chat tool that is not Slack, an incident
 tracker, an internal service that wants to know when a package it depends on
 publishes.
 
-An endpoint is a URL, a set of events, and (almost always) a shared secret.
-Configure them under **Outgoing webhooks** in the admin panel.
+An endpoint is a URL, a set of events, a scope, and (almost always) a shared
+secret. Configure them under **Outgoing webhooks** in the admin panel.
 
 Nothing here runs until an endpoint exists, which is every installation until
 somebody adds one.
+
+## Scope: who an endpoint hears about
+
+> **An endpoint left unscoped is told about every package in the registry.**
+> Every payload carries a private Composer name, the path of the repository it
+> is published in, and the VCS URL behind it. On a registry serving more than
+> one team, an unscoped endpoint one team configured is that team receiving a
+> continuous listing of what every other team publishes, where it is mounted and
+> which repository it is built from — none of which their access grants would
+> let them read through the panel or through `/p2`.
+
+Set **Composer repository** on the endpoint to confine it. A scoped endpoint
+hears only about packages published in that repository and appears in no other
+repository's fan-out, whatever it is subscribed to.
+
+Left empty it is registry-wide. That is the right setting for a single-audience
+registry and it is what every endpoint created before this field existed still
+means, so an upgrade changes nothing about what your endpoints receive — but on
+a multi-team registry it is a decision to make deliberately, not a default to
+leave alone. The endpoints list shows the unscoped ones with a **Whole
+registry** badge.
+
+Two things scope does *not* do. It is not access control on the panel: anyone
+who can create a webhook can create an unscoped one, so the permission to manage
+outgoing webhooks is a registry-wide permission and should be granted as one.
+And it is not a filter on the receiver's side — a scoped endpoint still receives
+every event it subscribed to within its repository.
 
 ## What you can subscribe to
 
@@ -90,11 +117,15 @@ package's latest — a backported `1.9.1` landing after `2.0.0` is exactly that.
 | Key | |
 | --- | --- |
 | `package`, `repository`, `source_url` | as above |
-| `reason` | the provider's error, in full |
+| `reason` | the provider's error, up to 2000 characters |
 | `last_synced_at` | when the package last synced successfully, or `null` |
 
-`reason` is sent whole rather than cut to a line as the panel and Slack show it:
-a receiver is as likely to be a log sink as a chat message.
+`reason` keeps its shape rather than being cut to a line as the panel and Slack
+show it: a receiver is as likely to be a log sink as a chat message. It is
+capped at 2000 characters all the same — the value is whatever a provider put in
+a failed response, and an HTML error page from a proxy would otherwise decide
+the size of every delivery this registry signs, queues and retries. A truncated
+reason ends with `...`.
 
 ### `package.abandoned`
 
