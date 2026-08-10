@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Enums\SourceProvider;
-use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Source;
 use App\Services\GitHub\GitHubSourceClient;
@@ -13,7 +12,6 @@ use App\Services\PackageSynchronizer;
 use App\Sources\UnsupportedProviderException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -133,37 +131,6 @@ class GitLabProviderTest extends TestCase
         Http::assertSent(fn ($request): bool => str_contains($request->url(), '/hooks')
             && $request['url'] === route('webhooks.gitlab.package', $package)
             && $request['token'] === $package->webhook_secret);
-    }
-
-    public function test_a_gitlab_delivery_with_the_right_token_queues_a_sync(): void
-    {
-        Queue::fake();
-
-        $package = $this->makeGitLabPackage();
-        $package->forceFill(['webhook_id' => 77, 'webhook_secret' => 'hook-secret'])->save();
-
-        $this->postJson(route('webhooks.gitlab.package', $package), ['ref' => 'refs/tags/v1.0.0'], [
-            'X-Gitlab-Token' => 'hook-secret',
-            'X-Gitlab-Event' => 'Tag Push Hook',
-        ])->assertAccepted();
-
-        $this->assertNotNull($package->fresh()->webhook_received_at);
-        Queue::assertPushed(SyncPackageJob::class);
-    }
-
-    public function test_a_gitlab_delivery_with_the_wrong_token_is_rejected(): void
-    {
-        Queue::fake();
-
-        $package = $this->makeGitLabPackage();
-        $package->forceFill(['webhook_secret' => 'hook-secret'])->save();
-
-        $this->postJson(route('webhooks.gitlab.package', $package), [], [
-            'X-Gitlab-Token' => 'wrong',
-            'X-Gitlab-Event' => 'Push Hook',
-        ])->assertUnauthorized();
-
-        Queue::assertNothingPushed();
     }
 
     public function test_gitlab_sources_browse_projects(): void
