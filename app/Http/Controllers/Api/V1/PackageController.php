@@ -9,6 +9,7 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\ReservedVendor;
 use App\Services\GitHub\WebhookRegistrar;
+use App\Support\ComposerName;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,14 +33,6 @@ use InvalidArgumentException;
  */
 class PackageController extends ApiController
 {
-    /**
-     * Composer's own name grammar, from the composer.json schema. Applied on
-     * the way in so a package created here cannot be one Composer would refuse
-     * to require — the sync path has never had to check, because the name it
-     * adopts came out of a composer.json that Composer itself had validated.
-     */
-    private const NAME_PATTERN = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9](([_.]?|-{0,2})[a-z0-9]+)*$/';
-
     public function index(Request $request): AnonymousResourceCollection
     {
         $validated = $request->validate([
@@ -124,7 +117,7 @@ class PackageController extends ApiController
             ],
             'subdirectory' => ['nullable', 'string', 'max:255'],
             'name' => [
-                'nullable', 'string', 'max:255', 'regex:'.self::NAME_PATTERN,
+                'nullable', 'string', 'max:255', 'regex:'.ComposerName::PATTERN,
                 Rule::unique('packages', 'name')->where('repository_id', $repository->id),
             ],
             // Both default on, matching the panel: a package created without a

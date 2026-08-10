@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Sources\RepositoryClient;
+use App\Support\ComposerName;
 use App\Support\VersionNormalizer;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
@@ -142,7 +143,7 @@ class PackageSynchronizer
             return;
         }
 
-        throw_if($this->nameTaken($package, $name), new \RuntimeException($this->nameConflict($name)));
+        $this->guardAdoption($package, $name);
 
         $package->forceFill(['name' => $name])->save();
     }
@@ -375,7 +376,7 @@ class PackageSynchronizer
         }
 
         if ($package->last_synced_at === null) {
-            throw_if($this->nameTaken($package, $declared), new \RuntimeException($this->nameConflict($declared)));
+            $this->guardAdoption($package, $declared);
 
             return [$declared, null];
         }
@@ -401,6 +402,42 @@ class PackageSynchronizer
         ]);
 
         return $notes === [] ? null : implode(' ', $notes);
+    }
+
+    /**
+     * Refuse a declared name this registry must not take as its own.
+     *
+     * Both places a composer.json's name is ever adopted come through here,
+     * because adoption is the moment the string stops being data read from a
+     * repository and becomes this package's identity: what a consumer
+     * requires, what every dist URL is built from, and — the reason the
+     * grammar check is not cosmetic — a path segment on the dist disk.
+     *
+     * The grammar was previously nobody's job on this path, on the reasoning
+     * that a name out of a composer.json is a name Composer had already
+     * validated. It is not: nothing makes a repository's composer.json pass
+     * through Composer before this registry reads it, and the file is written
+     * by whoever controls the repository. A package declaring
+     * `../mirror/9/evil/pkg` stored its archive outside the published prefix,
+     * where archives:clean cannot see it, mirror:prune reads it as an orphan
+     * and deletes it, and archives:audit then clears the row — a nightly loop
+     * that needed no more privilege than pushing a tag.
+     *
+     * ArchiveStore refuses to write outside its prefix as well, and both are
+     * wanted: this one keeps the bad name out of the registry, and that one
+     * holds whether or not every future caller remembers to ask.
+     *
+     * @throws \RuntimeException
+     */
+    private function guardAdoption(Package $package, string $name): void
+    {
+        throw_unless(ComposerName::valid($name), new \RuntimeException(
+            "The repository's composer.json is named \"{$name}\", which is not a Composer package name"
+            .' — a vendor and a package, lowercase, separated by one slash. Nothing can require it, so'
+            .' this registry will not publish under it. Fix the composer.json name.'
+        ));
+
+        throw_if($this->nameTaken($package, $name), new \RuntimeException($this->nameConflict($name)));
     }
 
     /**

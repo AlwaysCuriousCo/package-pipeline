@@ -152,6 +152,41 @@ class PackageSyncTest extends TestCase
     }
 
     /**
+     * The name is read out of a file the repository's owner writes, and
+     * nothing puts it through Composer on the way here — so "Composer
+     * validated it already" was never true. Adopted unchecked it went straight
+     * into the archive path, and a name beginning `../` put the zip outside
+     * the prefix archives:clean sweeps and inside the one mirror:prune does.
+     */
+    public function test_a_declared_name_that_is_not_a_composer_name_fails_the_sync(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
+                'name' => '../mirror/9/evil/pkg',
+                'type' => 'library',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('A name outside the Composer grammar should have failed the sync.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('not a Composer package name', $exception->getMessage());
+        }
+
+        $package->refresh();
+
+        $this->assertStringContainsString('not a Composer package name', (string) $package->sync_error);
+        $this->assertSame('acme/widgets-placeholder', $package->name);
+
+        // Nothing was written anywhere on the disk, least of all beside the
+        // mirror cache.
+        $this->assertSame([], Storage::disk(config('filesystems.dists'))->allFiles());
+    }
+
+    /**
      * A first sync whose default branch carries no composer.json still learns
      * the package's real name — from the refs, at finalize. This is the one
      * case where the name arrives after the imports rather than before them,

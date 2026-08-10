@@ -10,6 +10,7 @@ use App\Models\ReservedVendor;
 use App\Models\Upstream;
 use App\Services\ArchiveStore;
 use App\Support\BoundedSink;
+use App\Support\ComposerName;
 use App\Support\HttpTimeouts;
 use Carbon\CarbonImmutable;
 use Composer\MetadataMinifier\MetadataMinifier;
@@ -65,31 +66,13 @@ class MirrorService
     private const REVISION_EPOCH = '2026-08-10T00:00:00Z';
 
     /**
-     * Composer's own package name grammar, from ValidatingArrayLoader.
-     *
-     * Applied before a name is put in a URL, a query or a file path, which
-     * makes it the one guard several things rest on: a `vendor` of `..` cannot
-     * reach out of the archive prefix, and a name Composer could never require
-     * never becomes an outbound request.
-     *
-     * `D` is load-bearing rather than tidy. Without it `$` also matches before
-     * a final newline, and a route parameter arrives rawurldecoded — so
-     * `/p2/acme/private%0A.json` would be a name that passes this pattern,
-     * fails to equal the `acme/private` this installation publishes, and is
-     * therefore fetched from an upstream. `u` makes the same refusal explicit
-     * for a subject that is not valid UTF-8, which preg_match answers `false`
-     * for rather than `0`.
-     */
-    private const NAME_PATTERN = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$/uD';
-
-    /**
      * What may stand between `/dist/vendor/name/` and `.zip`.
      *
      * A dist reference is a commit sha everywhere it matters, but it is a
      * string the upstream chose, and it becomes both a URL segment and a path
      * on the dist disk. Slashes are excluded, which is what keeps it one of
-     * each, and `D` — as on the name above — is what stops a trailing newline
-     * riding along into either.
+     * each, and `D` — as on ComposerName::PATTERN, and for the same reason —
+     * is what stops a trailing newline riding along into either.
      */
     private const REFERENCE_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/D';
 
@@ -158,7 +141,7 @@ class MirrorService
 
         $candidates = array_values(array_unique(array_filter(
             $names,
-            fn (string $name): bool => preg_match(self::NAME_PATTERN, $name) === 1,
+            fn (string $name): bool => ComposerName::valid($name),
         )));
 
         if ($candidates === []) {

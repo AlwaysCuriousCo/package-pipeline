@@ -9,6 +9,7 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Filesystem\LocalFilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use League\Flysystem\WhitespacePathNormalizer;
 use RuntimeException;
 use Throwable;
 
@@ -92,7 +93,7 @@ class ArchiveStore
      */
     public function store(PackageVersion $version, string $zip): void
     {
-        $path = self::PUBLISHED_PREFIX."/{$version->package->name}/".Str::uuid7().'.zip';
+        $path = $this->under(self::PUBLISHED_PREFIX, "{$version->package->name}/".Str::uuid7().'.zip');
 
         $this->write($path, $zip);
 
@@ -120,11 +121,53 @@ class ArchiveStore
      */
     public function storeMirrored(Upstream $upstream, string $name, string $reference, string $zip): string
     {
-        $path = self::MIRROR_PREFIX."/{$upstream->getKey()}/{$name}/{$reference}/".Str::uuid7().'.zip';
+        $path = $this->under(
+            self::MIRROR_PREFIX,
+            "{$upstream->getKey()}/{$name}/{$reference}/".Str::uuid7().'.zip',
+        );
 
         $this->write($path, $zip);
 
         return $path;
+    }
+
+    /**
+     * The path a key resolves to under one of the two prefixes, refusing any
+     * key that resolves somewhere else.
+     *
+     * Both keys above are built by interpolating a package name — a string
+     * this registry read out of somebody's composer.json, or out of an
+     * upstream's index. Those callers validate it, and this asks again anyway,
+     * because the separation of the two prefixes is what stops archives:clean
+     * and mirror:prune deleting each other's files, and a guard that only
+     * holds while every caller remembers is not a guard.
+     *
+     * Flysystem is no help here on its own: it refuses a path that climbs out
+     * of the disk root, but `packages/../mirror/x` does not — it resolves
+     * quietly to `mirror/x`, which is a real place on this disk owned by a
+     * different sweep. So the question has to be asked about the *resolved*
+     * path, using the normalizer the disk itself will use, rather than about
+     * the string that was handed over.
+     *
+     * The resolved path is what gets returned and recorded, too. The
+     * alternative is a row that says `packages/a/../b.zip` while the object
+     * lives at `packages/b.zip`, and both sweeps compare these as strings.
+     */
+    private function under(string $prefix, string $key): string
+    {
+        $path = "{$prefix}/{$key}";
+
+        try {
+            $resolved = (new WhitespacePathNormalizer)->normalizePath($path);
+        } catch (Throwable $exception) {
+            throw new RuntimeException("Refusing to store an archive at [{$path}].", previous: $exception);
+        }
+
+        throw_unless(str_starts_with($resolved, "{$prefix}/"), new RuntimeException(
+            "Refusing to store an archive at [{$path}]: it resolves to [{$resolved}], outside the [{$prefix}] prefix."
+        ));
+
+        return $resolved;
     }
 
     /**
