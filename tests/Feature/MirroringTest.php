@@ -183,6 +183,51 @@ class MirroringTest extends TestCase
         Http::assertSentCount(2);
     }
 
+    public function test_branches_are_mirrored_as_their_own_document(): void
+    {
+        $this->mirroring();
+
+        $document = $this->upstreamDocument();
+        $document['packages']['symfony/console'][0]['version'] = 'dev-main';
+
+        $this->fakeUpstream([
+            // Composer asks for releases and branches separately, and an
+            // upstream may have one and not the other — so they are cached and
+            // revalidated as two independent documents, keyed by the plain
+            // name the upstream answers under.
+            'upstream.test/p2/symfony/console~dev.json' => Http::response($document),
+        ]);
+
+        $versions = $this->versionsOf($this->getJson('/p2/symfony/console~dev.json')->assertOk());
+
+        $this->assertSame('dev-main', $versions[0]['version']);
+        $this->assertDatabaseHas('mirrored_packages', ['name' => 'symfony/console', 'is_dev' => true]);
+    }
+
+    public function test_an_upstream_that_does_not_cover_a_name_is_not_reported_as_covering_it(): void
+    {
+        $this->mirroring();
+
+        $this->fakeUpstream([
+            'upstream.test/security-advisories' => Http::response(['advisories' => []]),
+        ]);
+
+        // Absent, not empty. An empty list is how Composer is told a
+        // repository covers a name and found nothing, which would stop it
+        // looking anywhere else for a package nobody here vouched for.
+        $advisories = (array) $this->postJson('/security-advisories', ['packages' => ['symfony/console']])
+            ->assertOk()
+            ->json('advisories');
+
+        $this->assertSame([], $advisories);
+
+        $this->postJson('/security-advisories', ['packages' => ['symfony/console']])->assertOk();
+
+        // And the answer is remembered, so an audit per build does not become
+        // an upstream request per build.
+        Http::assertSentCount(2);
+    }
+
     public function test_a_local_package_always_wins_over_an_upstream(): void
     {
         $this->mirroring();

@@ -301,13 +301,22 @@ class MirrorService
         foreach ($names as $name) {
             $cached = cache()->get($this->advisoryKey($upstream, $name));
 
-            if (is_array($cached)) {
-                $answers[$name] = $cached;
+            // Three states, not two. A miss is null and has to be asked; a
+            // list — including an empty one — is the upstream saying it covers
+            // the name, which is what tells Composer to stop looking; and
+            // `false` is the upstream saying it does not cover the name, which
+            // is equally worth not asking again for a few minutes. Caching
+            // that last case as an empty list would claim a coverage the
+            // upstream never offered.
+            if ($cached === null) {
+                $ask[] = $name;
 
                 continue;
             }
 
-            $ask[] = $name;
+            if (is_array($cached)) {
+                $answers[$name] = $cached;
+            }
         }
 
         if ($ask === [] || $this->unreachable($upstream)) {
@@ -334,18 +343,28 @@ class MirrorService
 
         $minutes = (int) config('registry.mirror.advisory_ttl_minutes');
 
+        // Keyed case-insensitively, because a repository is free to echo back
+        // the spelling it stores rather than the one it was sent.
+        $byName = [];
+
+        foreach ($advisories as $key => $entry) {
+            if (is_string($key) && is_array($entry)) {
+                $byName[mb_strtolower($key)] = array_values($entry);
+            }
+        }
+
         foreach ($ask as $name) {
             // A name the upstream did not key is one it does not cover, which
-            // is not the same as one it found nothing for — but both are
-            // cached, because both mean "do not ask again for a few minutes".
-            // Only a covered name is returned, so an uncovered one stays
-            // absent from the response and Composer keeps looking elsewhere.
-            $entry = $advisories[$name] ?? null;
+            // is not the same as one it found nothing for. Both are cached —
+            // both mean "do not ask again for a few minutes" — but only a
+            // covered name is returned, so an uncovered one stays absent from
+            // the response and Composer keeps looking elsewhere.
+            $entry = $byName[$name] ?? false;
 
-            cache()->put($this->advisoryKey($upstream, $name), is_array($entry) ? array_values($entry) : null, now()->addMinutes($minutes));
+            cache()->put($this->advisoryKey($upstream, $name), $entry, now()->addMinutes($minutes));
 
             if (is_array($entry)) {
-                $answers[$name] = array_values($entry);
+                $answers[$name] = $entry;
             }
         }
 
