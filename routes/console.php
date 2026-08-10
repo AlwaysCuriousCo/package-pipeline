@@ -21,6 +21,17 @@ Artisan::command('inspire', function () {
  * a shared, lock-capable cache store (the default `database`, or `redis`);
  * with `file` or `array` each container holds its own lock and runs its own
  * copy of the sweep.
+ *
+ * Every withoutOverlapping() below names its own expiry, because the default is
+ * 24 hours and that is a number for a task nobody meant to size. Laravel
+ * releases the mutex on SIGTERM and SIGINT, which covers an orderly deploy —
+ * and covers nothing about a SIGKILL, an OOM kill or a node that goes away, all
+ * of which leave the lock held with no process behind it. At the default that
+ * silently skips a whole day of hourly syncs; at these it costs one run.
+ *
+ * The numbers are the same shape everywhere: comfortably longer than the work
+ * can honestly take, and comfortably shorter than the interval, so a lock left
+ * behind by a killed run has expired before anybody notices.
  */
 
 // Three things quietly depend on a periodic sync. A package whose webhook
@@ -39,7 +50,10 @@ Artisan::command('inspire', function () {
 // goes through, rather than serially inside the scheduler's process.
 Schedule::command('packages:sync --queue')
     ->hourly()
-    ->withoutOverlapping()
+    // It dispatches and returns, so fifteen minutes is already generous for a
+    // registry with thousands of packages, and a crashed run costs the next
+    // hour rather than the rest of the day.
+    ->withoutOverlapping(15)
     ->onOneServer();
 
 // Orphaned archives cost only disk, so this wants a quiet hour rather than a
@@ -48,7 +62,9 @@ Schedule::command('packages:sync --queue')
 // deletes one.
 Schedule::command('archives:clean')
     ->dailyAt('03:10')
-    ->withoutOverlapping()
+    // Four hours: the sweep lists a whole dist bucket and deletes from it, and
+    // an S3 listing is paginated over however many objects the registry has.
+    ->withoutOverlapping(240)
     ->onOneServer();
 
 // The other half of the reconciliation above: a version row can outlive its
@@ -60,7 +76,7 @@ Schedule::command('archives:clean')
 // rare and never urgent. Whatever it clears, the next hourly sync re-downloads.
 Schedule::command('archives:audit')
     ->dailyAt('03:20')
-    ->withoutOverlapping()
+    ->withoutOverlapping(240)
     ->onOneServer();
 
 // The only bound on what upstream mirroring costs in disk. Every transitive
@@ -71,7 +87,7 @@ Schedule::command('archives:audit')
 // installation until an operator adds one.
 Schedule::command('mirror:prune')
     ->dailyAt('03:15')
-    ->withoutOverlapping()
+    ->withoutOverlapping(240)
     ->onOneServer();
 
 // AdminNotifier writes a row per admin per event and the panel's bell only
@@ -91,7 +107,9 @@ Schedule::command('model:prune', ['--model' => [Notification::class, Activity::c
 // `downloads:recalculate` still answer with a lifetime figure afterwards.
 Schedule::command('downloads:prune')
     ->dailyAt('03:50')
-    ->withoutOverlapping()
+    // A transaction over one table, but the first run after a registry has been
+    // serving for years has a lot of rows to get through.
+    ->withoutOverlapping(120)
     ->onOneServer();
 
 // The database cache store expires an entry when the key is read and at no
@@ -102,7 +120,8 @@ Schedule::command('downloads:prune')
 // here rather than an oddity. A no-op on redis.
 Schedule::command('cache:prune')
     ->dailyAt('03:45')
-    ->withoutOverlapping()
+    // One delete statement.
+    ->withoutOverlapping(30)
     ->onOneServer();
 
 // job_batches gains a row per sync and never loses one. Both readers — the

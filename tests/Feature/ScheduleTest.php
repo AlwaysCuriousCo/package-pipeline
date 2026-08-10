@@ -117,6 +117,32 @@ class ScheduleTest extends TestCase
         }
     }
 
+    /**
+     * Laravel releases an overlap mutex on SIGTERM and SIGINT and holds it for
+     * a day otherwise, so a container killed outright — OOM, SIGKILL, a node
+     * that went away — leaves the lock behind with nothing running under it. At
+     * the default that skips 23 hourly syncs; sized to the work it costs one
+     * run.
+     */
+    public function test_no_task_can_hold_its_overlap_lock_for_a_day(): void
+    {
+        foreach (app(Schedule::class)->events() as $event) {
+            if (! $event->withoutOverlapping) {
+                continue;
+            }
+
+            $this->assertLessThan(
+                240 + 1,
+                $event->expiresAt,
+                "{$event->command} holds its overlap lock far longer than it can be running.",
+            );
+        }
+
+        // The hourly one is the case that matters most, because it is the only
+        // task a stale lock can skip more than once.
+        $this->assertSame(15, $this->event('packages:sync')->expiresAt);
+    }
+
     public function test_pruning_clears_read_and_long_stale_notifications(): void
     {
         $user = User::factory()->create();
