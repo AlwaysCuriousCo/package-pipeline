@@ -121,6 +121,17 @@ Two rules are worth knowing:
 
 The permissions themselves are seeded from the panel's own resources, pages and widgets, so a fresh database gets them from `php artisan db:seed` (which `composer run setup` already runs).
 
+### Audit log
+
+**Access Management → Audit log** records who changed what: packages created, renamed, abandoned and deleted; access tokens issued, rolled and revoked; users created and deleted and their roles granted and taken away; sources connected and disconnected; repositories and security advisories. Entries carry the signed-in user where there was one, and read as "System" for changes made by the console, a webhook, or the scheduler.
+
+Two things it deliberately does not do:
+
+- **It never records a secret.** Each model states an allowlist of attributes worth attributing a change to, and that allowlist is filtered again against anything encrypted, hashed, or named like a credential — so a token, a client secret or a password hash cannot reach the table even if somebody adds it to a list. See `App\Models\Concerns\LogsAuditableChanges`.
+- **It cannot be edited, by anybody.** The panel offers no create, edit or delete, and `ActivityPolicy` refuses all three whatever a role holds. A log the people it records can tidy up is not evidence of anything.
+
+Entries are kept for two years and then removed by the nightly `model:prune`.
+
 When you add a resource, page, or widget, generate its permissions and hand them to the super admin:
 
 ```bash

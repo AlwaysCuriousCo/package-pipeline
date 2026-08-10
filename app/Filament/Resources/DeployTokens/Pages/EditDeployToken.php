@@ -36,7 +36,9 @@ class EditDeployToken extends EditRecord
                         ->required(),
                 ])
                 ->action(function (DeployToken $record, array $data): void {
-                    $record->tokens()->delete();
+                    // One at a time, so each revocation fires the model
+                    // events the audit log is written from.
+                    $record->tokens->each->delete();
 
                     $new = Token::issue($record, $record->name, $data['abilities']);
 

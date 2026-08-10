@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsAuditableChanges;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
@@ -20,7 +21,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasRoles, Notifiable;
+    use HasFactory, HasRoles, LogsAuditableChanges, Notifiable;
 
     protected static function booted(): void
     {
@@ -28,7 +29,10 @@ class User extends Authenticatable implements FilamentUser
         // token rows keep the audit trail of what they reached and when. An
         // orphaned token authenticates as nobody, which package scoping reads
         // as "the public packages" rather than as no access at all.
-        static::deleted(fn (self $user) => $user->tokens()->delete());
+        // Deleted one at a time rather than in a single relation delete:
+        // a mass delete fires no model events, and revocation is exactly the
+        // sort of change the audit log exists to attribute.
+        static::deleted(fn (self $user) => $user->tokens->each->delete());
     }
 
     /**
@@ -85,6 +89,18 @@ class User extends Authenticatable implements FilamentUser
     public function hasUnscopedAccess(): bool
     {
         return $this->can('Unscoped:Package');
+    }
+
+    /**
+     * Identity only. The password is a hashed cast and never logged; role
+     * changes are not attributes at all and are recorded by
+     * App\Listeners\LogRoleChange.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['name', 'email'];
     }
 
     /**

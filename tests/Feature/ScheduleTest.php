@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Activity;
 use App\Models\Notification;
 use App\Models\User;
 use Illuminate\Console\Scheduling\Event;
@@ -64,6 +65,9 @@ class ScheduleTest extends TestCase
 
         $this->assertSame('30 3 * * *', $notifications->expression);
         $this->assertStringContainsString(Notification::class, (string) $notifications->command);
+        // The audit log grows on every audited change and nothing ever
+        // deletes an entry, which is the same mistake with a longer memory.
+        $this->assertStringContainsString(Activity::class, (string) $notifications->command);
 
         $this->assertSame('40 3 * * *', $this->event('queue:prune-batches')->expression);
     }

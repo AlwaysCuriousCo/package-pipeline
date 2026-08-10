@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\PackageAdvisoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -23,7 +24,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class PackageAdvisory extends Model
 {
     /** @use HasFactory<PackageAdvisoryFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
+
+    /**
+     * What a consumer's `composer audit` is told, which is a claim about a
+     * package's safety and belongs on the record as one.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['package_id', 'advisory_id', 'title', 'affected_versions', 'severity', 'cve', 'link', 'reported_at', 'source'];
+    }
 
     /**
      * @return array<string, string>

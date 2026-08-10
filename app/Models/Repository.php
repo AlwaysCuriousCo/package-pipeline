@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\RepositoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -22,7 +23,18 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Repository extends Model
 {
     /** @use HasFactory<RepositoryFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
+
+    /**
+     * Where a repository is served and whether it is readable without a
+     * token — the switch that turns private packages public.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['name', 'path', 'public'];
+    }
 
     /**
      * @return array<string, string>

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Auth\SsoProviderFactory;
 use App\Enums\AuthProvider;
+use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\AuthenticationSourceFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -19,7 +20,7 @@ use Illuminate\Support\Str;
 class AuthenticationSource extends Model
 {
     /** @use HasFactory<AuthenticationSourceFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
 
     protected static function booted(): void
     {
@@ -33,6 +34,20 @@ class AuthenticationSource extends Model
         });
 
         static::deleted(fn (self $source) => SsoProviderFactory::forgetDiscovery($source));
+    }
+
+    /**
+     * Who may sign in through this provider, and whether it is switched on.
+     * `client_secret` is an encrypted cast and never logged.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return [
+            'name', 'provider', 'client_id', 'discovery_url', 'active',
+            'allow_registration', 'allowed_domains', 'default_role',
+        ];
     }
 
     /**

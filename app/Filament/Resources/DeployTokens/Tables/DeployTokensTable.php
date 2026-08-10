@@ -62,7 +62,9 @@ class DeployTokensTable
                     ->action(function (DeployToken $record): void {
                         $abilities = $record->token->abilities ?? [TokenAbility::RepositoryRead];
 
-                        $record->tokens()->delete();
+                        // One at a time, so each revocation fires the model
+                        // events the audit log is written from.
+                        $record->tokens->each->delete();
 
                         $new = Token::issue($record, $record->name, $abilities);
 

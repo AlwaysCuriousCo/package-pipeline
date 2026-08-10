@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\TokenAbility;
+use App\Models\Concerns\LogsAuditableChanges;
 use App\Support\NewToken;
 use Database\Factories\TokenFactory;
 use DateTimeInterface;
@@ -29,9 +30,23 @@ use Illuminate\Support\Str;
 class Token extends Model
 {
     /** @use HasFactory<TokenFactory> */
-    use HasFactory, SoftDeletes;
+    use HasFactory, LogsAuditableChanges, SoftDeletes;
 
     protected $table = 'access_tokens';
+
+    /**
+     * The credential's identity and reach — never `token`, which holds its
+     * sha256, and never `last_used_at`, which every download moves.
+     *
+     * A roll is a delete and a create, so both halves land in the log with
+     * the prefixes that tell an investigator which credential is which.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['name', 'token_prefix', 'abilities', 'expires_at', 'tokenable_type', 'tokenable_id'];
+    }
 
     /**
      * @return array<string, string>

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
+use App\Models\Concerns\LogsAuditableChanges;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubClient;
 use App\Services\GitHub\WebhookRegistrar;
@@ -27,18 +28,39 @@ use InvalidArgumentException;
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
 
     /**
      * The column default alone would leave a freshly created package holding
      * null in memory until it is read back, and the webhook is set up in that
      * window — so the default is stated here as well.
      *
+     * `abandoned` is here for the same reason with a different symptom: the
+     * table's badge reads it off the record it just created, and the audit
+     * log filed a spurious "abandoned: null → false" on the package's next
+     * save, when the null in memory finally met the column's default.
+     *
      * @var array<string, mixed>
      */
     protected $attributes = [
         'webhook_enabled' => true,
+        'abandoned' => false,
     ];
+
+    /**
+     * Publishing decisions, and who the package authenticates as. Sync
+     * bookkeeping is left out on purpose: it changes hourly, is written by a
+     * worker rather than a person, and would bury these.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return [
+            'name', 'repository', 'repository_id', 'source_id', 'type',
+            'abandoned', 'replacement_package', 'webhook_enabled',
+        ];
+    }
 
     /**
      * @return array<string, string>

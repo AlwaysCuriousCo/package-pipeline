@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Activity;
 use App\Models\Notification;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -64,7 +65,10 @@ Schedule::command('archives:audit')
 
 // AdminNotifier writes a row per admin per event and the panel's bell only
 // ever marks them read, so the notifications table is otherwise append-only.
-Schedule::command('model:prune', ['--model' => [Notification::class]])
+// The audit log is append-only by design — nothing in the app updates or
+// deletes an entry — so it needs the same treatment, with a much longer
+// retention: the questions it answers are asked months after the change.
+Schedule::command('model:prune', ['--model' => [Notification::class, Activity::class]])
     ->dailyAt('03:30')
     ->onOneServer();
 

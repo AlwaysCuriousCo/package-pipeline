@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\SourceProvider;
+use App\Models\Concerns\LogsAuditableChanges;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubSourceClient;
 use App\Services\GitLab\GitLabSourceClient;
@@ -30,7 +31,19 @@ use Throwable;
 class Source extends Model
 {
     /** @use HasFactory<SourceFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
+
+    /**
+     * Which account this source reaches, and whether it is currently
+     * authenticating — `connected_at` is what a connect and a disconnect both
+     * move. The credential itself is an encrypted cast and never logged.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['name', 'provider', 'base_url', 'account', 'account_type', 'installation_id', 'connected_at'];
+    }
 
     /**
      * @return array<string, string>
