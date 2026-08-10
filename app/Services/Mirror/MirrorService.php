@@ -67,6 +67,14 @@ class MirrorService
 
     /**
      * Whether this repository may answer for this name out of an upstream.
+     */
+    public function mayMirror(Repository $repository, string $name): bool
+    {
+        return $this->mirrorable($repository, [$name]) !== [];
+    }
+
+    /**
+     * Which of these names this repository may answer for out of an upstream.
      *
      * Three refusals, in the order they are cheapest to decide:
      *
@@ -82,22 +90,49 @@ class MirrorService
      *    since the name is private, is where an attacker would have put one.
      *    A reserved vendor extends the same refusal to names not published
      *    yet, which is the case the reservation was always for.
+     *
+     * Answered for a whole set at a time, and in a fixed two queries, because
+     * `composer audit` posts the entire installed set in one request: asking
+     * per name would put a few hundred round trips in front of an audit just
+     * to decide which names could be asked about at all.
+     *
+     * @param  list<string>  $names
+     * @return list<string>
      */
-    public function mayMirror(Repository $repository, string $name): bool
+    public function mirrorable(Repository $repository, array $names): array
     {
         if (! $repository->mirrors()) {
-            return false;
+            return [];
         }
 
-        if (preg_match(self::NAME_PATTERN, $name) !== 1) {
-            return false;
+        $candidates = array_values(array_unique(array_filter(
+            $names,
+            fn (string $name): bool => preg_match(self::NAME_PATTERN, $name) === 1,
+        )));
+
+        if ($candidates === []) {
+            return [];
         }
 
-        if (Package::query()->where('name', $name)->exists()) {
-            return false;
-        }
+        $published = Package::query()
+            ->whereIn('name', $candidates)
+            ->pluck('name')
+            // Not `mb_strtolower(...)` directly: Collection::map hands the key
+            // to the callback as a second argument, which lands in the
+            // encoding parameter.
+            ->map(fn (string $name): string => mb_strtolower($name))
+            ->flip();
 
-        return ! ReservedVendor::query()->where('vendor', ReservedVendor::normalize($name))->exists();
+        $reserved = ReservedVendor::query()
+            ->whereIn('vendor', array_map(ReservedVendor::normalize(...), $candidates))
+            ->pluck('vendor')
+            ->flip();
+
+        return array_values(array_filter(
+            $candidates,
+            fn (string $name): bool => ! $published->has($name)
+                && ! $reserved->has(ReservedVendor::normalize($name)),
+        ));
     }
 
     /**
@@ -262,10 +297,7 @@ class MirrorService
      */
     public function advisories(Repository $repository, array $names): array
     {
-        $wanted = array_values(array_filter(
-            $names,
-            fn (string $name): bool => $this->mayMirror($repository, $name),
-        ));
+        $wanted = $this->mirrorable($repository, $names);
 
         if ($wanted === []) {
             return [];
