@@ -91,6 +91,19 @@ shape rather than a delta from a previous one.
 - CI across PHP 8.3, 8.4 and 8.5, with code style (Pint) and static analysis
   (PHPStan via Larastan, level 6) enforced as their own job.
 
+- Outgoing webhooks: an HTTP endpoint of your own can be told when a version
+  publishes, a sync fails, or a package is abandoned — for a deploy pipeline, an
+  incident tracker, or a chat tool that is not Slack. Configured under **Outgoing
+  webhooks** in the panel with a URL, a set of events and a shared secret.
+
+  Deliveries are signed the way GitHub signs the ones this app receives —
+  `X-Hub-Signature-256`, an HMAC-SHA256 over the raw body — so a receiver already
+  written for a GitHub webhook needs no new code. Every delivery is queued and
+  retried twice; a dead endpoint can never fail or delay a sync, and its last
+  outcome is shown in the panel with a consecutive-failure count. **Send test
+  delivery** posts a `ping` to prove the URL before a release depends on it. See
+  [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md).
+
 ### Changed
 
 - Per-package `/p2` metadata answers conditional requests. Every response

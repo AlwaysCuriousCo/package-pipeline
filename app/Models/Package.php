@@ -6,6 +6,8 @@ use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Exceptions\VendorReserved;
 use App\Models\Concerns\LogsAuditableChanges;
+use App\Notifications\PackageAbandoned;
+use App\Services\AdminNotifier;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubClient;
 use App\Services\GitHub\WebhookRegistrar;
@@ -120,6 +122,26 @@ class Package extends Model
             // package that gains (or loses) a source later has its path
             // re-derived under the provider that now applies.
             $package->repository_path = $package->normalizedRepositoryPath();
+        });
+
+        // Announced from `saved` rather than from the panel action that usually
+        // raises the flag, because it is not the only one: the API, a console
+        // edit and a future importer all set the same column, and an
+        // abandonment consumers are being told about is worth saying once
+        // wherever it came from.
+        //
+        // `wasChanged` and not `isDirty`, and only in the false → true
+        // direction: the flag is re-saved unchanged on every hourly sync, and
+        // un-abandoning a package is good news nobody needs paging for.
+        //
+        // An insert leaves `wasChanged` empty, so a package created already
+        // abandoned announces nothing — which is right twice over. It told
+        // consumers nothing different to begin with, and a bulk import of dead
+        // packages would otherwise page everyone once per row.
+        static::saved(function (self $package): void {
+            if ($package->wasChanged('abandoned') && $package->abandoned) {
+                app(AdminNotifier::class)->send(new PackageAbandoned($package));
+            }
         });
 
         // A repository hook left behind on GitHub would keep posting to a URL

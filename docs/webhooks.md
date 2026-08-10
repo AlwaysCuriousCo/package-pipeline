@@ -254,3 +254,8 @@ that rings on every commit is a bell nobody reads — the version is still
 synced, it just does not interrupt anyone. Failed syncs do notify, once the
 job has used up its retries, because a package that stops receiving releases
 otherwise fails silently.
+
+For anything that is not a person reading a channel — a deploy pipeline, an
+incident tracker, a chat tool that is not Slack — the same events can be POSTed
+to an endpoint of your own, signed the way the deliveries above are.
+See [docs/outgoing-webhooks.md](outgoing-webhooks.md).

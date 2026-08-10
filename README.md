@@ -369,6 +369,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
+- [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.
 - [docs/packistry-feature-analysis.md](docs/packistry-feature-analysis.md) — feature comparison against [Packistry](https://github.com/packistry/packistry) that informs the roadmap.

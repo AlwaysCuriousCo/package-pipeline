@@ -3,10 +3,13 @@
 namespace App\Providers;
 
 use App\Http\Middleware\AuthenticateComposer;
+use App\Notifications\Channels\WebhookChannel;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Foundation\DevCommands;
 use Illuminate\Http\Request;
+use Illuminate\Notifications\ChannelManager;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -35,6 +38,12 @@ class AppServiceProvider extends ServiceProvider
         // this, `artisan dev` would launch a Vite dev server for nothing and
         // then take the whole process group down with it when it failed.
         DevCommands::except('vite');
+
+        // Registers `webhook` next to `database` and `slack`, so a notification
+        // can name it in via() and AdminNotifier can route to one.
+        Notification::resolved(
+            fn (ChannelManager $channels) => $channels->extend('webhook', fn (): WebhookChannel => new WebhookChannel),
+        );
 
         $this->defineRateLimiters();
     }

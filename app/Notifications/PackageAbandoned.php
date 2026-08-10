@@ -15,35 +15,31 @@ use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Slack\BlockKit\Blocks\ContextBlock;
 use Illuminate\Notifications\Slack\BlockKit\Blocks\SectionBlock;
 use Illuminate\Notifications\Slack\SlackMessage;
-use Illuminate\Support\Str;
 
 /**
- * A package's sync gave up.
+ * A package was marked abandoned.
  *
- * Sent only once the job has exhausted its retries, so a rate limit that
- * clears on the second attempt never reaches anyone. A silent failure here
- * means a package quietly stops receiving releases, which is the one outcome
- * worth interrupting someone for.
+ * Composer surfaces this to every consumer that resolves the package, so it is
+ * the one metadata change here that reaches out and asks other teams to do
+ * something. Sent once, when the flag is raised — not on the syncs afterwards,
+ * which would say the same thing hourly forever.
  */
-class PackageSyncFailed extends Notification implements SendsWebhook, ShouldQueue
+class PackageAbandoned extends Notification implements SendsWebhook, ShouldQueue
 {
     use Queueable, RoutedByAdminNotifier;
 
-    public function __construct(
-        public readonly Package $package,
-        public readonly string $reason,
-    ) {}
+    public function __construct(public readonly Package $package) {}
 
     public function webhookEvent(): WebhookEvent
     {
-        return WebhookEvent::SyncFailed;
+        return WebhookEvent::PackageAbandoned;
     }
 
     /**
-     * The reason is sent whole rather than squished to a line as the bell and
-     * Slack show it: a receiver is as likely to be a log sink or an incident
-     * tracker as a chat message, and truncating a provider's error is a choice
-     * only a display should make.
+     * `replacement` is null when the package was abandoned without naming one,
+     * which is a different thing from "not stated": Composer prints a bare
+     * "abandoned, no replacement suggested" for that case, and a receiver
+     * opening tickets wants to know which of the two it is looking at.
      *
      * @return array<string, mixed>
      */
@@ -53,8 +49,8 @@ class PackageSyncFailed extends Notification implements SendsWebhook, ShouldQueu
             'package' => $this->package->name,
             'repository' => $this->package->composerRepository->path,
             'source_url' => $this->package->repository,
-            'reason' => $this->reason,
-            'last_synced_at' => $this->package->last_synced_at?->toIso8601String(),
+            'replacement' => $this->package->replacement_package,
+            'latest' => $this->package->latest_version,
         ];
     }
 
@@ -64,8 +60,8 @@ class PackageSyncFailed extends Notification implements SendsWebhook, ShouldQueu
     public function toDatabase(object $notifiable): array
     {
         return FilamentNotification::make()
-            ->danger()
-            ->icon('heroicon-o-exclamation-triangle')
+            ->warning()
+            ->icon('heroicon-o-archive-box-x-mark')
             ->title($this->title())
             ->body($this->body())
             ->actions([
@@ -83,18 +79,18 @@ class PackageSyncFailed extends Notification implements SendsWebhook, ShouldQueu
             ->text("{$this->title()} — {$this->body()}")
             ->headerBlock($this->title())
             ->sectionBlock(fn (SectionBlock $block) => $block->text($this->body())->markdown())
-            ->contextBlock(fn (ContextBlock $block) => $block->text($this->package->repository));
+            ->contextBlock(fn (ContextBlock $block) => $block->text((string) $this->package->repository));
     }
 
     private function title(): string
     {
-        return "Could not sync {$this->package->name}";
+        return "Abandoned {$this->package->name}";
     }
 
     private function body(): string
     {
-        // Provider errors carry whole JSON bodies; the panel and Slack both
-        // want the first line of it, not the payload.
-        return Str::limit(Str::squish($this->reason), 300);
+        return filled($this->package->replacement_package)
+            ? "Consumers are now told to use {$this->package->replacement_package} instead."
+            : 'Consumers are now told it is abandoned, with no replacement suggested.';
     }
 }
