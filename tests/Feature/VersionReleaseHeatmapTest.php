@@ -5,12 +5,15 @@ namespace Tests\Feature;
 use App\Filament\Widgets\VersionReleaseHeatmap;
 use App\Models\Package;
 use App\Models\PackageVersion;
+use App\Models\Repository;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
 use Filament\Widgets\AccountWidget;
 use Filament\Widgets\FilamentInfoWidget;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -129,6 +132,57 @@ class VersionReleaseHeatmapTest extends TestCase
 
         Livewire::test(VersionReleaseHeatmap::class)
             ->assertSee('No releases recorded in the last 12 months.');
+    }
+
+    /**
+     * The grid needs the releases themselves and not just counts — the tooltip
+     * names them — so the year is read row by row rather than grouped in SQL.
+     * That makes the read worth doing once for everybody looking at the
+     * dashboard, rather than once per look.
+     */
+    public function test_it_reads_the_year_once_for_everyone_looking(): void
+    {
+        PackageVersion::factory()->create(['released_at' => $this->today->subMonth()]);
+
+        $this->assertSame(1, $this->versionQueriesWhileRendering());
+        $this->assertSame(0, $this->versionQueriesWhileRendering());
+    }
+
+    /**
+     * The window is cut by the viewer's grants, so one operator's year is not
+     * an answer to another operator's question.
+     */
+    public function test_one_viewers_year_is_not_served_to_another(): void
+    {
+        $package = Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
+
+        PackageVersion::factory()->for($package)->create(['released_at' => $this->today->subMonth()]);
+
+        $this->assertStringContainsString('1 release', $this->viewData()['summary']);
+
+        $this->actingAs(User::factory()->create());
+
+        $this->assertSame('No releases recorded in the last 12 months.', $this->viewData()['summary']);
+    }
+
+    /**
+     * How many queries one render puts against the version table.
+     */
+    private function versionQueriesWhileRendering(): int
+    {
+        $queries = 0;
+
+        DB::listen(function (QueryExecuted $query) use (&$queries): void {
+            if (str_contains($query->sql, 'package_versions')) {
+                $queries++;
+            }
+        });
+
+        $this->viewData();
+
+        // The listener cannot be removed, so each call measures itself against
+        // its own counter and the earlier ones keep counting into theirs.
+        return $queries;
     }
 
     /**

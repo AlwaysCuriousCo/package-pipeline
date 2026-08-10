@@ -44,6 +44,15 @@ class VersionReleaseHeatmap extends Widget
     protected const MONTH_LABEL_GAP = 3;
 
     /**
+     * How long one computed year of releases stands for, matching the two
+     * widgets beside it. This one does not poll, so the window is not covering
+     * a refresh loop — it is covering the dashboard being opened at all: a
+     * reload, a second tab and every other operator looking at the same moment
+     * otherwise each read a year of release rows back out of the database.
+     */
+    private const CACHE_SECONDS = 60;
+
+    /**
      * @return array<string, mixed>
      */
     protected function getViewData(): array
@@ -51,8 +60,9 @@ class VersionReleaseHeatmap extends Widget
         $end = CarbonImmutable::now()->endOfDay();
         $start = $end->subYear()->addDay()->startOfDay();
 
-        $versions = $this->releasedDuring($start, $end);
-        $days = $this->groupByDay($versions);
+        $released = $this->releases($start, $end);
+
+        $days = collect($released['days']);
 
         // The ramp is scaled against the busiest day so it always spans its full
         // range, however quiet or noisy the year turns out to be.
@@ -66,12 +76,44 @@ class VersionReleaseHeatmap extends Widget
             'weekdays' => [1 => 'Mon', 3 => 'Wed', 5 => 'Fri'],
             'levels' => range(0, self::LEVELS),
             'summary' => $this->summary(
-                total: $versions->count(),
-                packages: $versions->pluck('package_id')->unique()->count(),
+                total: $released['total'],
+                packages: $released['packages'],
                 activeDays: $days->count(),
                 busiest: $busiest,
             ),
         ];
+    }
+
+    /**
+     * Everything the grid and its summary are drawn from, for one window and
+     * one viewer.
+     *
+     * Cached as one entry rather than three, because the three are tallies of
+     * a single read and caching only the query would leave the summary asking
+     * for the rows again. Keyed by the viewer, since the window below is cut
+     * by that viewer's grants and two operators' years are not interchangeable
+     * — and by the window's last day, so tomorrow's dashboard cannot be served
+     * yesterday's twelve months.
+     *
+     * @return array{days: array<string, array{count: int, releases: array<int, string>}>, total: int, packages: int}
+     */
+    protected function releases(CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $key = implode(':', [
+            'widget:version-release-heatmap',
+            $end->toDateString(),
+            'user:'.(auth()->user()?->getAuthIdentifier() ?? 'guest'),
+        ]);
+
+        return cache()->remember($key, self::CACHE_SECONDS, function () use ($start, $end): array {
+            $versions = $this->releasedDuring($start, $end);
+
+            return [
+                'days' => $this->groupByDay($versions)->all(),
+                'total' => $versions->count(),
+                'packages' => $versions->pluck('package_id')->unique()->count(),
+            ];
+        });
     }
 
     /**
