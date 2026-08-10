@@ -4,9 +4,8 @@ namespace App\Jobs;
 
 use App\Exceptions\RateLimited;
 use App\Models\Package;
-use App\Notifications\PackageSyncFailed;
-use App\Services\AdminNotifier;
 use App\Services\PackageSynchronizer;
+use App\Services\SyncFailureNotifier;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -96,6 +95,10 @@ class DiscoverVersions implements ShouldQueue
      * so nothing will import. Cancel the batch so FinalizePackageSync does not
      * stamp the package as freshly synced, and say so out loud — a package
      * that stops syncing stops receiving releases.
+     *
+     * Out loud once per failure, not once per hourly attempt at it; see
+     * SyncFailureNotifier for why that is not read back off the column written
+     * a line above.
      */
     public function failed(?Throwable $exception): void
     {
@@ -105,6 +108,6 @@ class DiscoverVersions implements ShouldQueue
 
         $this->batch()?->cancel();
 
-        app(AdminNotifier::class)->send(new PackageSyncFailed($this->package, $reason));
+        app(SyncFailureNotifier::class)->report($this->package, $reason);
     }
 }

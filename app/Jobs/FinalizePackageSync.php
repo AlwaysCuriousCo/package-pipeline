@@ -3,10 +3,10 @@
 namespace App\Jobs;
 
 use App\Models\Package;
-use App\Notifications\PackageSyncFailed;
 use App\Notifications\PackageVersionsPublished;
 use App\Services\AdminNotifier;
 use App\Services\PackageSynchronizer;
+use App\Services\SyncFailureNotifier;
 use Illuminate\Bus\Batch;
 use Throwable;
 
@@ -51,10 +51,15 @@ class FinalizePackageSync
         } catch (Throwable $exception) {
             $package->recordBookkeeping(['sync_error' => $exception->getMessage()]);
 
-            app(AdminNotifier::class)->send(new PackageSyncFailed($package, $exception->getMessage()));
+            app(SyncFailureNotifier::class)->report($package, $exception->getMessage());
 
             return;
         }
+
+        // A sync that reached the end is a package that is syncing again, so
+        // the next failure is announced when it happens rather than waiting out
+        // the reminder window of one that has since been fixed.
+        app(SyncFailureNotifier::class)->recovered($package);
 
         // Dev versions move on every commit and removals are usually a branch
         // being tidied up, so a release — or a package arriving for the first

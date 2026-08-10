@@ -4,8 +4,7 @@ namespace App\Jobs;
 
 use App\Exceptions\SyncInProgress;
 use App\Models\Package;
-use App\Notifications\PackageSyncFailed;
-use App\Services\AdminNotifier;
+use App\Services\SyncFailureNotifier;
 use Closure;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -236,8 +235,11 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 
         $this->package->recordBookkeeping(['sync_error' => $reason]);
 
-        // Only once the retries are spent. A package that stops syncing stops
-        // receiving releases, and nothing else would say so out loud.
-        app(AdminNotifier::class)->send(new PackageSyncFailed($this->package, $reason));
+        // Only once the retries are spent, and only once per failure rather
+        // than once per hourly attempt at it. A package that stops syncing
+        // stops receiving releases, and nothing else would say so out loud —
+        // but saying it five hundred times an hour says nothing the first one
+        // did not.
+        app(SyncFailureNotifier::class)->report($this->package, $reason);
     }
 }
