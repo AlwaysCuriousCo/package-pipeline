@@ -58,19 +58,38 @@ again. The default of 330 already accounts for this; it is only ever raised.
 
 This one deserves its own heading because the failure is silent.
 
-Every scheduled task runs `onOneServer()`, and that needs a cache store that is
-**shared between containers and supports locks**. `database` and `redis` both
-qualify. `file` and `array` do not — not because they error, but because each
-container then holds its own lock and cheerfully runs its own copy of every
-sweep. On three containers that is three hourly `packages:sync` fan-outs, three
-concurrent `archives:clean` runs racing each other over the same disk, and
-three sets of pruning.
+Every scheduled task runs `onOneServer()` and `withoutOverlapping()`, and each
+package's sync carries a uniqueness lock of its own. All three are entries in
+the cache store, and none of them errors when that store cannot hold them — they
+simply stop being locks.
 
-The same store holds the per-package uniqueness lock that stops two syncs of
-one package overlapping. An unshared cache defeats that too.
+`database` and `redis` both qualify. The other two do not, and they fail
+differently:
 
-So: on a multi-container deployment, `CACHE_STORE=file` is not a performance
-choice. It is a correctness bug that looks like everything working.
+| | What its locks are | Defeated on |
+| --- | --- | --- |
+| `file` | files on one container's disk | **two or more containers** — each holds its own set |
+| `array` | one PHP process's memory | **every deployment, including one container** |
+
+`array` is the one worth reading twice. `schedule:run` is a fresh process every
+minute, so a lock it takes is gone before the next tick asks about it — there is
+no second container involved and nothing shared to begin with. A single small
+registry, the deployment least likely to be suspected, has no overlap protection
+at all.
+
+What that costs is not a duplicated sweep. Two rebuilds of one package run at
+once, and each finishes by pruning the versions the other just wrote — the loser
+deletes the winner's rows. On three containers with `file` it is also three
+hourly `packages:sync` fan-outs and three `archives:clean` runs racing each other
+over the same disk.
+
+So `CACHE_STORE=file` on more than one container, or `CACHE_STORE=array`
+anywhere, is not a performance choice. It is a correctness bug that looks like
+everything working.
+
+`php artisan about` says which of the three you have, under **Registry →
+Scheduler locking**. It is worth checking on a deployment nobody has looked at
+in a while, because nothing else will ever mention it.
 
 ## The worker and the scheduler need a supervisor
 

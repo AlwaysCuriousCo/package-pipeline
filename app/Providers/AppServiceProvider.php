@@ -11,6 +11,7 @@ use App\Support\HostResolver;
 use App\Support\SystemHostResolver;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Foundation\DevCommands;
 use Illuminate\Http\Request;
 use Illuminate\Notifications\ChannelManager;
@@ -64,6 +65,48 @@ class AppServiceProvider extends ServiceProvider
         );
 
         $this->defineRateLimiters();
+
+        AboutCommand::add('Registry', fn (): array => [
+            'Scheduler locking' => $this->schedulerLocking(),
+        ]);
+    }
+
+    /**
+     * Whether this installation's cache store can hold the locks correctness
+     * depends on, said where an operator can ask.
+     *
+     * The cache here is not only a cache. Every scheduled task runs
+     * `onOneServer()`, every one of them `withoutOverlapping()`, and each
+     * package's sync carries a `UniqueLock` — all three are entries in the
+     * cache store, and all three quietly become no-ops when that store is not
+     * shared between the processes competing for them. The failure looks exactly
+     * like everything working: two rebuilds of one package run at once, and the
+     * loser's prune deletes the winner's rows.
+     *
+     * `array` is not a milder version of `file`, it is the worse one. A file
+     * lock is at least shared by every process on one container, which is enough
+     * for a single-container deployment; `array` keeps the lock in the memory of
+     * one process, and `schedule:run` is a fresh process every minute. So it
+     * defeats the scheduler's locks on an installation that has only ever run
+     * one container — the one deployment shape nobody thinks to suspect.
+     *
+     * `about` rather than a boot-time warning because the alternative is a log
+     * line every minute for as long as the misconfiguration lasts, and a warning
+     * that noisy is one an operator filters out. This is the framework's own
+     * place to ask what a deployment is actually configured as, and the
+     * deployment docs point at it.
+     */
+    private function schedulerLocking(): string
+    {
+        $store = (string) config('cache.default');
+
+        return match ((string) config("cache.stores.{$store}.driver")) {
+            'array', 'null' => "<fg=red;options=bold>DEFEATED</> — `{$store}` holds locks in one process's memory, "
+                .'so the scheduler takes a fresh set every minute and holds nothing',
+            'file' => "<fg=yellow;options=bold>ONE CONTAINER ONLY</> — `{$store}` holds locks on a local disk, "
+                .'so a second container shares none of them',
+            default => "shared, via the `{$store}` store",
+        };
     }
 
     /**

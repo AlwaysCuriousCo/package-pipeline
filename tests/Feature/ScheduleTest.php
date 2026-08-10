@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -141,6 +142,48 @@ class ScheduleTest extends TestCase
         // The hourly one is the case that matters most, because it is the only
         // task a stale lock can skip more than once.
         $this->assertSame(15, $this->event('packages:sync')->expiresAt);
+    }
+
+    /**
+     * The locks asserted above are entries in the cache store, so a store that
+     * does not share them turns every guarantee on this page into a comment.
+     * Nothing errors when that happens, which is why `about` is asked to say it
+     * out loud.
+     *
+     * @return string what `php artisan about` reports for the given store
+     */
+    private function reportedLocking(string $store): string
+    {
+        config(['cache.default' => $store]);
+
+        $this->assertSame(0, Artisan::call('about', ['--json' => true]));
+
+        $about = json_decode(Artisan::output(), true);
+
+        $this->assertIsArray($about);
+
+        return (string) data_get($about, 'registry.scheduler_locking');
+    }
+
+    public function test_a_shared_store_is_reported_as_shared(): void
+    {
+        $this->assertStringContainsString('shared', $this->reportedLocking('database'));
+    }
+
+    /**
+     * The one worth separating from `file`: a file lock is at least shared by
+     * every process on one container, and this is not shared by anything. The
+     * scheduler is a fresh process every minute, so it defeats the locks on a
+     * single-container deployment — the shape nobody thinks to suspect.
+     */
+    public function test_an_in_memory_store_is_reported_as_defeating_the_locks(): void
+    {
+        $this->assertStringContainsString('DEFEATED', $this->reportedLocking('array'));
+    }
+
+    public function test_a_local_file_store_is_reported_as_single_container_only(): void
+    {
+        $this->assertStringContainsString('ONE CONTAINER ONLY', $this->reportedLocking('file'));
     }
 
     public function test_pruning_clears_read_and_long_stale_notifications(): void
