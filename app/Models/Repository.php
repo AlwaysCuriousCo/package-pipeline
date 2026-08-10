@@ -256,10 +256,48 @@ class Repository extends Model
 
     /**
      * An absolute URL inside this repository's mount.
+     *
+     * Built from the configured application URL rather than from the request
+     * that happens to be in flight, which is a security property and not a
+     * tidiness one. The `dist` URLs these produce are baked into the `/p2`
+     * body, so the base is folded into that response's ETag — and the ETag is
+     * the payload cache's key. Resolved from the request, the base comes from
+     * the `Host` header (or, since the app trusts every proxy,
+     * `X-Forwarded-Host`), so an anonymous loop varying a header it fully
+     * controls mints an unbounded number of cache entries, each holding up to
+     * registry.metadata_cache.max_kilobytes for registry.metadata_cache.days.
+     * The same forged base is what the victim's Composer would then be told to
+     * download archives from.
+     *
+     * Where a registry answers is a deployment fact, and APP_URL is already
+     * where this installation states it: the provider webhooks and the GitHub
+     * App handshake are configured against it, and every URL this app builds
+     * off the request (a queued notification's link, a password-setup link) is
+     * built off it too once no request is in flight. An installation that has
+     * not set it correctly has more visibly broken than this.
+     *
+     * trustHosts() would bound the header instead, and was not taken: it
+     * answers 400 to anything that does not match, so an installation whose
+     * APP_URL is stale or still the framework's default would serve nothing at
+     * all rather than serve dist URLs from a host that at least resolves.
      */
     public function url(string $suffix = ''): string
     {
-        return url($this->pathPrefix().$suffix);
+        return $this->rootUrl().$this->pathPrefix().$suffix;
+    }
+
+    /**
+     * Where this registry states it is served from.
+     *
+     * The request is the fallback rather than the source, for an installation
+     * that has emptied the setting outright — with nothing configured, the
+     * host that asked is the only answer available.
+     */
+    private function rootUrl(): string
+    {
+        $configured = rtrim(trim((string) config('app.url')), '/');
+
+        return $configured === '' ? rtrim(url('/'), '/') : $configured;
     }
 
     /**

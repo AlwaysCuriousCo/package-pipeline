@@ -188,6 +188,33 @@ class ComposerMetadataCacheTest extends TestCase
         $this->get(self::URL, ['If-Modified-Since' => $modifiedSince])->assertStatus(304);
     }
 
+    /**
+     * The dist base is folded into the ETag, and the ETag is the payload
+     * cache's key — so a base taken from the request would let an anonymous
+     * loop mint a cache entry per forged header, each holding megabytes for a
+     * week, and hand the victim's Composer archive URLs on a host of the
+     * attacker's choosing.
+     */
+    public function test_a_forged_host_changes_neither_the_dist_urls_nor_the_validator(): void
+    {
+        $this->makeServedPackage();
+
+        $expected = $this->get(self::URL)->assertOk();
+
+        $forged = $this->get(self::URL, [
+            'Host' => 'evil.example',
+            // Every proxy is trusted, so this is as much an input as Host is.
+            'X-Forwarded-Host' => 'evil.example',
+        ])->assertOk();
+
+        $this->assertStringStartsWith(
+            rtrim((string) config('app.url'), '/').'/dist/',
+            $forged->json('packages.acme/widgets.0.dist.url'),
+        );
+
+        $this->assertSame($expected->headers->get('ETag'), $forged->headers->get('ETag'));
+    }
+
     public function test_a_client_without_visibility_gets_404_rather_than_304(): void
     {
         $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
