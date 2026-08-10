@@ -2,9 +2,11 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\SyncInProgress;
 use App\Models\Package;
 use App\Notifications\PackageSyncFailed;
 use App\Services\AdminNotifier;
+use Closure;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as Cache;
@@ -147,6 +149,53 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         }
 
         return true;
+    }
+
+    /**
+     * Run a sync inline, under the guard a queued one runs under.
+     *
+     * The console synchronizes in its own process, where none of the rules
+     * above apply: WithoutOverlapping is queue middleware and never sees it,
+     * and neither did anything check for a batch already in flight. So
+     * `package:rebuild` started while a webhook-triggered batch was importing
+     * put two writers on one package's rows and archives — precisely the race
+     * handle() exists to prevent, where the loser's prune deletes rows the
+     * winner just wrote. Holding the uniqueness lock a dispatch would take,
+     * and standing down for a running batch, puts the inline path under the
+     * same rules rather than beside them.
+     *
+     * It refuses rather than waits. The queued path can afford to come back in
+     * thirty seconds because nobody is watching it; a command that blocked
+     * would hold the terminal — or a scheduler slot — for as long as a rebuild
+     * of a large repository takes.
+     *
+     * @template TReturn
+     *
+     * @param  Closure(): TReturn  $work
+     * @return TReturn
+     *
+     * @throws SyncInProgress when another sync owns the package right now
+     */
+    public static function runExclusively(Package $package, Closure $work): mixed
+    {
+        $job = new self($package);
+        $lock = new UniqueLock(app(Cache::class));
+
+        throw_unless($lock->acquire($job), new SyncInProgress(
+            'a sync is already queued for it, and will run on the queue',
+        ));
+
+        try {
+            // ShouldBeUniqueUntilProcessing releases its lock the moment a job
+            // starts, so holding it says nothing about a batch already working
+            // through this package's versions. That is the same question
+            // handle() asks, for the same reason.
+            throw_if($package->syncRunning(), new SyncInProgress('a sync is already running for it'));
+
+            return $work();
+        } finally {
+            $lock->release($job);
+        }
     }
 
     public function handle(): void

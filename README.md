@@ -63,6 +63,8 @@ php artisan packages:sync --source=acme        # only packages under one source
 php artisan packages:sync --queue              # dispatch to the queue instead of running inline
 ```
 
+An inline `packages:sync` or `package:rebuild` stands aside for a package whose sync is already queued or mid-import, rather than writing over it, and says so; run it again once that one lands.
+
 Once a package has synced, its versions, release heatmap, and any sync errors all show on its admin page.
 
 `GITHUB_TOKEN` is deliberately a last resort — it's a person's credential with broad reach. For anything beyond a first spin, connect a **source** instead (next section) and clear the global token.

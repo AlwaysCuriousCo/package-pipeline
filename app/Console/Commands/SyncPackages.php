@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Exceptions\SyncInProgress;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Services\PackageSynchronizer;
@@ -60,18 +61,29 @@ class SyncPackages extends Command
         }
 
         $failures = 0;
+        $skipped = 0;
 
         foreach ($packages as $package) {
             try {
-                $synchronizer->sync($package);
+                // Inline, but never beside a sync the queue is already running:
+                // two writers over one package's versions leave whichever
+                // prunes last in charge of what survives.
+                SyncPackageJob::runExclusively($package, fn () => $synchronizer->sync($package));
+
                 $this->components->info("{$package->name}: {$package->versions()->count()} versions");
+            } catch (SyncInProgress $exception) {
+                $skipped++;
+                $this->components->warn("{$package->name}: not synced — {$exception->getMessage()}.");
             } catch (Throwable $exception) {
                 $failures++;
                 $this->components->error("{$package->name}: {$exception->getMessage()}");
             }
         }
 
-        return $failures === 0 ? self::SUCCESS : self::FAILURE;
+        // A skip is nobody's fault, but it is still a package this run was
+        // asked to sync and did not: a script that chains on the exit code has
+        // to be able to tell that apart from a sync that happened.
+        return $failures === 0 && $skipped === 0 ? self::SUCCESS : self::FAILURE;
     }
 
     /**

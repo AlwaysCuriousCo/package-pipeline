@@ -21,6 +21,10 @@ class RebuildPackage
 
     /**
      * Rebuild inline, for the console and tests.
+     *
+     * Unguarded on its own: the console wraps it in
+     * SyncPackageJob::runExclusively() so an inline rebuild cannot run beside
+     * a queued sync of the same package.
      */
     public function rebuild(Package $package): SyncOutcome
     {
