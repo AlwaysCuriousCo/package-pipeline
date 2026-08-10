@@ -45,6 +45,10 @@ class ActivitiesTable
                 TextColumn::make('causer')
                     ->label('Who')
                     ->state(fn (Activity $record): ?string => self::causer($record))
+                    // Which credential, under the name of who holds it: an
+                    // account and that account's CI token are the same person
+                    // and very different news.
+                    ->description(fn (Activity $record): ?string => self::credential($record))
                     // A change made by the console, a webhook or the scheduler
                     // has no signed-in user behind it, and saying so is more
                     // useful than an empty cell.
@@ -114,6 +118,17 @@ class ActivitiesTable
         }
 
         return $causer->getAttribute('name') ?? $causer->getAttribute('email') ?? class_basename($causer::class)." #{$causer->getKey()}";
+    }
+
+    /**
+     * The access token the change was made through, where it was made through
+     * one rather than from a signed-in session.
+     */
+    private static function credential(Activity $record): ?string
+    {
+        $credential = $record->properties->get('credential');
+
+        return is_string($credential) ? $credential : null;
     }
 
     /**

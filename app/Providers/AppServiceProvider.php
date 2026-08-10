@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Http\Middleware\AuthenticateComposer;
 use App\Notifications\Channels\WebhookChannel;
+use App\Support\ActingCredential;
 use App\Support\HostResolver;
 use App\Support\SystemHostResolver;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
@@ -26,6 +27,10 @@ class AppServiceProvider extends ServiceProvider
         // resolves to is the one input the mirror's egress guard cannot be
         // tested against for real — see App\Services\Mirror\EgressPolicy.
         $this->app->singleton(HostResolver::class, SystemHostResolver::class);
+
+        // One per request, so that the credential a token-authenticated write
+        // is attributed to cannot outlive the request that presented it.
+        $this->app->scoped(ActingCredential::class);
     }
 
     /**

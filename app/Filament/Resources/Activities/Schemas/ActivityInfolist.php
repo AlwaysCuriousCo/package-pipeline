@@ -30,6 +30,10 @@ class ActivityInfolist
                 TextEntry::make('subject_id')
                     ->label('Record ID')
                     ->placeholder('-'),
+                TextEntry::make('credential')
+                    ->label('Made through')
+                    ->state(fn (Activity $record): mixed => $record->properties->get('credential'))
+                    ->placeholder('The panel or the console — no access token was presented.'),
                 Section::make('What changed')
                     ->description('Only attributes the record marks as auditable are recorded — never a token, a password or any other secret.')
                     ->columnSpanFull()
@@ -59,7 +63,13 @@ class ActivityInfolist
      */
     private static function lines(Activity $record, string $key): array
     {
-        $properties = $record->properties->get($key, $key === 'attributes' ? $record->properties->all() : []);
+        // An event recorded on its own — a role, a grant — carries its detail
+        // at the top level rather than under `attributes`. `credential` is not
+        // part of that detail: it is stamped on every entry and has its own
+        // field above.
+        $properties = $record->properties->get($key, $key === 'attributes'
+            ? $record->properties->except('credential')->all()
+            : []);
 
         if (! is_iterable($properties)) {
             return [];

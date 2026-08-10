@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\ActingCredential;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Spatie\Activitylog\Models\Activity as BaseActivity;
@@ -20,6 +21,21 @@ use Spatie\Activitylog\Models\Activity as BaseActivity;
 class Activity extends BaseActivity
 {
     use MassPrunable;
+
+    protected static function booted(): void
+    {
+        // Stamped here rather than by each writer, because there are several —
+        // the attribute diff, LogRoleChange, AuditedBelongsToMany — and a
+        // credential that only some of them recorded would be a gap shaped
+        // exactly like the one it exists to close.
+        static::creating(function (self $activity): void {
+            $credential = app(ActingCredential::class)->describe();
+
+            if ($credential !== null) {
+                $activity->properties = collect($activity->properties ?? [])->put('credential', $credential);
+            }
+        });
+    }
 
     /**
      * How long an entry is kept.

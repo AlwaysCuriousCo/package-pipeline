@@ -250,6 +250,55 @@ class AuditLogTest extends TestCase
     }
 
     /**
+     * Spatie attributes a change to `auth()->user()`, which is nobody on a
+     * token-authenticated surface — so before the middleware set a causer,
+     * everything done through /api/v1 was filed as "System".
+     */
+    public function test_a_change_made_through_a_personal_token_is_attributed_to_its_owner(): void
+    {
+        $owner = User::factory()->superAdmin()->create(['name' => 'release-engineer']);
+        $issued = Token::issue($owner, 'ci-provisioning', [TokenAbility::ApiWrite, TokenAbility::ApiDelete]);
+
+        $package = Package::factory()->create();
+
+        Activity::query()->delete();
+
+        $this->withToken($issued->plainText)
+            ->deleteJson("/api/v1/packages/{$package->getKey()}")
+            ->assertNoContent();
+
+        $entry = Activity::query()->where('event', 'deleted')->sole();
+
+        $this->assertTrue($entry->causer->is($owner));
+        // The person and the person's CI token are the same account and very
+        // different news, so the entry names both.
+        $this->assertSame("ci-provisioning ({$issued->token->token_prefix})", $entry->properties->get('credential'));
+    }
+
+    /**
+     * A deploy token has no person behind it. It is its own principal
+     * everywhere else in the app, so it is its own causer here rather than
+     * being attributed to whoever happened to create it.
+     */
+    public function test_a_change_made_through_a_deploy_token_is_attributed_to_the_deploy_token(): void
+    {
+        $deployToken = DeployToken::factory()->create(['name' => 'production-deploys']);
+        $issued = Token::issue($deployToken, 'production-deploys', [TokenAbility::ApiWrite, TokenAbility::ApiDelete]);
+
+        $package = Package::factory()->create();
+
+        Activity::query()->delete();
+
+        $this->withToken($issued->plainText)
+            ->deleteJson("/api/v1/packages/{$package->getKey()}")
+            ->assertNoContent();
+
+        $entry = Activity::query()->where('event', 'deleted')->sole();
+
+        $this->assertTrue($entry->causer->is($deployToken));
+    }
+
+    /**
      * The rule the whole trait exists for. An attribute diff is written to a
      * table whose purpose is to be read later, by more people, for longer —
      * so a credential landing in one is a credential leaked.

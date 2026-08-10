@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Enums\TokenAbility;
 use App\Models\Repository;
 use App\Models\Token;
+use App\Support\ActingCredential;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -77,6 +78,11 @@ class AuthenticateComposer
         }
 
         $token->markUsed();
+
+        // Reads write nothing, but /upload does — it creates the package the
+        // first time a name is published — so this surface needs a causer for
+        // the same reason the API does.
+        app(ActingCredential::class)->actAs($token);
 
         $request->attributes->set('composerToken', $token);
 

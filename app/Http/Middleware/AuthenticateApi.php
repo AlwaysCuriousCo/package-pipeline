@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Enums\TokenAbility;
 use App\Models\Token;
 use App\Providers\AppServiceProvider;
+use App\Support\ActingCredential;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -70,6 +71,11 @@ class AuthenticateApi
         }
 
         $token->markUsed();
+
+        // Everything this request writes is the work of this credential's
+        // principal. Without it the audit log files each package created,
+        // synced or deleted here against nobody and shows it as "System".
+        app(ActingCredential::class)->actAs($token);
 
         $request->attributes->set('apiToken', $token);
 
