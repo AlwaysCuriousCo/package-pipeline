@@ -94,6 +94,17 @@ Schedule::command('downloads:prune')
     ->withoutOverlapping()
     ->onOneServer();
 
+// The database cache store expires an entry when the key is read and at no
+// other time, so a key nothing asks for again is a row that outlives its TTL
+// forever. This app supersedes entries rather than invalidating them — the /p2
+// payload is keyed by its own validator, the mirror's likewise, the widgets by
+// the day their window opens — which is what makes that shape the normal case
+// here rather than an oddity. A no-op on redis.
+Schedule::command('cache:prune')
+    ->dailyAt('03:45')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 // job_batches gains a row per sync and never loses one. Both readers — the
 // panel's progress widget and SyncPackageJob's stale-batch check — only ever
 // look at the batch a package points at right now, and Package::syncBatch()

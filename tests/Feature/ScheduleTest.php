@@ -93,6 +93,16 @@ class ScheduleTest extends TestCase
     }
 
     /**
+     * The database cache store expires an entry only when its key is read, and
+     * this app supersedes entries rather than invalidating them — so the keys
+     * it leaves behind are precisely the ones nothing will read again.
+     */
+    public function test_expired_cache_entries_are_swept_daily(): void
+    {
+        $this->assertSame('45 3 * * *', $this->event('cache:prune')->expression);
+    }
+
+    /**
      * The documented deployment is several app containers behind one database,
      * so a sweep without these would run once per container.
      */

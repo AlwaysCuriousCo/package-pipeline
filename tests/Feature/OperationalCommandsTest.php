@@ -200,4 +200,39 @@ class OperationalCommandsTest extends TestCase
 
         $this->artisan('token:revoke', ['prefix' => $token->token_prefix])->assertFailed();
     }
+
+    /**
+     * The database store only notices an expiry when the key is read, and this
+     * app is full of keys nothing reads twice — a superseded /p2 payload is
+     * keyed by the validator it was rendered under, so the sync that changed
+     * the package leaves the old entry behind with nobody left to ask for it.
+     */
+    public function test_cache_prune_clears_entries_nothing_will_ever_read_again(): void
+    {
+        config(['cache.default' => 'database']);
+
+        cache()->put('superseded', 'payload', now()->addMinute());
+        cache()->put('still-wanted', 'payload', now()->addDay());
+
+        $this->travel(2)->minutes();
+
+        $this->artisan('cache:prune')
+            ->expectsOutputToContain('Pruned 1 expired cache entry')
+            ->assertSuccessful();
+
+        // Counted rather than named: the store writes every key behind
+        // CACHE_PREFIX, so an assertion on the bare name would pass whether or
+        // not anything had been deleted.
+        $this->assertDatabaseCount('cache', 1);
+        $this->assertSame('payload', cache()->get('still-wanted'));
+    }
+
+    public function test_cache_prune_leaves_a_store_that_expires_its_own_entries_alone(): void
+    {
+        config(['cache.default' => 'redis']);
+
+        $this->artisan('cache:prune')
+            ->expectsOutputToContain('expires its own entries')
+            ->assertSuccessful();
+    }
 }
