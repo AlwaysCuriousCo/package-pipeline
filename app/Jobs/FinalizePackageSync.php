@@ -49,7 +49,7 @@ class FinalizePackageSync
         try {
             $outcome = app(PackageSynchronizer::class)->finalize($package, $this->known, $attempted, $batch->failedJobs);
         } catch (Throwable $exception) {
-            $package->forceFill(['sync_error' => $exception->getMessage()])->save();
+            $package->recordBookkeeping(['sync_error' => $exception->getMessage()]);
 
             app(AdminNotifier::class)->send(new PackageSyncFailed($package, $exception->getMessage()));
 

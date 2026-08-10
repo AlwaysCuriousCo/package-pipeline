@@ -163,6 +163,34 @@ class Package extends Model
     }
 
     /**
+     * Write columns that record what happened *to* this package rather than
+     * what it publishes, leaving its timestamp where it was.
+     *
+     * `packages.updated_at` has two jobs and they pull against each other. It
+     * is this row's history, and it is the fingerprint every `/p2` response's
+     * Last-Modified and ETag — and so the rendered payload cache's key — is cut
+     * from. The resolution is that only what this registry *publishes* moves
+     * it: content changes are loud, bookkeeping is quiet.
+     *
+     * Bookkeeping is otherwise the loudest writer in the app. The hourly sync
+     * stamps `last_synced_at` on every package whether or not a single ref
+     * moved, so left alone it moves every ETag in the registry on the hour —
+     * capping every 304 and every cached payload at one hour, and stranding a
+     * superseded cache entry per package per hour in a store that only evicts
+     * on read.
+     *
+     * Whatever moves the version rows already moves this timestamp on its own
+     * (see PackageVersion::touchPackage), so nothing that a consumer could
+     * observe is lost by keeping these quiet.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    public function recordBookkeeping(array $attributes): void
+    {
+        self::withoutTimestamps(fn () => $this->forceFill($attributes)->save());
+    }
+
+    /**
      * @return HasMany<PackageVersion, $this>
      */
     public function versions(): HasMany

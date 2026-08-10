@@ -234,7 +234,7 @@ class SyncPackageJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
     {
         $reason = $exception?->getMessage() ?: 'The sync failed without reporting a reason.';
 
-        $this->package->forceFill(['sync_error' => $reason])->save();
+        $this->package->recordBookkeeping(['sync_error' => $reason]);
 
         // Only once the retries are spent. A package that stops syncing stops
         // receiving releases, and nothing else would say so out loud.

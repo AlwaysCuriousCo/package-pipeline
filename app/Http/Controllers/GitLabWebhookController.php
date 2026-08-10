@@ -66,7 +66,9 @@ class GitLabWebhookController extends Controller
         }
 
         foreach ($enabled as $target) {
-            $target->forceFill(['webhook_received_at' => now()])->save();
+            // Bookkeeping, and quiet for the same reason as the GitHub leg:
+            // a delivery recorded is not a package changed.
+            $target->recordBookkeeping(['webhook_received_at' => now()]);
 
             SyncPackageJob::debounced($target);
         }

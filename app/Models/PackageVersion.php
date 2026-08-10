@@ -42,6 +42,46 @@ class PackageVersion extends Model
                 $version->license = self::licenseExpression($version->licenses());
             }
         });
+
+        // A version row is the package's published content, so changing one
+        // has to move the fingerprint the package's `/p2` document is served
+        // under — see Package::recordBookkeeping for the other half of that
+        // rule.
+        //
+        // Deletion is the case this exists for. A removed row leaves no
+        // timestamp behind, so the newest-version aggregate the validators are
+        // cut from goes *backwards* when a version goes; Symfony compares
+        // If-Modified-Since with >=, so a client holding the older date
+        // revalidates to 304 forever and is never told the version is gone.
+        // setNotModified() strips Last-Modified from that 304 as well, so
+        // nothing ever self-corrects.
+        static::saved(fn (self $version) => $version->touchPackage());
+        static::deleted(fn (self $version) => $version->touchPackage());
+    }
+
+    /**
+     * Move the parent package's timestamp, which is what `/p2` fingerprints.
+     *
+     * A query-builder update rather than a save on the package: nothing here
+     * is an edit *to* the package, and firing its model events would run the
+     * abandonment announcement and the reserved-vendor guard because a version
+     * row moved.
+     *
+     * The ignore list is honoured — through the same check a save would make —
+     * because RecordDownload bumps `total_downloads` on both rows inside
+     * `withoutTimestampsOn`, and a download changes nothing about what the
+     * package publishes. Without this the busiest packages in the registry
+     * would invalidate their own metadata on every archive served.
+     */
+    public function touchPackage(): void
+    {
+        if (Package::isIgnoringTimestamps()) {
+            return;
+        }
+
+        Package::query()
+            ->whereKey($this->package_id)
+            ->update([(new Package)->getUpdatedAtColumn() => $this->freshTimestampString()]);
     }
 
     /**

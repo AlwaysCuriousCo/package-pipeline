@@ -22,6 +22,18 @@ use Throwable;
  */
 class PackageSynchronizer
 {
+    /**
+     * The columns finalize() writes that describe what the package publishes,
+     * as against the bookkeeping it writes beside them.
+     *
+     * `name` and `description` are rendered into what /p2 serves; `type` is
+     * what search filters on; `latest_version` is the constraint the panel
+     * tells a consumer to require. A move in any of them is news.
+     *
+     * @var list<string>
+     */
+    private const PUBLISHED_COLUMNS = ['name', 'description', 'type', 'latest_version'];
+
     public function __construct(
         private readonly ArchiveStore $archives,
         private readonly ArchiveSubtree $subtrees = new ArchiveSubtree,
@@ -69,7 +81,7 @@ class PackageSynchronizer
 
             return $this->finalize($package, $known, count($changed), $failed);
         } catch (Throwable $exception) {
-            $package->forceFill(['sync_error' => $exception->getMessage()])->save();
+            $package->recordBookkeeping(['sync_error' => $exception->getMessage()]);
 
             throw $exception;
         }
@@ -146,7 +158,30 @@ class PackageSynchronizer
      */
     public function prune(Package $package, array $versions): void
     {
-        $package->versions()->whereNotIn('version', $versions)->delete();
+        $this->drop($package, $package->versions()->whereNotIn('version', $versions));
+    }
+
+    /**
+     * Delete whatever the given query matches, and move the package's own
+     * timestamp when anything actually went.
+     *
+     * A mass delete fires no model events, so PackageVersion's `deleted` hook
+     * — which is what normally keeps the package's timestamp ahead of its
+     * contents — never runs for one. Doing it here rather than deleting the
+     * rows one at a time keeps a prune of a hundred stale refs at one
+     * statement.
+     *
+     * Only when rows actually went. A sync that prunes nothing has changed
+     * nothing, and a bump here would put the hourly schedule right back in
+     * charge of every validator in the registry.
+     *
+     * @param  HasMany<PackageVersion, Package>  $versions
+     */
+    private function drop(Package $package, HasMany $versions): void
+    {
+        if ((int) $versions->delete() > 0) {
+            $package->touch();
+        }
     }
 
     /**
@@ -196,7 +231,7 @@ class PackageSynchronizer
         $composerJson = $client->composerJson($ref['reference'], $package->subdirectory);
 
         if (! isset($composerJson['name'])) {
-            $package->versions()->where('version', $version)->delete();
+            $this->drop($package, $package->versions()->where('version', $version));
 
             return false;
         }
@@ -274,9 +309,23 @@ class PackageSynchronizer
             'description' => $newest['description'] ?? $package->description,
             'type' => $newest['type'] ?? $package->type,
             'latest_version' => $latest,
+        ]);
+
+        // Split so that a sync which resolved nothing new stays quiet. The two
+        // columns below are bookkeeping — when the sync ran and what it had to
+        // say for itself — and the hourly schedule writes them for every
+        // package in the registry whether or not a ref moved. Loud, they alone
+        // would move every metadata validator on the hour; see
+        // Package::recordBookkeeping. The four above are what this registry
+        // publishes, so a change to any of them is a change clients must see.
+        $bookkeeping = [
             'last_synced_at' => now(),
             'sync_error' => $this->syncError($attempted, $failed, $refused),
-        ])->save();
+        ];
+
+        $package->isClean(self::PUBLISHED_COLUMNS)
+            ? $package->recordBookkeeping($bookkeeping)
+            : $package->forceFill($bookkeeping)->save();
 
         return $this->outcome($known, $versions->pluck('is_dev', 'version')->all());
     }

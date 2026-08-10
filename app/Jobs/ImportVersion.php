@@ -70,7 +70,7 @@ class ImportVersion implements ShouldQueue
             // package a version until the next sync. The reason is left on
             // the package because a batch full of released imports is
             // otherwise a sync that has simply stopped, with nothing said.
-            $this->package->forceFill(['sync_error' => $limited->getMessage()])->save();
+            $this->package->recordBookkeeping(['sync_error' => $limited->getMessage()]);
 
             $this->release($limited->retryAt);
         }

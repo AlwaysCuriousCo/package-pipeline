@@ -549,10 +549,17 @@ class ComposerRepositoryController extends Controller
      * When this package's metadata last changed.
      *
      * The package's own timestamp is in the max because a *deleted* version
-     * leaves no timestamp behind. Every path that removes one — a sync
-     * pruning refs gone from upstream, an import dropping a ref whose
-     * composer.json lost its name — finishes by saving the package, so what
-     * moves when the version rows only get fewer is the package row.
+     * leaves no timestamp behind: without it the aggregate goes backwards when
+     * a version goes, and since Symfony compares If-Modified-Since with `>=` a
+     * client holding the older date would 304 forever — never learning the
+     * version was withdrawn, and never self-correcting, because a 304 carries
+     * no Last-Modified of its own to replace what it kept.
+     *
+     * That only works because the package's timestamp is guaranteed to move
+     * whenever its contents do, which is PackageVersion::touchPackage's job
+     * rather than something each removal path is trusted to remember — the
+     * panel's version delete and a discovery that prunes and then throws both
+     * used to get it wrong.
      *
      * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
      */

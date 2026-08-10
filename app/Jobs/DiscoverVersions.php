@@ -67,7 +67,7 @@ class DiscoverVersions implements ShouldQueue
             // retry into the same wall and spend the sync's attempts on it.
             // The reason goes in the column an auth failure would use,
             // saying which of the two this is.
-            $this->package->forceFill(['sync_error' => $limited->getMessage()])->save();
+            $this->package->recordBookkeeping(['sync_error' => $limited->getMessage()]);
 
             $this->release($limited->retryAt);
 
@@ -75,7 +75,7 @@ class DiscoverVersions implements ShouldQueue
         } catch (Throwable $exception) {
             // Every attempt leaves the reason where the panel reads it, not
             // just the one that exhausts the retries.
-            $this->package->forceFill(['sync_error' => $exception->getMessage()])->save();
+            $this->package->recordBookkeeping(['sync_error' => $exception->getMessage()]);
 
             throw $exception;
         }
@@ -101,7 +101,7 @@ class DiscoverVersions implements ShouldQueue
     {
         $reason = $exception?->getMessage() ?: 'The sync failed without reporting a reason.';
 
-        $this->package->forceFill(['sync_error' => $reason])->save();
+        $this->package->recordBookkeeping(['sync_error' => $reason]);
 
         $this->batch()?->cancel();
 

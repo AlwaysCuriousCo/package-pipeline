@@ -140,7 +140,11 @@ class GitHubWebhookController extends Controller
         }
 
         foreach ($packages as $target) {
-            $target->forceFill(['webhook_received_at' => now()])->save();
+            // When a delivery last landed is bookkeeping the panel reads, not
+            // something a consumer can observe — and most deliveries move no
+            // ref this registry publishes. Written loudly it would invalidate
+            // every client's copy of the metadata on a push to a README.
+            $target->recordBookkeeping(['webhook_received_at' => now()]);
 
             SyncPackageJob::debounced($target);
         }
