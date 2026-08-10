@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Filament\Resources\Repositories\Pages\CreateRepository;
 use App\Filament\Resources\Repositories\Pages\EditRepository;
 use App\Filament\Resources\Repositories\Pages\ListRepositories;
+use App\Models\MirroredArchive;
+use App\Models\MirroredPackage;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\User;
@@ -39,6 +41,64 @@ class RepositoryResourceTest extends TestCase
         Livewire::test(ListRepositories::class)
             ->assertSee('/ (registry root)')
             ->assertDontSee('/r/');
+    }
+
+    public function test_upstreams_are_configured_on_the_repository(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->fillForm(['upstreams' => [[
+                'name' => 'packagist.org',
+                'url' => 'https://repo.packagist.org/',
+                'token' => 'upstream-secret',
+                'enabled' => true,
+            ]]])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $upstream = $repository->upstreams()->sole();
+
+        // The trailing slash is normalised away on the model, so the same
+        // upstream typed two ways cannot get past the unique index twice.
+        $this->assertSame('https://repo.packagist.org', $upstream->url);
+        $this->assertSame('upstream-secret', $upstream->token);
+        $this->assertTrue($repository->refresh()->mirrors());
+    }
+
+    public function test_the_stored_upstream_token_is_never_echoed_back_to_the_browser(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+        $repository->upstreams()->create([
+            'name' => 'packagist.org',
+            'url' => 'https://repo.packagist.org',
+            'token' => 'upstream-secret',
+        ]);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->assertDontSee('upstream-secret')
+            // A blank input keeps what is stored rather than clearing it.
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('upstream-secret', $repository->upstreams()->sole()->token);
+    }
+
+    public function test_the_index_shows_what_the_mirror_is_holding(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+        $upstream = $repository->upstreams()->create(['name' => 'packagist.org', 'url' => 'https://repo.packagist.org']);
+
+        MirroredPackage::factory()->create(['upstream_id' => $upstream->getKey()]);
+
+        foreach ([str_repeat('a', 40), str_repeat('b', 40)] as $reference) {
+            MirroredArchive::factory()->create(['upstream_id' => $upstream->getKey(), 'reference' => $reference]);
+        }
+
+        // The Composer endpoints deliberately do not enumerate the cache, so
+        // this is the only place an operator can see what it costs.
+        Livewire::test(ListRepositories::class)
+            ->assertSee('1 docs / 2 zips');
     }
 
     public function test_a_repository_can_be_created(): void

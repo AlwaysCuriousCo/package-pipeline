@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 /**
  * A named Composer repository this registry serves.
@@ -88,6 +89,32 @@ class Repository extends Model
         // asked once per Composer request and the answer cannot change inside
         // one. `mirrors()` below asks it too.
         return $this->upstreams->where('enabled', true)->values();
+    }
+
+    /**
+     * Upstream documents cached for this repository, across every upstream.
+     *
+     * Only ever counted, and only in the panel — an operator asking "what is
+     * this mirror actually holding" has no other way to find out, and the
+     * answer is deliberately absent from list.json and search.json, which
+     * describe what this registry publishes.
+     *
+     * @return HasManyThrough<MirroredPackage, Upstream, $this>
+     */
+    public function mirroredPackages(): HasManyThrough
+    {
+        return $this->hasManyThrough(MirroredPackage::class, Upstream::class);
+    }
+
+    /**
+     * Upstream archives cached for this repository, which is where the disk
+     * actually goes.
+     *
+     * @return HasManyThrough<MirroredArchive, Upstream, $this>
+     */
+    public function mirroredArchives(): HasManyThrough
+    {
+        return $this->hasManyThrough(MirroredArchive::class, Upstream::class);
     }
 
     /**

@@ -46,6 +46,28 @@ class RepositoriesTable
                     ->placeholder('—')
                     ->formatStateUsing(fn (int $state): ?string => $state === 0 ? null : (string) $state)
                     ->sortable(),
+                TextColumn::make('upstreams_count')
+                    ->label('Upstreams')
+                    ->counts('upstreams')
+                    ->badge()
+                    ->color('gray')
+                    ->tooltip('Repositories this one mirrors packages from on demand.')
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (int $state): ?string => $state === 0 ? null : (string) $state)
+                    ->sortable(),
+                TextColumn::make('mirrored_packages_count')
+                    ->label('Cached')
+                    ->counts(['mirroredPackages', 'mirroredArchives'])
+                    // The only place an operator can see what the mirror is
+                    // actually holding: the Composer endpoints deliberately do
+                    // not enumerate it, because a cache warmed by whoever built
+                    // last is not a catalogue of anything.
+                    ->tooltip('Upstream documents and archives cached for this repository. Archives are the disk cost; mirror:prune removes what nothing has asked for.')
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (int $state, Repository $record): ?string => $state === 0 && $record->mirrored_archives_count === 0
+                        ? null
+                        : "{$state} docs / {$record->mirrored_archives_count} zips")
+                    ->toggleable(),
                 TextColumn::make('description')
                     ->limit(60)
                     ->toggleable(isToggledHiddenByDefault: true),

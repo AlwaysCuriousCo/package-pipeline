@@ -52,6 +52,73 @@ class RepositoryForm
                     ->rows(3)
                     ->columnSpanFull(),
                 self::reservedVendors(),
+                self::upstreams(),
+            ]);
+    }
+
+    /**
+     * The Composer repositories this one mirrors from, in the order they are
+     * consulted.
+     *
+     * Below the reservations on purpose. The two sections are one decision
+     * read in order: turning mirroring on means this repository will answer
+     * for names it does not publish, and reserving your own vendors first is
+     * what keeps an upstream from being one of the things it answers with.
+     *
+     * A section rather than a resource of its own, like the reservations: an
+     * upstream is not something an operator goes looking for, it is something
+     * they decide about a repository.
+     */
+    private static function upstreams(): Section
+    {
+        return Section::make('Upstream mirroring')
+            ->description('Other Composer repositories this one serves packages from on demand — usually packagist.org, so that a consuming project can resolve its whole dependency graph through one URL and keep installing when packagist.org or GitHub has a bad day. Off until you add one. Metadata and archives are cached here and pruned when nothing has asked for them; see docs/mirroring.md for the disk cost.')
+            ->collapsible()
+            ->collapsed(fn (?Repository $record): bool => $record === null || $record->upstreams()->doesntExist())
+            ->columnSpanFull()
+            ->schema([
+                Repeater::make('upstreams')
+                    ->relationship()
+                    ->hiddenLabel()
+                    ->addActionLabel('Add an upstream')
+                    // Upstreams are consulted in order and the first that has
+                    // a package wins, so the order is an operator's decision
+                    // rather than whatever order they happened to be added in.
+                    ->orderColumn('position')
+                    ->defaultItems(0)
+                    ->itemLabel(fn (array $state): ?string => $state['name'] ?? null)
+                    ->schema([
+                        TextInput::make('name')
+                            ->required()
+                            ->maxLength(255)
+                            ->placeholder('packagist.org')
+                            ->helperText('A label for the admin. The URL is the identity.'),
+                        TextInput::make('url')
+                            ->label('Repository URL')
+                            ->required()
+                            ->url()
+                            ->maxLength(255)
+                            ->placeholder('https://repo.packagist.org')
+                            ->helperText('The root of a Composer v2 repository — the URL you would put in a project\'s composer.json.'),
+                        TextInput::make('token')
+                            ->label('Access token')
+                            ->password()
+                            ->revealable()
+                            ->maxLength(255)
+                            // As on a source: the stored token is never echoed
+                            // back to the browser, a blank input keeps it and a
+                            // new value replaces it.
+                            ->afterStateHydrated(fn (TextInput $component) => $component->state(null))
+                            ->dehydrated(fn (?string $state): bool => filled($state))
+                            ->placeholder('Only for an upstream that needs one')
+                            // The warning is here rather than in the docs alone
+                            // because this is the field that creates the
+                            // hazard: everything an upstream serves is served
+                            // on through this repository's own read rules.
+                            ->helperText('Sent as the HTTP Basic password. Anything a credentialed upstream serves is served on under this repository\'s access rules — so a public repository with a private upstream republishes it to everyone.'),
+                        Toggle::make('enabled')
+                            ->helperText('Turning an upstream off stops it being consulted but keeps what is already cached.'),
+                    ]),
             ]);
     }
 
