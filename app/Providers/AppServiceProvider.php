@@ -90,39 +90,67 @@ class AppServiceProvider extends ServiceProvider
         // short of a useful amplifier.
         RateLimiter::for('sso', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
 
-        // The management API, keyed by the credential for the same reason
-        // uploads are: a provisioning run and a CI fleet both arrive from one
-        // egress address, and one token's loop must not spend another's budget.
-        // A request carrying no credential is answered 401 by the middleware
-        // behind this, but is counted first — which is what bounds guessing at
-        // tokens here, the job the Composer endpoints give to a failure counter
-        // they can afford because nothing else throttles them.
+        // The management API, keyed by the credential because a provisioning
+        // run and a CI fleet both arrive from one egress address and one
+        // token's loop must not spend another's budget — and by the address as
+        // well, because keying on the credential alone bounds nothing an
+        // attacker chooses. A different random bearer on every request is a
+        // fresh bucket on every request, so the 401s behind this would be free
+        // for ever; the address ceiling is the only one a guesser cannot walk
+        // out of, and it is what makes the claim that this bounds guessing true.
         //
-        // The same budget as uploads, because it is the same shape of traffic:
-        // a machine credential doing bounded work, not a fan-out. A page of a
-        // hundred packages per request puts a whole registry within a minute's
-        // walk, and a provisioning run past sixty creations a minute is told to
-        // wait rather than told no — the 429 carries Retry-After.
-        RateLimiter::for('api', function (Request $request): Limit {
-            $credential = (string) ($request->bearerToken() ?: $request->getPassword());
+        // The per-credential budget is the same as uploads, because it is the
+        // same shape of traffic: a machine credential doing bounded work, not a
+        // fan-out. A page of a hundred packages per request puts a whole
+        // registry within a minute's walk, and a provisioning run past sixty
+        // creations a minute is told to wait rather than told no — the 429
+        // carries Retry-After.
+        RateLimiter::for('api', fn (Request $request): array => $this->credentialAndAddressLimits(
+            $request,
+            (string) ($request->bearerToken() ?: $request->getPassword()),
+        ));
 
-            return Limit::perMinute(60)->by(
-                $credential === '' ? 'address:'.$request->ip() : 'token:'.hash('sha256', $credential),
-            );
-        });
+        // Uploads are exactly the traffic that arrives from one egress IP: a CI
+        // fleet, and a monorepo release publishing a package per component in a
+        // single run — hence the same pair, per credential and per address. The
+        // credential is read straight off the request: no token lookup, and its
+        // sha256 is what the database stores anyway.
+        //
+        // Guessing is not what the address budget is for here. This endpoint
+        // authenticates as Composer, so a credential that does not resolve is
+        // already counted and cut off by AuthenticateComposer's failure ledger,
+        // thirty to a minute. What is left for this to bound is the traffic
+        // that does authenticate.
+        RateLimiter::for('uploads', fn (Request $request): array => $this->credentialAndAddressLimits(
+            $request,
+            (string) ($request->getPassword() ?: $request->bearerToken()),
+        ));
+    }
 
-        // Keyed by the credential rather than the address, because uploads are
-        // exactly the traffic that arrives from one egress IP: a CI fleet, and a
-        // monorepo release publishing a package per component in a single run.
-        // The credential is read straight off the request — no token lookup, and
-        // its sha256 is what the database stores anyway. A request carrying none
-        // is answered 401 by the auth middleware regardless of this.
-        RateLimiter::for('uploads', function (Request $request): Limit {
-            $credential = (string) ($request->getPassword() ?: $request->bearerToken());
-
-            return Limit::perMinute(60)->by(
-                $credential === '' ? 'address:'.$request->ip() : 'token:'.hash('sha256', $credential),
-            );
-        });
+    /**
+     * The two ceilings every credentialled endpoint is behind: what one
+     * credential may spend, and what one address may spend however many
+     * credentials it presents.
+     *
+     * Both are returned, always, because either alone has a hole. The address
+     * budget on its own would throttle an office or a CI fleet for behaving
+     * normally, which is why it is several times the credential's. The
+     * credential budget on its own is chosen by the caller, and a caller who
+     * has not guessed a real token yet can have as many of them as it likes.
+     *
+     * A request carrying no credential is counted against the address under a
+     * key of its own rather than the credential's, so that the two limits never
+     * collide on one counter and charge such a request twice.
+     *
+     * @return list<Limit>
+     */
+    private function credentialAndAddressLimits(Request $request, string $credential): array
+    {
+        return [
+            Limit::perMinute(300)->by('address:'.$request->ip()),
+            Limit::perMinute(60)->by($credential === ''
+                ? 'anonymous:'.$request->ip()
+                : 'token:'.hash('sha256', $credential)),
+        ];
     }
 }

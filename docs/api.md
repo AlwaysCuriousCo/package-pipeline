@@ -127,10 +127,15 @@ Validation failures add the per-field detail and are always `422`:
 
 ## Rate limits
 
-Sixty requests a minute, counted per credential rather than per address — a CI
-fleet and an office both arrive from one egress address, and one token's loop
-must not spend another's budget. Requests carrying no credential are counted
-against the address, which is what bounds guessing at tokens.
+Sixty requests a minute per credential — a CI fleet and an office both arrive
+from one egress address, and one token's loop must not spend another's budget.
+
+Three hundred a minute per address on top of that, whatever credentials the
+requests carry. This is the one that bounds guessing at tokens: a per-credential
+budget is keyed on something the guesser chooses, so a different bearer on every
+request would be a fresh budget on every request. Five times the credential's
+ceiling, so that a fleet sharing an address is not throttled for working
+normally.
 
 A `429` carries `Retry-After` in seconds. Provisioning runs longer than sixty
 creations a minute should wait on it rather than treat it as a failure.

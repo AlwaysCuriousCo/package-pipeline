@@ -10,6 +10,7 @@ use App\Models\Token;
 use App\Models\User;
 use App\Support\NewToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -27,10 +28,19 @@ class RateLimitTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * Comfortably past every budget defined in the app, so no test has to
-     * restate a limit to prove it is enforced.
+     * Comfortably past every per-credential budget defined in the app, so no
+     * test has to restate a limit to prove it is enforced — and comfortably
+     * short of the per-address ceilings, which are several times larger so that
+     * a fleet sharing an egress address is not throttled for behaving normally.
      */
     private const PAST_ANY_BUDGET = 80;
+
+    /**
+     * Past those ceilings too, for the tests that are about them. Reached by
+     * looping until the 429 rather than by sending exactly this many, so the
+     * number stays an upper bound and not a second copy of the limit.
+     */
+    private const PAST_ANY_ADDRESS_CEILING = 400;
 
     protected function setUp(): void
     {
@@ -112,7 +122,7 @@ class RateLimitTest extends TestCase
             ->assertOk();
     }
 
-    public function test_uploads_are_throttled_per_credential_rather_than_per_address(): void
+    public function test_uploads_carry_a_budget_per_credential(): void
     {
         $write = [TokenAbility::RepositoryRead, TokenAbility::RepositoryWrite];
 
@@ -127,7 +137,7 @@ class RateLimitTest extends TestCase
         // A second machine behind the same egress address carries its own
         // budget: this reaches the controller and fails on the missing file,
         // which is the whole difference between keying on the credential and
-        // keying on the address.
+        // keying only on the address.
         $this->withToken($this->issueToken($write)->plainText)
             ->postJson('/upload/acme/widgets')
             ->assertUnprocessable();
@@ -155,6 +165,27 @@ class RateLimitTest extends TestCase
         $this->withToken($this->issueToken([TokenAbility::ApiRead])->plainText)
             ->getJson('/api/v1/packages')
             ->assertOk();
+    }
+
+    /**
+     * The hole a per-credential key cannot close on its own: the guesser picks
+     * the key. A different random bearer on every request is a fresh bucket on
+     * every request, so a credential budget counts each guess once and never
+     * twice, and only the address ceiling ever stops one.
+     */
+    public function test_a_flood_of_different_bad_credentials_from_one_address_is_throttled(): void
+    {
+        $attempt = 0;
+
+        // Until the ceiling answers, or until the guessing has gone on long
+        // enough to say it never will — which is the failure being tested for.
+        do {
+            // Never the same credential twice, so nothing but the address is
+            // shared between these requests.
+            $response = $this->withToken('pp_'.Str::random(40))->getJson('/api/v1/packages');
+        } while ($response->getStatusCode() !== 429 && ++$attempt < self::PAST_ANY_ADDRESS_CEILING);
+
+        $response->assertStatus(429)->assertHeader('Retry-After');
     }
 
     public function test_a_noisy_repositorys_webhook_does_not_starve_another(): void

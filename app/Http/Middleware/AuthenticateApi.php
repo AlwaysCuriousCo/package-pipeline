@@ -30,7 +30,9 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * There is no failure counter. The Composer endpoints are unthrottled and count
  * failed authentications instead; the API is throttled in front of this
- * middleware, by credential, which bounds guessing without a second ledger.
+ * middleware — by credential, and by address whatever credential is presented,
+ * which is the half that bounds guessing. A counter keyed on the guess alone
+ * would count each guess once and never twice.
  *
  * @see AppServiceProvider the `api` limiter
  */

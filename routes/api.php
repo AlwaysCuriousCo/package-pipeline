@@ -23,9 +23,10 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1')
     ->name('api.v1.')
     // In front of authentication, so an unauthenticated flood is bounded by
-    // the same ceiling as an authenticated one — which is also what puts a
-    // limit on guessing at tokens here, the job AuthenticateComposer's own
-    // failure counter does for the Composer endpoints.
+    // the same ceilings as an authenticated one — and by the per-address one
+    // whatever credential each request carries, which is what puts a limit on
+    // guessing at tokens here, the job AuthenticateComposer's own failure
+    // counter does for the Composer endpoints.
     ->middleware('throttle:api')
     ->group(function (): void {
         $read = AuthenticateApi::class.':'.TokenAbility::ApiRead->value;
