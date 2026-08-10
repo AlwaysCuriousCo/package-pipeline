@@ -278,8 +278,9 @@ release looks after itself.
   change, but a rollback that reaches it has already unwound the migrations
   after it. Restoring the backup is the recovery path; plan the upgrade that
   way.
-- **Run `php artisan migrate`.** Nineteen migrations, all safe on a populated
-  database. Two are worth knowing about: `notifications.data` becomes a json
+- **Run `php artisan migrate`.** Twenty migrations, all safe on a populated
+  database, and none of them rewrites a row except the name normalization
+  below. Two are worth knowing about: `notifications.data` becomes a json
   column, which is what stops the panel answering `500` on every page under
   PostgreSQL; and package names are lowercased, since a mixed-case name could
   never be fetched through `/p2` on a case-sensitive collation. Where two
