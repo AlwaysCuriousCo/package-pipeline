@@ -48,4 +48,44 @@ return [
         'max_kilobytes' => (int) env('METADATA_CACHE_MAX_KB', 4096),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Upstream Mirroring
+    |--------------------------------------------------------------------------
+    |
+    | Nothing here turns mirroring on — that is a per-repository decision, made
+    | by adding an upstream in the admin panel, and an installation with none
+    | never reaches any of this. These are the numbers that apply once one has.
+    |
+    | `metadata_ttl_minutes` is how long a cached upstream document is served
+    | without asking the upstream anything. Past it the next request revalidates
+    | with If-None-Match / If-Modified-Since, which for an unchanged package is
+    | a 304 with no body — so this trades staleness against a round trip, not
+    | against bandwidth. An hour is well inside how long a new release takes to
+    | propagate through Composer's own caches.
+    |
+    | `missing_ttl_minutes` is the same idea for a name the upstream does not
+    | have. It has to be much shorter, because a package published a minute ago
+    | is exactly the one somebody is waiting on — but it cannot be zero, or a
+    | typo in a composer.json becomes an upstream request on every resolve.
+    |
+    | `retention_days` is what `mirror:prune` enforces: a cached document or
+    | archive nothing has asked for in this long is deleted, and is re-fetched
+    | for free the next time it is wanted. This is the only bound on what the
+    | dist disk grows to, so it is the number to lower when disk is tight.
+    |
+    | `max_archive_megabytes` refuses to cache an upstream archive past this
+    | size. The upload ceiling above bounds what a token of ours may spend; this
+    | bounds what a *stranger's* published package can, since any name a
+    | consuming project requires can reach it.
+    |
+    */
+
+    'mirror' => [
+        'metadata_ttl_minutes' => (int) env('MIRROR_METADATA_TTL_MINUTES', 60),
+        'missing_ttl_minutes' => (int) env('MIRROR_MISSING_TTL_MINUTES', 10),
+        'retention_days' => (int) env('MIRROR_RETENTION_DAYS', 30),
+        'max_archive_megabytes' => (int) env('MIRROR_MAX_ARCHIVE_MB', 256),
+    ],
+
 ];

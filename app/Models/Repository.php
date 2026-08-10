@@ -6,6 +6,7 @@ use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\RepositoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -62,6 +63,44 @@ class Repository extends Model
     public function reservedVendors(): HasMany
     {
         return $this->hasMany(ReservedVendor::class);
+    }
+
+    /**
+     * The Composer repositories this one mirrors packages from on demand,
+     * in the order they are consulted.
+     *
+     * @return HasMany<Upstream, $this>
+     */
+    public function upstreams(): HasMany
+    {
+        return $this->hasMany(Upstream::class)->orderBy('position')->orderBy('id');
+    }
+
+    /**
+     * The upstreams actually in play — the disabled ones keep their cache but
+     * are never reached for.
+     *
+     * @return Collection<int, Upstream>
+     */
+    public function activeUpstreams(): Collection
+    {
+        // Memoised on the relation rather than re-queried, because this is
+        // asked once per Composer request and the answer cannot change inside
+        // one. `mirrors()` below asks it too.
+        return $this->upstreams->where('enabled', true)->values();
+    }
+
+    /**
+     * Whether this repository answers for packages it does not publish itself.
+     *
+     * Off unless an operator has said otherwise, which is what keeps an
+     * existing installation behaving exactly as it did: with no upstream rows
+     * there is nothing to consult, and every mirroring path returns before it
+     * reaches the network.
+     */
+    public function mirrors(): bool
+    {
+        return $this->activeUpstreams()->isNotEmpty();
     }
 
     /**
