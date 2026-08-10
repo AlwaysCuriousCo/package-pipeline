@@ -43,8 +43,32 @@ class SyncPackages extends Command
                 || $package->name === $name
                 || $this->matchesRepository($package, $name));
 
+        // A package published by artifact upload has no VCS URL, so a sync is
+        // not something it can fail at — it is something it has no way to do.
+        // Left in, every hourly run threw the same constant message at it,
+        // stored that as `sync_error` the first time and rewrote the identical
+        // value forever after, leaving a package permanently flagged broken for
+        // doing exactly what it was set up to do. The API refuses the same
+        // request for the same reason; see Api\V1\PackageController::sync().
+        [$packages, $uploaded] = $packages->partition(
+            fn (Package $package): bool => filled($package->repository),
+        );
+
+        // Only when the caller asked about one by name. "Sync every package"
+        // never meant these, and a registry publishing a hundred uploaded
+        // artifacts does not want a hundred lines about it every hour.
+        if ($name !== null) {
+            foreach ($uploaded as $package) {
+                $this->components->warn("{$package->name}: not synced — it is published by artifact upload and has no source to sync from.");
+            }
+        }
+
         if ($packages->isEmpty()) {
-            $this->components->error('No matching packages found.');
+            // Already explained above when it was a package that exists and
+            // cannot be synced, which is a different answer to not finding one.
+            if ($uploaded->isEmpty()) {
+                $this->components->error('No matching packages found.');
+            }
 
             return self::FAILURE;
         }
