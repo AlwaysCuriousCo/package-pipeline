@@ -149,6 +149,19 @@ class AppServiceProvider extends ServiceProvider
             $request,
             (string) ($request->getPassword() ?: $request->bearerToken()),
         ));
+
+        // A scrape is a dozen aggregate queries, and METRICS_TOKEN is optional
+        // — so on an installation that has enabled metrics without one, this is
+        // the only thing between an anonymous flood and that dozen per request.
+        // The exposition cache usually absorbs it, but it is exactly the kind
+        // of protection that must not depend on a tuning knob: a debugging
+        // METRICS_CACHE_SECONDS=0 left in place would otherwise remove it.
+        //
+        // Sixty a minute per address is fifteen Prometheus replicas scraping
+        // one instance at the conventional interval, which no deployment does.
+        // Per address rather than per credential because the token is optional
+        // and there is nothing else to key on.
+        RateLimiter::for('metrics', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
     }
 
     /**

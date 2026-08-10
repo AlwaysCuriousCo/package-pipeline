@@ -141,6 +141,12 @@ Note that the cache is per instance where the cache store is per instance. With
 the default `database` store, or with Redis, every app container answers from
 one cached document; with `file` or `array`, each container renders its own.
 
+**Scrapes are throttled** to 60 a minute per address, which is fifteen
+Prometheus replicas scraping one instance at the conventional interval. That
+ceiling is what bounds the cost of an anonymous flood when `METRICS_TOKEN` is
+unset, and it does not depend on the cache being on — `METRICS_CACHE_SECONDS=0`
+is for working out why a number looks wrong, not a setting to leave in place.
+
 ## Why there are no per-package series
 
 A gauge labelled with a package name would make this endpoint's cardinality a

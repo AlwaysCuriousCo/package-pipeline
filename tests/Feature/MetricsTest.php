@@ -95,6 +95,27 @@ class MetricsTest extends TestCase
         $this->withHeader('Authorization', 'Bearer scrape-me')->scrape()->assertOk();
     }
 
+    /**
+     * The token is optional, so an enabled endpoint may be anonymous — and a
+     * scrape with the exposition cache off is a dozen aggregate queries. The
+     * ceiling is far past what any Prometheus deployment scrapes and is what
+     * stops a flood costing that dozen per request.
+     */
+    public function test_scrapes_are_throttled(): void
+    {
+        for ($scrape = 1; $scrape <= 400; $scrape++) {
+            $response = $this->scrape();
+
+            if ($response->getStatusCode() === 429) {
+                $response->assertHeader('Retry-After');
+
+                return;
+            }
+        }
+
+        $this->fail('The metrics endpoint answered an unbounded number of scrapes.');
+    }
+
     public function test_it_reports_registry_totals(): void
     {
         $package = Package::factory()->create(['total_downloads' => 41]);

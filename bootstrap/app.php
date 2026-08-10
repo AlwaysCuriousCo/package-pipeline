@@ -29,9 +29,13 @@ return Application::configure(basePath: dirname(__DIR__))
         //
         // /metrics answers 404 until METRICS_ENABLED is set; see
         // MetricsController for why an internet-facing registry does not ship
-        // this switched on.
+        // this switched on. Throttled because METRICS_TOKEN is optional, so an
+        // enabled endpoint can be anonymous — and a scrape costs a dozen
+        // aggregate queries whenever the exposition cache is off.
         then: function (): void {
-            Route::get('/metrics', MetricsController::class)->name('metrics');
+            Route::get('/metrics', MetricsController::class)
+                ->middleware('throttle:metrics')
+                ->name('metrics');
 
             require __DIR__.'/../routes/composer.php';
         },
