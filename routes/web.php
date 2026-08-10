@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ComposerRepositoryController;
+use App\Http\Controllers\DownloadExportController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\PasswordSetupController;
@@ -115,6 +116,15 @@ Route::middleware('throttle:sso')->group(function (): void {
     Route::get('/auth/{source}/callback', [SsoController::class, 'callback'])
         ->name('sso.callback');
 });
+
+// Download statistics as a CSV, streamed. A plain route rather than something
+// the panel action returns, because Livewire delivers a file by base64-encoding
+// it into its response — which would hold the whole of the fastest-growing
+// table in the schema in memory. Outside /admin so it cannot race Filament's
+// route registration; scoped to the signed-in admin's own grants.
+Route::get('/exports/downloads', DownloadExportController::class)
+    ->middleware('auth')
+    ->name('exports.downloads');
 
 // The GitHub App install handshake for connecting a source. Both legs are
 // admin-only: the callback attaches an installation to a source, so it must

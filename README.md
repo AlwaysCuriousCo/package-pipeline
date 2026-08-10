@@ -367,6 +367,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/api.md](docs/api.md) — the `/api/v1` management API: authentication, abilities, every endpoint, and a release pipeline end to end.
 - [docs/dependency-confusion.md](docs/dependency-confusion.md) — reserving vendor prefixes here, and the Composer configuration each consuming project needs so a public package cannot win a private name.
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
+- [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.

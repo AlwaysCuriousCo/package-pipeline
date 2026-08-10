@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
+use App\Filament\Resources\Packages\Actions\ExportDownloadsAction;
 use App\Filament\Resources\Packages\Actions\QueueSyncsBulkAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
@@ -141,6 +142,7 @@ class PackagesTable
             ->recordActions([
                 SyncPackageAction::make(),
                 RebuildPackageAction::make(),
+                ExportDownloadsAction::make(),
                 ViewAction::make(),
                 EditAction::make(),
             ])

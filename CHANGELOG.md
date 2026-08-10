@@ -90,7 +90,6 @@ shape rather than a delta from a previous one.
   `downloads:recalculate`.
 - CI across PHP 8.3, 8.4 and 8.5, with code style (Pint) and static analysis
   (PHPStan via Larastan, level 6) enforced as their own job.
-
 - Outgoing webhooks: an HTTP endpoint of your own can be told when a version
   publishes, a sync fails, or a package is abandoned — for a deploy pipeline, an
   incident tracker, or a chat tool that is not Slack. Configured under **Outgoing
@@ -103,6 +102,15 @@ shape rather than a delta from a previous one.
   outcome is shown in the panel with a consecutive-failure count. **Send test
   delivery** posts a `ping` to prove the URL before a release depends on it. See
   [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md).
+- Download statistics export as CSV, per package or registry-wide, over a date
+  range. Two reports: a summary (one row per version, with a count) and the
+  detail (one row per download, with the credential that fetched it).
+
+  Available from the packages table in the panel — scoped to the signed-in
+  admin's own grants — and as `downloads:export`, which writes to a file or to
+  stdout for a scheduled extract. Nothing holds more than one row in memory:
+  `downloads` is the fastest-growing table in the schema, so rows are streamed
+  from a cursor. See [docs/download-analytics.md](docs/download-analytics.md).
 
 ### Changed
 
