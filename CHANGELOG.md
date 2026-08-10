@@ -7,8 +7,10 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing has been tagged yet, so everything below is the first release taking
-shape rather than a delta from a previous one.
+The 0.x line reached [v0.9.4](https://github.com/AlwaysCuriousCo/package-pipeline/releases/tag/v0.9.4)
+without a changelog, so what follows describes the registry as a whole rather
+than only what changed since that tag. Entries an operator upgrading from 0.9.x
+must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
@@ -257,4 +259,34 @@ shape rather than a delta from a previous one.
   out a request per package, and a CI fleet arrives from a single address — and
   uploads are keyed by the token rather than the address for the same reason.
 
-[Unreleased]: https://github.com/AlwaysCuriousCo/package-pipeline/commits/main
+### Upgrading from 0.9.x
+
+Everything here is something a deployment has to do or know; the rest of this
+release looks after itself.
+
+- **Run `php artisan migrate`.** Eighteen migrations, all safe on a populated
+  database. Two are worth knowing about: `notifications.data` becomes a json
+  column, which is what stops the panel answering `500` on every page under
+  PostgreSQL; and package names are lowercased, since a mixed-case name could
+  never be fetched through `/p2` on a case-sensitive collation. Where two
+  packages in one repository differ only in case, the migration renames
+  neither — it leaves a note in each `sync_error` and reports them, rather than
+  choosing which of the two to unpublish.
+- **Re-seed the permissions** with `php artisan db:seed --force`. This release
+  adds panel resources — activity, teams and outgoing webhooks — and Shield
+  denies what has no permission row, including to a super admin.
+- **Restart queue workers with `--timeout=310`.** The queue's `retry_after` is
+  now 330 seconds, above the longest job's own timeout. Left at the old 90, a
+  worker still streaming a large archive is handed the same job a second time.
+- **Run the scheduler.** It is no longer optional: the hourly `packages:sync`
+  is what retries a package whose imports partly failed and what reaches a
+  package no webhook covers, and the nightly commands are what stop archives,
+  notifications and job batches accumulating without bound. See
+  [docs/deployment.md](docs/deployment.md).
+- **Node is no longer needed.** `npm install` and `npm run build` are gone from
+  setup; there was no front-end build being served.
+- Nothing new is enabled by default. Upstream mirroring, the Prometheus
+  endpoint, outgoing webhooks and vendor reservations all start off, and a
+  registry that ignores them behaves as it did before.
+
+[Unreleased]: https://github.com/AlwaysCuriousCo/package-pipeline/compare/v0.9.4...HEAD
