@@ -104,7 +104,7 @@ class PackageController extends ApiController
         // Before the rest of the validation, so a caller who may not write here
         // cannot learn which names are taken from the 422s.
         abort_unless(
-            $this->token($request)->mayWriteTo($repository),
+            $this->token($request)->mayCreatePackageIn($repository),
             403,
             'This token may not create packages in this repository.',
         );
@@ -226,7 +226,7 @@ class PackageController extends ApiController
         $record = $this->find($request, $package);
 
         abort_unless(
-            $this->token($request)->mayWriteToPackage($record),
+            $this->token($request)->maySyncPackage($record),
             403,
             'This token may not sync this package.',
         );
@@ -259,13 +259,17 @@ class PackageController extends ApiController
      * Behind its own ability. Every other mutation here is additive or
      * repeatable; this one unpublishes something consuming projects may have
      * pinned in a lock file, and no amount of syncing brings it back.
+     *
+     * And behind the panel's Delete:Package as well, for a token issued by a
+     * person: the ability says this credential was meant for deleting, not
+     * that its owner may delete.
      */
     public function destroy(Request $request, string $package): Response
     {
         $record = $this->find($request, $package);
 
         abort_unless(
-            $this->token($request)->mayWriteToPackage($record),
+            $this->token($request)->mayDeletePackage($record),
             403,
             'This token may not delete this package.',
         );

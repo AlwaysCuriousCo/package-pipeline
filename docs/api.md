@@ -83,6 +83,21 @@ implies being able to write to it. To create a package in a repository a token
 needs that repository granted (or no grants at all); to sync or delete an
 existing package it needs the repository or that package granted.
 
+## What a personal token may change
+
+A personal access token is its owner reaching the registry through a machine,
+so it carries their panel role as well as their grants — creating a package
+answers to `Create:Package` and deleting one to `Delete:Package`, exactly as
+they do on the screens that stand for them. An ability records what a token was
+issued *for*; it never buys a permission its owner does not hold, so ticking
+`api:delete` on your own token does not delete packages if your role cannot.
+Syncing needs no permission, because the panel's own sync action needs none
+either: a user who can open a package can re-pull its versions.
+
+A **deploy token** is the other kind of principal. It authenticates a machine,
+holds no role and could not be given one, so its grants are the whole of its
+authority and nothing above applies to it.
+
 ## Errors
 
 Failures are Laravel's standard JSON shapes, which is what the Composer
@@ -105,7 +120,7 @@ Validation failures add the per-field detail and are always `422`:
 | --- | --- |
 | `200` / `201` / `202` / `204` | Done. `202` means queued — see the sync endpoint |
 | `401` | No token, or one that is unknown, expired or revoked |
-| `403` | The token lacks the ability, or its grants do not reach the target |
+| `403` | The token lacks the ability, its grants do not reach the target, or its owner's role may not do this |
 | `404` | No such record — or one this token may not see |
 | `422` | The request was understood and refused; `errors` says why |
 | `429` | Rate limited; `Retry-After` says for how long |

@@ -11,6 +11,7 @@ use App\Models\Token;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 /**
@@ -18,10 +19,12 @@ use Tests\TestCase;
  * same visibleTo() scope the Composer endpoints and the panel narrow by, and
  * every mutation through the same grant rules the artifact upload obeys.
  *
- * Two rules, kept apart on purpose. Whether a caller may *see* a package
+ * Three rules, kept apart on purpose. Whether a caller may *see* a package
  * decides 404 or not — a 403 would confirm the name to a token that could
- * never have fetched it. Whether it may *change* one is asked afterwards, and
- * being able to read a public repository answers it with no.
+ * never have fetched it. Whether its grants reach far enough to *change* one is
+ * asked afterwards, and being able to read a public repository answers it with
+ * no. And for a token issued by a person, whether that person's role permits
+ * the change at all, which is the panel's question asked over HTTP.
  */
 class ApiScopingTest extends TestCase
 {
@@ -65,6 +68,20 @@ class ApiScopingTest extends TestCase
         return Token::issue($principal, 'ci', [
             TokenAbility::ApiRead, TokenAbility::ApiWrite, TokenAbility::ApiDelete,
         ])->plainText;
+    }
+
+    /**
+     * A panel user whose role holds exactly the named permissions — the other
+     * half of what a personal token may do.
+     *
+     * @param  list<string>  $permissions
+     */
+    private function userWithRole(array $permissions): User
+    {
+        $role = Role::create(['name' => 'role-'.Role::query()->count(), 'guard_name' => 'web']);
+        $role->givePermissionTo($permissions);
+
+        return tap(User::factory()->create())->assignRole($role);
     }
 
     public function test_a_scoped_token_lists_only_what_it_reaches(): void
@@ -184,14 +201,96 @@ class ApiScopingTest extends TestCase
         $user = User::factory()->create();
         $user->repositories()->attach($this->mine);
 
-        $plain = Token::issue($user, 'laptop', [TokenAbility::ApiRead, TokenAbility::ApiDelete])->plainText;
+        $plain = Token::issue($user, 'laptop', [TokenAbility::ApiRead])->plainText;
 
         $names = $this->withToken($plain)->getJson('/api/v1/packages')->assertOk()->json('data.*.name');
 
         $this->assertEqualsCanonicalizing(['mine/widgets', 'open/widgets'], $names);
 
-        $this->withToken($plain)->deleteJson("/api/v1/packages/{$this->theirPackage->id}")->assertNotFound();
+        $this->withToken($plain)->getJson("/api/v1/packages/{$this->myPackage->id}")->assertOk();
+        $this->withToken($plain)->getJson("/api/v1/packages/{$this->theirPackage->id}")->assertNotFound();
+    }
+
+    /**
+     * A grant says which packages are a person's to touch; their role says what
+     * touching is allowed to mean. Both have to answer yes, or the ability
+     * checkbox on their own token would be a way to do over HTTP what the panel
+     * refuses them — which is the whole of the escalation this guards.
+     */
+    public function test_a_users_token_cannot_exceed_what_their_role_may_do(): void
+    {
+        // The shape of an external collaborator's account: it can read the
+        // packages it was granted, and administer nothing.
+        $user = $this->userWithRole(['ViewAny:Package', 'View:Package']);
+        $user->repositories()->attach($this->mine);
+
+        $plain = Token::issue($user, 'laptop', [
+            TokenAbility::ApiRead, TokenAbility::ApiWrite, TokenAbility::ApiDelete,
+        ])->plainText;
+
+        $this->withToken($plain)->deleteJson("/api/v1/packages/{$this->myPackage->id}")->assertForbidden();
+
+        $this->withToken($plain)
+            ->postJson('/api/v1/packages', [
+                'url' => 'https://github.com/mine/gadgets',
+                'repository' => 'mine',
+                'webhook' => false,
+                'sync' => false,
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('packages', ['id' => $this->myPackage->id]);
+
+        // Syncing is not in the same family: the panel's sync action carries no
+        // permission either, so a grant is the whole question there too.
+        $this->withToken($plain)->postJson("/api/v1/packages/{$this->myPackage->id}/sync")->assertAccepted();
+    }
+
+    /**
+     * And the same account, once its role says so.
+     */
+    public function test_a_users_token_deletes_and_creates_when_their_role_may(): void
+    {
+        $user = $this->userWithRole(['ViewAny:Package', 'View:Package', 'Create:Package', 'Delete:Package']);
+        $user->repositories()->attach($this->mine);
+
+        $plain = Token::issue($user, 'laptop', [
+            TokenAbility::ApiRead, TokenAbility::ApiWrite, TokenAbility::ApiDelete,
+        ])->plainText;
+
+        $this->withToken($plain)
+            ->postJson('/api/v1/packages', [
+                'url' => 'https://github.com/mine/gadgets',
+                'repository' => 'mine',
+                'webhook' => false,
+                'sync' => false,
+            ])
+            ->assertCreated();
+
         $this->withToken($plain)->deleteJson("/api/v1/packages/{$this->myPackage->id}")->assertNoContent();
+    }
+
+    /**
+     * The permission is not a second grant: it says what this person may do,
+     * never where. A role that can delete every package in the panel still
+     * reaches only the ones its holder was given.
+     */
+    public function test_a_permission_does_not_widen_what_a_user_reaches(): void
+    {
+        $user = $this->userWithRole(['ViewAny:Package', 'View:Package', 'Delete:Package']);
+        $user->repositories()->attach($this->mine);
+
+        $plain = Token::issue($user, 'laptop', [TokenAbility::ApiRead, TokenAbility::ApiDelete])->plainText;
+
+        // Invisible, so 404 rather than 403 — the answer never confirms it.
+        $this->withToken($plain)->deleteJson("/api/v1/packages/{$this->theirPackage->id}")->assertNotFound();
+
+        // Visible because the repository is public, which grants nothing about
+        // changing what is in it.
+        $this->withToken($plain)->deleteJson("/api/v1/packages/{$this->openPackage->id}")->assertForbidden();
+
+        $this->assertDatabaseHas('packages', ['id' => $this->theirPackage->id]);
+        $this->assertDatabaseHas('packages', ['id' => $this->openPackage->id]);
     }
 
     /**

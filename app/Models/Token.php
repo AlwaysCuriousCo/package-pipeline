@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 
 /**
@@ -124,8 +125,12 @@ class Token extends Model
      * mirror: a public repository is readable by anyone, which grants nothing
      * about writing into it, so `public` never appears below.
      *
-     * Read by the artifact upload and by every mutating API endpoint, so that
-     * "which repositories can this credential change" has one answer.
+     * This is the grant half on its own, and the whole answer on the Composer
+     * surface, where publishing is governed by grants exactly as reading is.
+     * The management API mirrors the panel as well, and asks through the three
+     * action methods below — an endpoint acting for a person must use one of
+     * those rather than this, or a role that cannot delete a package in the
+     * panel deletes one over HTTP.
      *
      * A user's grant is their own or their team's, without distinction. A team
      * holds the same grants a person can be given individually — that is the
@@ -157,6 +162,8 @@ class Token extends Model
      * Wider than mayWriteTo() by exactly one case: a principal granted this
      * package alone reaches it without reaching the repository around it,
      * which is what a per-package deploy grant is for.
+     *
+     * The grant half only, as mayWriteTo() is.
      */
     public function mayWriteToPackage(Package $package): bool
     {
@@ -172,6 +179,65 @@ class Token extends Model
 
         return $principal instanceof DeployToken
             && $principal->packages()->whereKey($package->getKey())->exists();
+    }
+
+    /**
+     * Whether this token may create a package in this repository — the grant
+     * that says where, and the permission the panel's create page would ask
+     * of the person behind it.
+     */
+    public function mayCreatePackageIn(Repository $repository): bool
+    {
+        return $this->mayWriteTo($repository) && $this->principalMay('create', Package::class);
+    }
+
+    /**
+     * Whether this token may queue a sync for this package.
+     *
+     * The grant alone, and not because syncing is harmless: it is what the
+     * panel asks too. Its SyncPackageAction carries no permission of its own —
+     * a user who can open the record can re-pull its versions — so requiring
+     * one here would make the API stricter than the screen it stands in for,
+     * which is a different bug in the same family.
+     */
+    public function maySyncPackage(Package $package): bool
+    {
+        return $this->mayWriteToPackage($package);
+    }
+
+    /**
+     * Whether this token may delete this package — the grant, and the
+     * permission the panel's delete action would ask of the person behind it.
+     */
+    public function mayDeletePackage(Package $package): bool
+    {
+        return $this->mayWriteToPackage($package) && $this->principalMay('delete', $package);
+    }
+
+    /**
+     * Whether the principal behind this token holds the panel permission an
+     * action needs, on top of the grant that says where it may write.
+     *
+     * The two are different questions and both have to be yes for a person: a
+     * grant says which packages are theirs to touch, a role says what touching
+     * is allowed to mean. A personal access token is its owner acting through
+     * a machine and carries their role unchanged, so ticking `api:delete` on a
+     * token cannot buy what Delete:Package would have to.
+     *
+     * A deploy token is the other kind of principal entirely — a machine
+     * credential that holds no role and could not be given one — so no policy
+     * is asked of it and its grants remain the whole of its authority. Asking
+     * anyway would answer no to everything and turn off every deploy token in
+     * the registry.
+     *
+     * @param  Package|class-string<Package>  $subject
+     */
+    private function principalMay(string $ability, Package|string $subject): bool
+    {
+        $principal = $this->tokenable;
+
+        return ! $principal instanceof User
+            || Gate::forUser($principal)->allows($ability, $subject);
     }
 
     public function isExpired(): bool
