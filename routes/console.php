@@ -50,6 +50,18 @@ Schedule::command('archives:clean')
     ->withoutOverlapping()
     ->onOneServer();
 
+// The other half of the reconciliation above: a version row can outlive its
+// archive, and nothing in the request path would ever notice — /p2 keeps
+// advertising the version while dist answers 404 for it. The sync used to
+// check by asking the disk about every stored version on every sync, which on
+// an S3 dist disk is a HEAD request per version per package per hour; asked
+// here it is one listing for the whole registry, against a failure that is
+// rare and never urgent. Whatever it clears, the next hourly sync re-downloads.
+Schedule::command('archives:audit')
+    ->dailyAt('03:20')
+    ->withoutOverlapping()
+    ->onOneServer();
+
 // AdminNotifier writes a row per admin per event and the panel's bell only
 // ever marks them read, so the notifications table is otherwise append-only.
 Schedule::command('model:prune', ['--model' => [Notification::class]])

@@ -6,6 +6,7 @@ use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Sources\RepositoryClient;
 use App\Support\VersionNormalizer;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Throwable;
@@ -155,7 +156,7 @@ class PackageSynchronizer
             return $refs;
         }
 
-        $known = $package->versions()->get()->keyBy('version');
+        $known = $this->imported($package)->get()->keyBy('version');
 
         return array_filter(
             $refs,
@@ -178,9 +179,7 @@ class PackageSynchronizer
      */
     public function import(Package $package, string $version, array $ref, bool $force = false): bool
     {
-        $existing = $package->versions()->where('version', $version)->first();
-
-        if (! $force && $this->unchanged($existing, $ref)) {
+        if (! $force && $this->unchanged($this->imported($package)->where('version', $version)->first(), $ref)) {
             return true;
         }
 
@@ -189,15 +188,22 @@ class PackageSynchronizer
         $composerJson = $client->composerJson($ref['reference']);
 
         if (! isset($composerJson['name'])) {
-            $existing?->delete();
+            $package->versions()->where('version', $version)->delete();
 
             return false;
         }
 
+        $releasedAt = $client->commitDate($ref['reference']);
+
         $data = [
             ...$ref,
             'order' => $this->normalizer->order($version),
-            'released_at' => $client->commitDate($ref['reference']),
+            'released_at' => $releasedAt,
+            // A provider with no date for a commit has answered, and no later
+            // sync will get a different answer. Recorded, the row is complete
+            // without one; left to the null alone it reads as unfinished and
+            // is re-imported — zipball and all — on every sync forever.
+            'released_at_unknown' => $releasedAt === null,
             'metadata' => [...$composerJson, 'version' => $version],
         ];
 
@@ -228,7 +234,10 @@ class PackageSynchronizer
      */
     public function finalize(Package $package, array $known, int $attempted = 0, int $failed = 0): SyncOutcome
     {
-        $versions = $package->versions()->orderBy('id')->get();
+        // Three columns rather than the whole row: what follows counts these
+        // versions and sorts their names, and every one of them carries a
+        // composer.json in `metadata` that would be decoded to be ignored.
+        $versions = $package->versions()->orderBy('id')->get(['id', 'version', 'is_dev']);
 
         if ($versions->isEmpty()) {
             throw new \RuntimeException($failed > 0
@@ -241,8 +250,12 @@ class PackageSynchronizer
         );
 
         // The latest release describes the package; a repository without one
-        // is described by whatever version arrived last.
-        $newest = ($latest !== null ? $versions->firstWhere('version', $latest) : $versions->last())->metadata;
+        // is described by whatever version arrived last. Only that one row's
+        // metadata is read, so only that one is fetched.
+        $describes = $latest ?? (string) $versions->last()->version;
+
+        $newest = $package->versions()->where('version', $describes)->value('metadata');
+        $newest = is_array($newest) ? $newest : [];
 
         $declared = $newest['name'] ?? null;
 
@@ -395,10 +408,19 @@ class PackageSynchronizer
      * whole sync. A row missing any piece — date, metadata, or archive — is
      * treated as changed so it is backfilled.
      *
-     * The archive check asks the dist disk, not just the columns: a row can
-     * outlive its file (storage loss, a deploy that wiped archives while the
-     * database survived), and trusting the columns alone would skip the
-     * re-download and leave dist serving 404s that no sync ever repairs.
+     * Every test here is a column already in hand, which is the point: this
+     * runs for every stored version of every package on every sync, and the
+     * schedule now makes that hourly whether or not anything was pushed. The
+     * archive check used to ask the dist disk instead of the column, which on
+     * S3 is one HEAD request per stored version per sync — 200 round trips to
+     * learn that nothing moved. That check is now `archives:audit`, which
+     * answers the same question for the whole registry with one listing and
+     * clears the column when a file is gone, putting the repair back on the
+     * path below rather than in front of it.
+     *
+     * A missing `metadata.name` is not tested here either: imported() asks it
+     * as a query condition, so such a row never appears among the known ones
+     * and reads as changed by its absence.
      *
      * @param  array{reference: string, is_dev: bool}  $ref
      */
@@ -407,11 +429,31 @@ class PackageSynchronizer
         return $known instanceof PackageVersion
             && $known->reference === $ref['reference']
             && $known->is_dev === $ref['is_dev']
-            && $known->released_at !== null
+            && ($known->released_at !== null || $known->released_at_unknown)
             && $known->archive_path !== null
-            && $known->shasum !== null
-            && isset($known->metadata['name'])
-            && $this->archives->disk()->exists($known->archive_path);
+            && $known->shasum !== null;
+    }
+
+    /**
+     * The stored versions unchanged() judges a ref against, carrying the
+     * columns it reads and nothing else.
+     *
+     * `metadata` is the ref's whole composer.json — requirements, autoload
+     * maps, scripts — and hydrating one per stored version was the bulk of
+     * the work a sync did to discover it had nothing to do. It is asked about
+     * rather than selected: a row whose metadata never got a name has to be
+     * re-imported, and dropping it from this result says exactly that.
+     *
+     * @return HasMany<PackageVersion, Package>
+     */
+    private function imported(Package $package): HasMany
+    {
+        return $package->versions()
+            ->whereNotNull('metadata->name')
+            ->select([
+                'id', 'package_id', 'version', 'reference', 'is_dev',
+                'released_at', 'released_at_unknown', 'archive_path', 'shasum',
+            ]);
     }
 
     /**

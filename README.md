@@ -153,6 +153,7 @@ The short version for production:
   | --- | --- | --- |
   | `packages:sync --queue` | hourly | Releases arrive by webhook, so this is not the normal path. It is what covers packages whose webhook registration failed or was never made, and what makes a partial sync's "the next sync will retry them" true. It is cheap: a ref whose sha hasn't moved is skipped without an API read or a download, so a routine run fans out no import jobs. |
   | `archives:clean` | 03:10 | Re-synced versions leave their previous archive behind by design and nothing else deletes one. |
+  | `archives:audit` | 03:20 | The other direction: a version row can outlive its archive (storage loss, a bucket restored from an older snapshot), and nothing in the request path notices — `/p2` keeps advertising the version while `dist` 404s. Syncs deliberately don't check per version, which on S3 was a HEAD request per version per hour; this checks the whole registry with one listing and clears what it can't find, so the next sync downloads it again. |
   | `model:prune` (notifications) | 03:30 | One row per admin per event, kept 30 days once read and 90 days unread. |
   | `queue:prune-batches` | 03:40 | One row per sync, kept 48 hours (72 unfinished). |
 
@@ -162,6 +163,7 @@ The short version for production:
 - **Create the first admin account** with `php artisan admin:create --email=you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a sealed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same stored archives. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically. Downloads are then redirected to short-lived pre-signed URLs rather than streamed through PHP, so the bucket's endpoint has to resolve from wherever `composer install` runs — an internal-only hostname (a MinIO service name, say) breaks clients that the app itself can reach the bucket from.
 - **Prune orphaned archives** with `php artisan archives:clean` (`--dry-run` to preview) — re-synced versions write fresh files and leave their old ones behind by design. The scheduler runs this nightly; the command is here for when you want it now.
+- **Check for lost archives** with `php artisan archives:audit` (`--dry-run` to preview) — the reverse of the above, for versions whose file is no longer on the dist disk. It clears their `archive_path`, which is all the next sync needs to download them again. Worth running by hand after restoring a bucket. It refuses to act when the disk lists nothing at all, since a misconfigured disk looks exactly like total loss.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
 - A health check endpoint is available at `/up`.
 

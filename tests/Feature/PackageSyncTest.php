@@ -268,7 +268,15 @@ class PackageSyncTest extends TestCase
         Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
     }
 
-    public function test_an_unchanged_version_whose_archive_file_is_gone_is_rebuilt(): void
+    /**
+     * A row can outlive its file — object storage loss, or a deploy that wiped
+     * archives while the database survived. The sync no longer asks the disk
+     * about every stored version to find that out (one HEAD per version per
+     * sync, hourly, to learn nothing); archives:audit answers it for the whole
+     * registry at once and clears the columns, which is what puts the version
+     * back on the ordinary re-import path.
+     */
+    public function test_an_unchanged_version_whose_archive_file_is_gone_is_rebuilt_after_the_audit(): void
     {
         $this->fakeGitHub();
 
@@ -276,17 +284,53 @@ class PackageSyncTest extends TestCase
 
         app(PackageSynchronizer::class)->sync($package);
 
-        // The columns say stored, but the disk lost the file — object storage
-        // loss, or a deploy that wiped archives while the database survived.
         $version = $package->versions()->where('version', '1.1.0')->sole();
         Storage::disk(config('filesystems.dists'))->delete($version->archive_path);
+
+        // A sync on its own no longer notices, and must not: that is the whole
+        // point of not asking the disk per version.
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame($version->archive_path, $version->fresh()->archive_path);
+
+        // The audit only judges rows settled past its grace window.
+        $this->travelTo(now()->addHours(2));
+
+        $this->artisan('archives:audit')->assertSuccessful();
+
+        $this->assertNull($version->fresh()->archive_path);
 
         app(PackageSynchronizer::class)->sync($package);
 
         $version->refresh();
 
         $this->assertNotNull($version->archive_path);
+        $this->assertSame(sha1('zip-bytes'), $version->shasum);
         Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+    }
+
+    /**
+     * A provider with no date for a commit has answered; the row is complete
+     * without one. Treated as unfinished it was re-imported — composer.json,
+     * commit and full zipball — on every sync for the rest of its life.
+     */
+    public function test_a_version_the_provider_has_no_date_for_is_not_reimported_forever(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/commits/*' => Http::response([], 404),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $requestsAfterFirstSync = count(Http::recorded());
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // Two ref listings and nothing else, exactly as for a dated version.
+        $this->assertSame($requestsAfterFirstSync + 2, count(Http::recorded()));
+        $this->assertSame(4, $package->versions()->count());
     }
 
     public function test_a_zipball_that_is_not_a_zip_fails_the_sync(): void

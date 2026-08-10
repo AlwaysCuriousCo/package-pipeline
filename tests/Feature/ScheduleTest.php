@@ -47,6 +47,16 @@ class ScheduleTest extends TestCase
         $this->assertSame('10 3 * * *', $this->event('archives:clean')->expression);
     }
 
+    /**
+     * The sync stopped asking the dist disk about every stored version — one
+     * HEAD request per version per package per hour — so this is the only
+     * thing left that would ever notice a row outliving its archive.
+     */
+    public function test_archives_are_audited_daily(): void
+    {
+        $this->assertSame('20 3 * * *', $this->event('archives:audit')->expression);
+    }
+
     public function test_the_append_only_tables_are_pruned_daily(): void
     {
         $notifications = $this->event('model:prune');

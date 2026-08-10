@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['version', 'order', 'reference', 'is_dev', 'released_at', 'metadata', 'archive_path', 'shasum'])]
+#[Fillable(['version', 'order', 'reference', 'is_dev', 'released_at', 'released_at_unknown', 'metadata', 'archive_path', 'shasum'])]
 class PackageVersion extends Model
 {
     /** @use HasFactory<PackageVersionFactory> */
@@ -22,6 +22,7 @@ class PackageVersion extends Model
         return [
             'is_dev' => 'boolean',
             'released_at' => 'immutable_datetime',
+            'released_at_unknown' => 'boolean',
             'metadata' => 'array',
         ];
     }
