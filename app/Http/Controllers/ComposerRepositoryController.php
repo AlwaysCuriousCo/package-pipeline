@@ -344,7 +344,16 @@ class ComposerRepositoryController extends Controller
         $repository = $this->repository($request);
 
         $dev = str_ends_with($package, '~dev');
-        $name = "{$vendor}/".($dev ? substr($package, 0, -4) : $package);
+
+        // Lowercased because that is how the column is stored (see
+        // Package::normalizeName) and because the comparison below is an
+        // equality on it. Composer already asks in lowercase, so this changes
+        // nothing for the client that matters; what it buys is that a hand-typed
+        // URL, a browser check or a non-Composer client resolves the same
+        // package, on every engine, instead of only on MySQL's collation.
+        // Folding the input rather than the column keeps the lookup on the
+        // index — this is the one endpoint a `composer update` hammers.
+        $name = mb_strtolower("{$vendor}/".($dev ? substr($package, 0, -4) : $package));
 
         $record = $repository->packages()
             ->visibleTo($this->token($request))
@@ -680,7 +689,10 @@ class ComposerRepositoryController extends Controller
      */
     public function dist(Request $request, string $vendor, string $package, string $reference): StreamedResponse|RedirectResponse
     {
-        $name = "{$vendor}/{$package}";
+        // Lowercased for the same reason as the metadata endpoint above: the
+        // stored name is canonical, so the spelling in the URL is folded to
+        // meet it rather than the column being folded to meet the URL.
+        $name = mb_strtolower("{$vendor}/{$package}");
 
         $repository = $this->repository($request);
 

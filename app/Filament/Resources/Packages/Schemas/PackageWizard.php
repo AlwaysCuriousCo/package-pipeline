@@ -96,8 +96,11 @@ class PackageWizard
             $failure = $exception->getMessage();
         }
 
+        // Lowercased here as well as on save, so the field shows the name the
+        // registry will actually publish under rather than whatever case the
+        // manifest happened to use. suggestedName() already lowercases.
         if (filled($name = $composerJson['name'] ?? $package->suggestedName())) {
-            $set('name', $name);
+            $set('name', mb_strtolower((string) $name));
         }
 
         // Only what was actually read is written over; a repository nobody

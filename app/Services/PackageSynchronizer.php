@@ -118,7 +118,14 @@ class PackageSynchronizer
 
         $name = $package->client()->composerJson()['name'] ?? null;
 
-        if (! is_string($name) || $name === '' || $name === $package->name) {
+        // Compared against the stored name in the case it will be stored in.
+        // The model normalizes on the way in either way, but a raw comparison
+        // here would treat `Acme/Widgets` as different from the `acme/widgets`
+        // already held and go on to ask whether the name is taken — by the very
+        // package being synced.
+        $name = is_string($name) ? mb_strtolower($name) : null;
+
+        if ($name === null || $name === '' || $name === $package->name) {
             return;
         }
 
@@ -306,6 +313,12 @@ class PackageSynchronizer
     private function nameAfterSync(Package $package, ?string $declared): array
     {
         $current = (string) $package->name;
+
+        // Lowercased before anything is compared or refused, so a manifest that
+        // spells the stored name in another case is the same name rather than a
+        // rename this registry declines — which would otherwise re-report the
+        // same non-difference in `sync_error` on every hourly sync forever.
+        $declared = $declared === null ? null : mb_strtolower($declared);
 
         if ($declared === null || $declared === '' || $declared === $current) {
             return [$current, null];

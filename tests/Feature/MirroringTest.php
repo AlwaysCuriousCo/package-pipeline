@@ -13,6 +13,7 @@ use App\Models\Upstream;
 use Composer\MetadataMinifier\MetadataMinifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
@@ -258,12 +259,21 @@ class MirroringTest extends TestCase
     {
         $this->mirroring();
 
-        // A package synced from a repository whose composer.json declares
-        // `Acme/Secret` is stored exactly that way — nothing lowercases it on
-        // the way in. Composer then asks in lowercase, and on SQLite or
-        // PostgreSQL an equality against the column would miss it entirely and
-        // hand the name to packagist.org, where an attacker would have put one.
-        Package::factory()->create(['name' => 'Acme/Secret']);
+        // Package::normalizeName() lowercases on the way in, so this row can
+        // only be one written around the model — a registry that predates that
+        // hook, a `saveQuietly()`, a backfill. The guard is deliberately not
+        // allowed to assume otherwise: Composer asks in lowercase, and on
+        // SQLite or PostgreSQL an equality against the column would miss such a
+        // row entirely and hand the name to packagist.org, where an attacker
+        // would have put one.
+        //
+        // Published in another repository, so the mount being asked has no
+        // local answer of its own and genuinely reaches the mirror.
+        $internal = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+
+        $package = $this->makeLocalPackage('acme/secret', $internal);
+
+        DB::table('packages')->where('id', $package->getKey())->update(['name' => 'Acme/Secret']);
 
         $this->getJson('/p2/acme/secret.json')->assertNotFound();
         $this->get('/dist/acme/secret/'.self::REFERENCE.'.zip')->assertNotFound();

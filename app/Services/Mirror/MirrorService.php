@@ -115,13 +115,21 @@ class MirrorService
             return [];
         }
 
-        // Compared on `lower(name)`, not on the column. Composer names are
-        // canonically lowercase and the candidates always are, but a package
-        // synced from a repository whose composer.json declares `Acme/Widgets`
-        // is stored exactly that way — and on SQLite or PostgreSQL an equality
-        // against the column would not match it. Missing a published package
-        // here is the one mistake that matters: it is what would let an
-        // upstream answer for a private name.
+        // Compared on `lower(name)`, not on the column, even though the column
+        // is now canonical: Package::normalizeName() lowercases every name on
+        // the way in, so an equality would match today on every engine.
+        //
+        // It stays case-insensitive because this is the dependency-confusion
+        // guard, and the one property that makes it a guard is that it has no
+        // precondition to reason about. An equality would silently inherit one
+        // — that nothing has ever written this column outside the model. Two
+        // things already do: `saveQuietly()` suppresses the saving hook
+        // wholesale, and any future backfill migration or raw update is one
+        // line away from doing the same. Missing a published package here is
+        // the single mistake that matters, because it is what would let an
+        // upstream answer for a private name; paying for that certainty is not
+        // a trade worth making on the strength of an invariant maintained in
+        // another file.
         //
         // Not index-assisted, deliberately. The index on `name` cannot serve a
         // case-insensitive comparison, and a scan of the packages this

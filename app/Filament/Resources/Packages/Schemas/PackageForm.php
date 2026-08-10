@@ -131,6 +131,15 @@ class PackageForm
         return TextInput::make('name')
             ->required()
             ->maxLength(255)
+            // Folded as the field is left rather than on save, so the uniqueness
+            // and reservation rules below are decided on the name that will
+            // actually be stored — Package's saving hook lowercases it either
+            // way, and a rule that judged the typed spelling would clear a
+            // collision the insert then hits as a bare unique-index error.
+            // Visible for the same reason a normalization should be: the admin
+            // sees the name the registry will publish, not the one they typed.
+            ->live(onBlur: true)
+            ->afterStateUpdated(fn (TextInput $component, ?string $state) => $component->state(mb_strtolower((string) $state)))
             ->unique(
                 ignoreRecord: true,
                 modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),

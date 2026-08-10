@@ -154,6 +154,20 @@ shape rather than a delta from a previous one.
   leaving every sync looking already-queued for an hour.
 - Renaming a package fails with a clear error when the new `composer.json` name
   would collide with another package in the same repository.
+- Package names are stored lowercase, which is the only case Composer ever asks
+  in. A package whose `composer.json` declared `Acme/Widgets` was stored exactly
+  that way and was then unfetchable through its own `p2` and `dist` endpoints on
+  SQLite and PostgreSQL, whose collations are case-sensitive; MySQL's default
+  collation hid it entirely, so the bug only existed on the engines a real
+  deployment is most likely to use. The two endpoints also fold the name in the
+  URL now, so a hand-typed or non-Composer request resolves the same package.
+
+  A migration normalizes the names already stored. It will not rename a package
+  whose lowercase name is already taken by another package in the same
+  repository — a pair that can only exist on a case-sensitive engine, where the
+  mixed-case half has never served anything. Those are left untouched, noted on
+  the package in the panel and named in the deploy output and the log; delete
+  whichever of the two is obsolete.
 
 ### Security
 

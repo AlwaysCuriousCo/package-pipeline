@@ -104,6 +104,10 @@ class Package extends Model
             // registry root.
             $package->repository_id ??= Repository::default()->id;
 
+            // Before every check below, so all of them see the one spelling
+            // this package will actually be served under.
+            $package->normalizeName();
+
             // After the repository is settled, because which repository the
             // package lands in is half of the question this asks.
             $package->guardReservedVendor();
@@ -250,6 +254,44 @@ class Package extends Model
             && ! $batch->finished()
             && ! $batch->cancelled()
             && $batch->pendingJobs > $batch->failedJobs;
+    }
+
+    /**
+     * Fold the name down to the one spelling Composer will ever ask for.
+     *
+     * A Composer package name is lowercase — the grammar in composer.json's own
+     * schema admits no other case, and every client lowercases a name before
+     * requiring it. So a name stored as `Acme/Internal` is not a stylistic
+     * choice this registry should preserve; it is a name that cannot be
+     * fetched. `/p2` and `/dist` look a package up by an equality on the
+     * column, and on SQLite or PostgreSQL — where that equality is
+     * case-sensitive — such a package is unserveable through its own metadata
+     * endpoint while looking perfectly healthy in the panel. MySQL's default
+     * collation hides the whole thing, which is worse: the bug then only exists
+     * on the two engines an operator is most likely to deploy on.
+     *
+     * The rest of the app already assumed this. The API lowercases what it is
+     * given, the upload endpoint lowercases the URL it was addressed to, and
+     * the mirror's dependency-confusion guard has to compare on `lower(name)`
+     * precisely because the sync path did not. This is where that assumption is
+     * made true, once, for every path that decides a name.
+     *
+     * Only when the name is actually moving, which is the same condition the
+     * reservation guard below applies and for a related reason. A registry
+     * migrated from before this existed may still hold two rows whose names
+     * differ only in case — the unique index is `(repository_id, name)`, so on
+     * a case-sensitive engine both fit. Normalizing on *every* save would have
+     * an unrelated write (a sync stamping `last_synced_at`, a webhook delivery
+     * stamping `webhook_received_at`) collide with the sibling row and fail,
+     * turning a dormant data problem into an hourly one. Left alone, such a row
+     * is exactly as broken as it was, and the migration that accompanies this
+     * flags it for a human.
+     */
+    public function normalizeName(): void
+    {
+        if ($this->isDirty('name')) {
+            $this->name = mb_strtolower((string) $this->name);
+        }
     }
 
     /**
