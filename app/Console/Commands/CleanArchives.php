@@ -40,6 +40,18 @@ class CleanArchives extends Command
      * referenced by `mirrored_archives`, a table this command knows nothing
      * about. Listing the whole disk would make every one of them look like an
      * orphan and delete the mirror cache. `mirror:prune` is their sweep.
+     *
+     * The match below is exact, which asks the dist disk to report a path back
+     * as it was written. S3 and Linux do; a `local` disk on macOS or Windows,
+     * and SMB or NFS mounted case-insensitively, do not — they keep whichever
+     * casing a directory was first created under, so archives written after a
+     * package name was lowercased are listed under the old spelling and every
+     * one of them reads as an orphan. Folding the comparison would be worse
+     * than the case it fixes: on a disk that can tell `Widgets.zip` from
+     * `widgets.zip`, those are two objects and only one of them is referenced.
+     * So the requirement is on the disk, and it is documented as one.
+     *
+     * @see docs/deployment.md#the-dist-disk-has-to-be-case-sensitive
      */
     public function handle(ArchiveStore $archives): int
     {

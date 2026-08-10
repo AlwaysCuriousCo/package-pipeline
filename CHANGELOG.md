@@ -320,6 +320,14 @@ release looks after itself.
   logs them, rather than choosing which of the two to unpublish. That note is
   re-asserted by every later sync, so the packages stay flagged in the panel
   until somebody deletes one of each pair.
+- **Check that `DIST_DISK` is case-sensitive**, which S3 and Linux are and a
+  `local` disk on macOS or Windows is not. `archives:clean` and
+  `archives:audit` match the disk listing against `archive_path` exactly, and a
+  case-insensitive disk keeps the casing a directory was first created under —
+  so after the name lowercasing above, a renamed package's archives are listed
+  under a path no row holds and read as orphans. Only development machines are
+  affected in practice; run `archives:clean --dry-run` once if yours is one.
+  See [The dist disk has to be case-sensitive](docs/deployment.md#the-dist-disk-has-to-be-case-sensitive).
 - **Re-seed the permissions** with `php artisan db:seed --force`. This release
   adds panel resources — activity, teams and outgoing webhooks — and Shield
   denies what has no permission row, including to a super admin.

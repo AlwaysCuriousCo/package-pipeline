@@ -86,6 +86,16 @@ class AuditArchives extends Command
      * That is also the whole reason the guards below exist — clearing is only
      * cheap where the repair is real, and this command is deliberately unable
      * to tell whether it is.
+     *
+     * The listing is matched against `archive_path` exactly, so a dist disk
+     * that does not report a path back as it was written reads as loss. Only
+     * case-insensitive ones do that — a `local` disk on macOS or Windows, SMB
+     * or NFS — and after package names were lowercased they report the archives
+     * of a renamed package under the directory's original casing. The
+     * proportional guard below catches it as "the disk is wrong", which is very
+     * nearly the right diagnosis; the requirement itself is documented.
+     *
+     * @see docs/deployment.md#the-dist-disk-has-to-be-case-sensitive
      */
     public function handle(ArchiveStore $archives): int
     {

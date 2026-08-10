@@ -228,6 +228,35 @@ published by artifact upload has no repository to be re-synced from, so the
 record of which object held those bytes and what they hashed to, which is what
 a restore is done with. Those are reported and left alone.
 
+### The dist disk has to be case-sensitive
+
+S3 and Linux filesystems are, so a production deployment is already fine and
+nothing here needs doing. It is worth stating anyway, because the two
+deployments where it is *not* true — `DIST_DISK=local` on macOS or Windows, and
+a dist disk on SMB or NFS mounted case-insensitively — fail in a way nobody
+would connect back to a filesystem setting.
+
+`archives:clean` and `archives:audit` both work by listing the disk and matching
+what comes back against `package_versions.archive_path`, string for string. That
+holds as long as the disk reports a path back exactly as it was written. A
+case-insensitive one does not: it keeps whatever casing a directory was *first*
+created with. This release lowercased stored package names, so a package once
+held under `packages/Acme/Widgets/` has its new archives written to
+`packages/acme/widgets/` — and a case-insensitive filesystem quietly puts them
+in the old directory and goes on reporting the old spelling.
+
+The row and the listing then disagree about every one of those files, and both
+commands read the disagreement as loss: `archives:clean` sees archives nothing
+references and deletes live ones, `archives:audit` sees versions whose archive
+is gone and clears `archive_path`. Run `archives:clean --dry-run` after
+upgrading if the dist disk is local on a developer machine; a list of orphans
+that looks like most of the registry is this, not garbage.
+
+Neither command normalizes the comparison, deliberately. On the disks that
+matter, `Widgets.zip` and `widgets.zip` are two objects, and folding them
+together to accommodate the filesystems that cannot tell them apart would put
+every correct deployment one collision away from deleting the wrong file.
+
 ### Dist redirects and where `composer install` runs
 
 When the dist disk can pre-sign URLs (S3 and compatible services), `/dist/...`

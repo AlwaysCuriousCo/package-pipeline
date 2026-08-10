@@ -236,7 +236,7 @@ GitLab needs no environment variables at all — a GitLab source carries its own
 
 | Variable | Purpose |
 | --- | --- |
-| `DIST_DISK` | Disk where version archives (Composer zipballs) are stored at sync time. Defaults to `FILESYSTEM_DISK`; set to `s3` on any deployment whose containers don't share a local disk. |
+| `DIST_DISK` | Disk where version archives (Composer zipballs) are stored at sync time. Defaults to `FILESYSTEM_DISK`; set to `s3` on any deployment whose containers don't share a local disk. Must be **case-sensitive** — S3 and Linux are, a local disk on macOS or Windows is not, and `archives:clean` reads the difference as orphans. See [The dist disk has to be case-sensitive](docs/deployment.md#the-dist-disk-has-to-be-case-sensitive). |
 | `ARTIFACT_UPLOAD_MAX_MB` | Largest artifact zip `POST /upload/{vendor}/{package}` accepts, in megabytes (default `100`). PHP's `upload_max_filesize` and `post_max_size` have to allow the same size, or PHP discards the body before the app sees it. |
 | `METADATA_CACHE_DAYS` | How long a rendered `/p2` payload is kept (default `7`). Entries are keyed by a fingerprint of the versions behind them, so they supersede themselves rather than needing to be cleared — this only bounds how long the leftovers linger. |
 | `METADATA_CACHE_MAX_KB` | Largest rendered payload worth storing (default `4096`). A bigger one is served from the version rows every time, which for a package that fat is the lesser problem. `0` turns the cache off entirely. |
