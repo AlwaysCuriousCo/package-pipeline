@@ -1,9 +1,23 @@
 # Auto-syncing packages from pushes
 
 A package normally waits to be synced — from the panel, the `packages:sync`
-command, or a schedule. A webhook removes the wait: GitHub posts here the
+command, or a schedule. A webhook removes the wait: the provider posts here the
 moment a tag or branch is created, moved or deleted, and the package syncs
 itself within seconds.
+
+Both supported providers do this, and the registry arranges it when the package
+is created — nothing has to be set up first. What differs is how many hooks it
+takes and how a delivery proves it is genuine:
+
+| | GitHub | GitLab |
+| --- | --- | --- |
+| Account-wide webhook | Yes — the GitHub App's own | **No equivalent** |
+| Per-repository webhook | Fallback, and the general case | The only option |
+| Delivery endpoint | `/incoming/github`, `/incoming/github/{package}` | `/incoming/gitlab/{package}` |
+| How a delivery is verified | HMAC signature over the body (`X-Hub-Signature-256`) | The hook's own secret, replayed verbatim (`X-Gitlab-Token`) |
+| Permission to create the hook | Webhooks: Read and write, or `admin:repo_hook` | `api` scope and Maintainer |
+
+## GitHub
 
 Three events are subscribed, and each one changes what a version resolves to:
 
@@ -18,8 +32,7 @@ commit landing on `main` changes what `dev-main` resolves to, and that is a
 push, not a creation — subscribe to creations alone and dev versions quietly
 go stale.
 
-Every package gets one of these two, and it is arranged when the package is
-created — nothing has to be set up first:
+Every GitHub package gets one of these two:
 
 - **The GitHub App's own webhook**, if the app has one. It covers every
   repository in every installation at once, so a package under an installed
@@ -114,6 +127,60 @@ push twice; the debounce below means that costs one extra delivery rather than
 one extra sync, but the hook is still worth removing on GitHub if you want the
 app's webhook to be the only path.
 
+## GitLab
+
+GitLab has one webhook path and no shortcut: a hook is created on each project,
+because there is nothing account-wide to ride on. GitLab's group-level hooks
+cover a group's projects, but they are not something this registry creates or
+reads — a package's coverage is always the hook on its own project. In panel
+terms, a GitLab package is never **GitHub App webhook**; it is **Repository
+webhook**, **Not created**, **None** or **Off**.
+
+The hook is created when the package is created, exactly as GitHub's fallback
+is, and **Create webhook** on the package page makes it again if it has to be.
+It posts to `<APP_URL>/incoming/gitlab/{package}` with SSL verification on, and
+subscribes to two event types:
+
+| Event | What it means | What it does here |
+| --- | --- | --- |
+| Push Hook | a commit on a branch, or a branch created or deleted | syncs |
+| Tag Push Hook | a tag created or deleted | syncs — this is most releases |
+
+Two rather than GitHub's three, covering the same ground: GitLab folds creation
+and deletion into the push event for the ref that moved, so a deleted tag
+arrives as a tag push and the sync prunes the version.
+
+Creating the hook needs an `api`-scoped token held by a **Maintainer** or
+above. `read_api` syncs perfectly well but cannot `POST /projects/:id/hooks`,
+and GitLab refuses that call below Maintainer whatever the scope — so a
+read-only credential produces a working package that syncs when asked rather
+than when pushed, with the reason shown on the package page under **Auto-sync**.
+
+### How a GitLab delivery proves itself
+
+This is the one substantive difference, and it is worth being clear-eyed about.
+GitHub signs the request body with the secret, so a delivery proves the sender
+holds the secret without ever transmitting it. GitLab instead **sends the secret
+itself back** in the `X-Gitlab-Token` header, and verification is a constant-time
+comparison against the secret stored (encrypted) on the package.
+
+The consequences are GitLab's, not this app's, but they are yours to live with:
+
+- The secret is on the wire on every delivery, so the endpoint has to be
+  **HTTPS** in any deployment you care about. The hook is created with SSL
+  verification enabled for the same reason.
+- Anyone who can read one delivery can replay any payload they like for that
+  package. The blast radius is one package, and the worst a forged delivery
+  achieves is an unnecessary sync — the payload's contents are not trusted for
+  anything; only the package in the URL and the fact that *something* moved.
+- There is no `ping` event to confirm setup with. GitLab's **Test → Push
+  events** on the hook is the equivalent, and it delivers a real payload.
+
+A delivery that fails verification is answered `401`, one for a package with no
+hook secret `404`, and an event that is neither of the two above `202` with a
+note saying nothing acts on it. Each of those bodies explains itself, because
+GitLab's own hook log is where it will be read.
+
 ## Switching it off for one package
 
 **Sync automatically on push** on the package's edit page controls this per
@@ -131,17 +198,28 @@ the retry starts clean.
 
 ## What a delivery does
 
-1. The signature (`X-Hub-Signature-256`) is checked against the raw body. No
-   match, no further reading of the payload.
-2. `ping` is answered `204`. GitHub sends one when a webhook is created.
-3. The repository named in the payload is matched to a package. A repository
+1. The delivery is verified before anything in it is read: GitHub's
+   `X-Hub-Signature-256` against the raw body, GitLab's `X-Gitlab-Token`
+   against the package's stored secret. No match, no further reading of the
+   payload.
+2. `ping` is answered `204`. GitHub sends one when a webhook is created;
+   GitLab has no such event.
+3. The event is checked against the ones that can change what a version
+   resolves to. Anything else is acknowledged and dropped — a hook subscribed
+   to more than it needs costs a `202`, not an error.
+4. The repository is matched to a package: named in the payload for GitHub's
+   app webhook, taken from the URL for a per-repository hook. A repository
    that is not a package here — or whose packages have all switched auto-sync
    off — is acknowledged and dropped; an app webhook hears from every
    repository the installation can see, and most are not packages.
-4. The package's sync is queued, **15 seconds late on purpose**. `git push
+5. The package's sync is queued, **15 seconds late on purpose**. `git push
    --tags` over ten tags is ten deliveries in about a second; the delay lets
    the pending job's uniqueness lock fold the whole burst into the one sync
    that reads the entire repository anyway.
+
+Both endpoints are rate limited (300 deliveries a minute per address, 60 per
+package), because verification is the whole of the authentication and asking
+for it costs work that the sender need not have any credential to demand.
 
 A queue worker has to be running for any of this to happen — `php artisan
 queue:work`. Without one the deliveries are accepted and nothing syncs.
@@ -150,11 +228,16 @@ queue:work`. Without one the deliveries are accepted and nothing syncs.
 
 The package page shows **Auto-sync** (which delivery path covers it, what is
 missing if none does, or **Off** if it was switched off) and **Last delivery**
-(when GitHub last posted about it). On GitHub, **Recent Deliveries** shows each payload and the response it got,
-with a **Redeliver** button — a rejected delivery carries the reason in its
-response body. For a repository hook that is the repository's Settings →
-Webhooks; for the app's webhook it is the app's own **Advanced** tab, since no
-repository lists it.
+(when the provider last posted about it).
+
+On the provider's side, every rejected delivery carries its reason in the
+response body — read it there rather than guessing:
+
+| | Where the deliveries are |
+| --- | --- |
+| GitHub repository hook | the repository's Settings → Webhooks → **Recent Deliveries**, with a **Redeliver** button |
+| GitHub App webhook | the app's own **Advanced** tab — no repository lists it |
+| GitLab | the project's Settings → Webhooks → **Edit** → **Recent events**, with a **Resend Request** button |
 
 ## Being told about it
 

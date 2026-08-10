@@ -8,15 +8,15 @@
 
 # Package Pipeline
 
-Sharing private PHP packages across projects is a chore: every consuming app needs its own `repositories` entries in `composer.json`, its own GitHub credentials, and Composer crawls the GitHub API repo-by-repo just to resolve versions. Package Pipeline replaces all of that with one self-hosted registry. Point it at your GitHub repositories once, and every project can `composer require` your private packages as if they were on Packagist — one repository URL to configure, no per-repo wiring, and your code never leaves your infrastructure.
+Sharing private PHP packages across projects is a chore: every consuming app needs its own `repositories` entries in `composer.json`, its own GitHub or GitLab credentials, and Composer crawls the provider's API repo-by-repo just to resolve versions. Package Pipeline replaces all of that with one self-hosted registry. Point it at your repositories once, and every project can `composer require` your private packages as if they were on Packagist — one repository URL to configure, no per-repo wiring, and your code never leaves your infrastructure.
 
-**How it works, in one pass:** you register a **package** (a GitHub repository) in the [Filament](https://filamentphp.com) admin panel, a sync job reads its tags and branches and stores each one as a version, and Composer clients fetch `/packages.json`, per-package metadata, and zipball dists straight from the app over the standard [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer). Each version's zipball is downloaded from GitHub at sync time and stored on a local or S3 disk with its sha1 checksum, so dist downloads are served entirely from the app's own storage. Authentication against GitHub goes through a **source** (a connected GitHub App installation with short-lived, org-owned tokens), a per-package token, or a global fallback token — whichever is available, in that order.
+**How it works, in one pass:** you register a **package** (a repository on GitHub or GitLab) in the [Filament](https://filamentphp.com) admin panel, a sync job reads its tags and branches and stores each one as a version, and Composer clients fetch `/packages.json`, per-package metadata, and zipball dists straight from the app over the standard [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer). Each version's zipball is downloaded from the provider at sync time and stored on a local or S3 disk with its sha1 checksum, so dist downloads are served entirely from the app's own storage. Authentication against the provider goes through a **source** (a connected account and its credentials), a per-package token, or — on GitHub only — a global fallback token, whichever is available, in that order.
 
 ## Requirements
 
 - PHP **8.3+** with Composer
 - SQLite (default — nothing to configure), or MySQL/Postgres if you prefer
-- A GitHub account with the repositories you want to serve
+- A GitHub or GitLab account with the repositories you want to serve (GitHub Enterprise and self-managed GitLab both work; each source can point at its own API base URL)
 
 No Node.js, and no front-end build step: every page the app serves is Filament's, and Filament ships its own compiled assets.
 
@@ -74,6 +74,40 @@ Once a package has synced, its versions, release heatmap, and any sync errors al
 A source is a GitHub organisation or user connected through a **GitHub App**: tokens expire hourly, access is scoped to exactly the repositories chosen at install time, and the credential belongs to the org — it doesn't break when a person leaves. Registering the app is a one-time, ~5 minute job per deployment; the full walkthrough (including the non-obvious permission gotchas) is in **[docs/github-app.md](docs/github-app.md)**.
 
 Once the app is registered and `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` are set, connecting an organisation is one click from **Sources** in the admin panel. Packages are linked to their source automatically by repository owner.
+
+### Connect a GitLab source
+
+GitLab works the same way from the registry's side — sync, versions, dists, webhooks, artifact uploads are all provider-agnostic — but it is connected by hand rather than by an install click, because GitLab has no App to install.
+
+Go to **Sources → New source** and fill in:
+
+| Field | Value |
+| --- | --- |
+| Provider | **GitLab** |
+| Organisation or user | The top-level namespace: the group or username your projects sit under (`acme`). Packages under that namespace are linked to this source automatically. |
+| API base URL | Leave empty for gitlab.com. For a self-managed instance this is the **v4 API root**, not the web host: `https://gitlab.example.com/api/v4`. |
+| Access token | A GitLab access token (see below). Stored encrypted. |
+
+Then **Test connection** on the source, which lists the projects the token can reach and records the count.
+
+**Which token, and what it needs.** The registry sends it as `PRIVATE-TOKEN`, so anything GitLab calls an access token works: a **group access token** is the closest analogue to a GitHub App installation — it belongs to the group rather than to a person, so it survives someone leaving — with a **project access token** or a personal access token as the alternatives.
+
+| You want | Scope | Role |
+| --- | --- | --- |
+| Sync versions and serve dists | `read_api` | Reporter or above |
+| That, plus webhooks created for you | `api` | Maintainer or above |
+
+`read_api` is enough for everything except creating the webhook: that is a `POST /projects/:id/hooks`, which GitLab does not allow a read-only scope to make and does not allow below Maintainer. A token with only `read_api` still gives you a working package — it just syncs when asked rather than when pushed, and the package's page says so.
+
+**What differs from GitHub.** Worth knowing before you plan around it:
+
+- **There is no account-wide webhook.** The GitHub App has one webhook covering every repository in every installation; GitLab has no equivalent, so every GitLab package carries a hook on its own project. See [docs/webhooks.md](docs/webhooks.md).
+- **Deliveries are authenticated by a replayed secret**, not an HMAC signature — GitLab sends the hook's own token back in a header. Same practical effect, different failure modes; again, docs/webhooks.md.
+- **The credential is long-lived.** No hourly, automatically-rotated installation tokens. Give the token an expiry in GitLab and put its renewal somewhere you will see it.
+- **`GITHUB_TOKEN` is not a fallback for GitLab.** It is a GitHub credential and is deliberately never handed to another provider's API, so a GitLab package needs either a connected source or a token of its own.
+- **Nested namespaces are fine.** `group/subgroup/project` is handled; the path is what GitLab calls the project's `path_with_namespace`.
+
+A package can also be added without a source at all, by pasting a GitLab URL into **Packages → New package** and putting a token in the package's own token field. The panel labels that field "GitHub token" — it is used for whatever provider the URL names.
 
 ## Roles and permissions
 
