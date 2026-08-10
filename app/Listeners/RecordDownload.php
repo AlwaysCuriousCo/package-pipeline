@@ -17,9 +17,23 @@ class RecordDownload implements ShouldQueue
 {
     public function handle(PackageDownloaded $event): void
     {
+        // Both rows may have moved on since the archive went out: this runs on
+        // the queue, and a sync pruning a branch or an admin deleting a
+        // package does not wait for it. Writing the event's ids straight in
+        // would violate the foreign keys and fail the job — losing the
+        // download and leaving a failed_jobs row behind for every one of them.
+        //
+        // A deleted package took its whole download history with it, cascaded
+        // by the same key, so there is no longer anything to count against.
+        if (! Package::query()->whereKey($event->packageId)->exists()) {
+            return;
+        }
+
         Download::query()->create([
             'package_id' => $event->packageId,
-            'package_version_id' => $event->packageVersionId,
+            // A pruned version leaves the row exactly as deleting the version
+            // would have: the version string kept, the key nulled.
+            'package_version_id' => $this->versionId($event),
             'version' => $event->version,
             'token_prefix' => $event->tokenPrefix,
             'created_at' => now(),
@@ -35,5 +49,19 @@ class RecordDownload implements ShouldQueue
             Package::query()->whereKey($event->packageId)->increment('total_downloads');
             PackageVersion::query()->whereKey($event->packageVersionId)->increment('total_downloads');
         });
+    }
+
+    /**
+     * The version the archive came from, or null once it no longer exists.
+     */
+    private function versionId(PackageDownloaded $event): ?int
+    {
+        if ($event->packageVersionId === null) {
+            return null;
+        }
+
+        return PackageVersion::query()->whereKey($event->packageVersionId)->exists()
+            ? $event->packageVersionId
+            : null;
     }
 }

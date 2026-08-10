@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
+use App\Events\PackageDownloaded;
 use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
 use App\Filament\Widgets\DownloadsChart;
 use App\Filament\Widgets\RegistryTotals;
@@ -206,5 +207,65 @@ class DownloadStatsTest extends TestCase
 
         $this->assertNull($download->package_version_id);
         $this->assertSame('v1.0.0', $download->version);
+    }
+
+    /**
+     * The recording runs on the queue, so a sync that prunes a branch — or an
+     * admin who deletes a package — can get there first. The event carries
+     * ids captured when the archive went out, and writing a stale one back
+     * would violate the foreign key: the job fails, the download is lost, and
+     * every subsequent one leaves another failed_jobs row.
+     */
+    public function test_a_version_pruned_before_the_recording_runs_still_counts_for_the_package(): void
+    {
+        $version = $this->package->versions()->sole();
+
+        $staleId = $version->id;
+        $version->delete();
+
+        PackageDownloaded::dispatch($this->package->id, $staleId, 'v1.0.0', null);
+
+        $download = Download::query()->sole();
+
+        $this->assertNull($download->package_version_id);
+        $this->assertSame('v1.0.0', $download->version);
+        $this->assertSame(1, $this->package->fresh()->total_downloads);
+    }
+
+    public function test_a_download_of_a_package_that_has_since_been_deleted_is_dropped(): void
+    {
+        $packageId = $this->package->id;
+
+        $this->package->delete();
+
+        PackageDownloaded::dispatch($packageId, null, 'v1.0.0', null);
+
+        // Deleting the package cascaded its download rows away; there is
+        // nothing left for this one to belong to.
+        $this->assertSame(0, Download::query()->count());
+    }
+
+    /**
+     * /p2 derives its Last-Modified and ETag from these timestamps, so a
+     * counter bumped the ordinary way would have the busiest packages in the
+     * registry invalidating their own metadata on every archive served.
+     */
+    public function test_recording_a_download_leaves_the_metadata_timestamps_alone(): void
+    {
+        $version = $this->package->versions()->sole();
+
+        $modified = $this->get('/p2/acme/widgets.json')->assertOk()->headers->get('Last-Modified');
+
+        $this->travel(1)->hours();
+
+        $this->download();
+
+        $this->assertEquals($this->package->updated_at, $this->package->fresh()->updated_at);
+        $this->assertEquals($version->updated_at, $version->fresh()->updated_at);
+
+        $this->assertSame(
+            $modified,
+            $this->get('/p2/acme/widgets.json')->assertOk()->headers->get('Last-Modified'),
+        );
     }
 }
