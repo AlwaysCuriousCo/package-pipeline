@@ -14,7 +14,13 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->string('type');
             $table->morphs('notifiable');
-            $table->text('data');
+            // JSON rather than text: Filament filters the bell's rows with
+            // `data->format`, and on PostgreSQL the `->>` that compiles to
+            // has no meaning against a text column — every page of the panel
+            // that renders the bell answers 500. MySQL and SQLite happen to
+            // tolerate the text column, which is why only one deployment
+            // target ever saw it.
+            $table->json('data');
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });

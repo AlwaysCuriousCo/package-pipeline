@@ -8,6 +8,7 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -86,18 +87,31 @@ class ScheduleTest extends TestCase
     {
         $user = User::factory()->create();
 
+        // The key is a real uuid column, which PostgreSQL enforces and the
+        // other two engines do not, so the rows are labelled beside the key
+        // rather than in it.
+        $ids = collect(['kept-unread', 'kept-just-read', 'pruned-read', 'pruned-ancient'])
+            ->mapWithKeys(fn (string $label): array => [$label => (string) Str::orderedUuid()]);
+
         $user->notifications()->createMany([
-            ['id' => 'kept-unread', 'type' => 'Test', 'data' => [], 'created_at' => now()->subDays(10)],
-            ['id' => 'kept-just-read', 'type' => 'Test', 'data' => [], 'read_at' => now()->subDay(), 'created_at' => now()->subDays(10)],
-            ['id' => 'pruned-read', 'type' => 'Test', 'data' => [], 'read_at' => now()->subDays(31), 'created_at' => now()->subDays(40)],
-            ['id' => 'pruned-ancient', 'type' => 'Test', 'data' => [], 'created_at' => now()->subDays(91)],
+            ['id' => $ids['kept-unread'], 'type' => 'Test', 'data' => [], 'created_at' => now()->subDays(10)],
+            ['id' => $ids['kept-just-read'], 'type' => 'Test', 'data' => [], 'read_at' => now()->subDay(), 'created_at' => now()->subDays(10)],
+            ['id' => $ids['pruned-read'], 'type' => 'Test', 'data' => [], 'read_at' => now()->subDays(31), 'created_at' => now()->subDays(40)],
+            ['id' => $ids['pruned-ancient'], 'type' => 'Test', 'data' => [], 'created_at' => now()->subDays(91)],
         ]);
 
         $this->artisan('model:prune', ['--model' => [Notification::class]])->assertSuccessful();
 
+        $labels = $ids->flip();
+
         $this->assertSame(
             ['kept-just-read', 'kept-unread'],
-            DB::table('notifications')->orderBy('id')->pluck('id')->all(),
+            DB::table('notifications')
+                ->pluck('id')
+                ->map(fn (string $id): string => (string) $labels->get($id))
+                ->sort()
+                ->values()
+                ->all(),
         );
     }
 }

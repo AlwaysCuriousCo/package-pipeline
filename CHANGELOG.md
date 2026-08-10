@@ -101,6 +101,14 @@ shape rather than a delta from a previous one.
   rows. Eloquent does that on an increment by default, which made a package's
   "Last synced" read as "last downloaded" — and would have made the busiest
   packages in the registry invalidate their own metadata on every zip served.
+- A download whose version was pruned before the queued listener recorded it
+  still counts. The listener wrote the ids captured when the archive went out,
+  and a stale one failed the job on a foreign key — losing the download and
+  leaving a `failed_jobs` row behind for every one of them.
+- The notifications table stores its payload as JSON. On PostgreSQL the panel's
+  notification bell filters those rows with an operator a text column has no
+  meaning for, so every page of the admin panel answered 500. MySQL and SQLite
+  tolerated the old column, which is why only one deployment target saw it.
 - Archive presence is verified on the dist disk rather than trusted from the
   database, so a re-sync actually rebuilds a zip that storage lost, and a dist
   request falls through to a sibling row whose file is still there.
