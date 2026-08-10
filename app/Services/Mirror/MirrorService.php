@@ -1035,9 +1035,13 @@ class MirrorService
         // timeout — four minutes of somebody else's bandwidth, times however
         // many requests are in flight. Measuring the file afterwards is a
         // report, not a limit.
-        $sink = BoundedSink::to($temporary, (int) config('registry.mirror.max_archive_megabytes') * 1024 * 1024);
+        $ceiling = (int) config('registry.mirror.max_archive_megabytes') * 1024 * 1024;
+
+        $sink = null;
 
         try {
+            $sink = BoundedSink::to($temporary, $ceiling);
+
             $response = $client->download($dist['url'], $sink);
 
             if (! $response->successful()) {
@@ -1091,7 +1095,7 @@ class MirrorService
                 'upstream' => $upstream->url,
                 'package' => $name,
                 'reference' => $reference,
-                'ceiling_bytes' => $sink->limit(),
+                'ceiling_bytes' => $ceiling,
             ]);
 
             return null;
@@ -1105,7 +1109,7 @@ class MirrorService
 
             return null;
         } finally {
-            $sink->close();
+            $sink?->close();
 
             @unlink($temporary);
         }
