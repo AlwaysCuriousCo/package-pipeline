@@ -6,6 +6,7 @@ use App\Filament\Auth\ResetPassword;
 use App\Filament\Pages\ApiTokens;
 use App\Filament\Pages\Dashboard;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
+use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -45,6 +46,18 @@ class AdminPanelProvider extends PanelProvider
             ->renderHook(
                 PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
                 fn (): ViewContract => view('filament.auth.sso-buttons'),
+            )
+            // Every other permission on the Roles screen is narrowed by
+            // something else — grants, teams, Unscoped:Package. The audit
+            // log's is not, and there is no reading of that screen that would
+            // tell you so, so it is said on the screen itself rather than only
+            // in a docblock the person ticking the box will never open.
+            //
+            // @see \App\Filament\Resources\Activities\ActivityResource
+            ->renderHook(
+                PanelsRenderHook::PAGE_START,
+                fn (): ViewContract => view('filament.shield.audit-log-reach'),
+                scopes: RoleResource::class,
             )
             // The emailed "forgot password" flow, on Filament's own signed
             // route. The subclass only adds a second way in — see below.

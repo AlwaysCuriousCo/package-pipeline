@@ -20,4 +20,14 @@ class ListActivities extends ListRecords
     {
         return [];
     }
+
+    /**
+     * Said on the page as well as on the Roles screen, because the two readers
+     * are different people: one is deciding whether to grant this, the other
+     * is deciding whether what they are looking at is the whole story.
+     */
+    public function getSubheading(): string
+    {
+        return 'Every change recorded anywhere in the registry, including records you cannot reach elsewhere.';
+    }
 }

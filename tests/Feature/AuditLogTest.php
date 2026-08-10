@@ -443,6 +443,23 @@ class AuditLogTest extends TestCase
         $this->assertArrayNotHasKey('edit', ActivityResource::getPages());
     }
 
+    /**
+     * The log is deliberately not visibility-scoped — see ActivityResource for
+     * why — which makes saying so part of the feature rather than a comment.
+     * The person who needs to hear it is the one ticking the box, so the
+     * warning lives on the Roles screen and not only on the log's own page.
+     */
+    public function test_the_reach_of_the_permission_is_stated_where_it_is_granted(): void
+    {
+        $this->get('/admin/shield/roles')
+            ->assertOk()
+            ->assertSee('The audit log is registry-wide');
+
+        $this->get('/admin/activities')
+            ->assertOk()
+            ->assertSee('including records you cannot reach elsewhere', escape: false);
+    }
+
     public function test_a_role_without_the_permission_cannot_read_the_audit_log(): void
     {
         $user = User::factory()->create();

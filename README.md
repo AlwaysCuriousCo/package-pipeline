@@ -123,6 +123,12 @@ Two rules are worth knowing:
 
 The permissions themselves are seeded from the panel's own resources, pages and widgets, so a fresh database gets them from `php artisan db:seed` (which `composer run setup` already runs).
 
+### The audit log permission is registry-wide
+
+**Audit log** is the one resource whose permissions nothing else narrows. A role that can view it reads every change recorded anywhere in the registry — private package names and their VCS URLs, every account's name and email, every access token's name, prefix and abilities, and the before-and-after values of records the role cannot open on any other screen. Grants, team membership and `Unscoped:Package` make no difference to it.
+
+It is not scoped because a scoped audit trail is a misleading one: the rows hardest to attribute to a viewer are the deletions, which leave no record to check a policy against, and an investigator reading a silently filtered history would believe it complete. Read the permission as "may read the whole registry's history", and grant it to the same people you would let see the whole registry. The Roles screen says so too.
+
 ### Teams
 
 Row-level access can be granted to a **team** rather than to a person: a team holds package and repository grants, users belong to it, and a user's effective access is their own grants plus their teams'. Onboarding becomes adding somebody to a team instead of repeating the last person's grants.
