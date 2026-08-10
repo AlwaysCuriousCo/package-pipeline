@@ -447,6 +447,17 @@ class ComposerRepositoryController extends Controller
      * narrowing mirrored content is not subject to. Without this, such a token
      * could pull a private upstream's packages through a mount it was never
      * granted.
+     *
+     * The known width of it, stated because it is a choice and not an
+     * accident: a grant on a *single package* makes its repository visible
+     * (see Repository::scopeVisibleTo), so such a token reaches that
+     * repository's whole mirror. That is what the feature is for — the reason
+     * to grant a build token a package is so it can install that package and
+     * its transitive dependencies, which are precisely the mirrored ones — but
+     * it means an upstream's content is only ever as private as the least
+     * privileged principal who can read anything in the repository.
+     *
+     * @see docs/mirroring.md#access-control
      */
     private function mayReadMirrored(Request $request, Repository $repository): bool
     {

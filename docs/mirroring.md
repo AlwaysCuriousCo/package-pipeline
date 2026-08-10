@@ -275,12 +275,42 @@ scoped to a *different* repository is refused, even though the authentication
 middleware would let it through — per-package visibility, which normally
 narrows such a token to nothing, has no rows to narrow here.
 
+The part to be deliberate about: **a grant on one package in a repository
+carries the whole of that repository's mirror.** A deploy token granted only
+`acme/widgets` can pull every mirrored package in the repository serving it.
+That is not an oversight — it is what makes the feature work at all, since the
+reason to grant that token anything is so its build can install `acme/widgets`
+*and its transitive dependencies*, which are exactly the mirrored packages. A
+narrower rule would mean a CI token that can fetch your package and none of
+what it needs.
+
 > [!WARNING]
-> **A public repository with a credentialed private upstream republishes that
-> upstream to everyone who can reach this app.** The access token you give an
-> upstream is spent on behalf of every reader of the repository it belongs to.
-> If an upstream is somebody's private registry, put it behind a private
-> repository.
+> Both of the above mean the same thing: **whatever an upstream serves is
+> served on to everyone who can read anything in the repository the upstream
+> belongs to** — and it is fetched using the token you gave that upstream. If
+> an upstream is somebody's private registry, put it behind a private
+> repository whose readers you would have given that registry's credentials to
+> anyway. Attach packagist.org, which is public, wherever you like.
+
+### A public mirroring repository is an open proxy
+
+Composer read endpoints are not rate-limited — they never touched anything but
+local rows, so there was nothing to limit. On a **public** repository with
+mirroring on, that changes: an anonymous request can now make this app fetch
+from an upstream, and a `/dist/…` request can make it download and keep up to
+`MIRROR_MAX_ARCHIVE_MB` for `MIRROR_RETENTION_DAYS`. Somebody who wants to can
+walk packagist.org and fill the disk your private packages are served from.
+
+There is no ceiling for this in the app, because a per-minute limit tight
+enough to matter is also tight enough to break a legitimate cold
+`composer install` of a few hundred dependencies. Choose one of:
+
+- **Keep mirroring on private repositories.** The common case, and the whole
+  problem goes away — a caller needs a token first.
+- **Put the public mount behind a rate limit at the proxy** (nginx, a CDN, a
+  load balancer), where the limit can be tuned to your traffic.
+- **Watch the disk.** Lower `MIRROR_RETENTION_DAYS` and alert on the dist disk;
+  `mirror:prune --dry-run` reports what is currently held.
 
 Downloads of mirrored archives are not counted. `total_downloads` is a
 statement about packages this registry publishes — it drives the dashboard

@@ -197,7 +197,9 @@ It is off until an upstream is added, and an installation with none behaves exac
 
 A local package always wins, unconditionally: a name published anywhere in this installation, or under a reserved vendor, is never served from an upstream — visible to the caller or not. That is what keeps mirroring from becoming the dependency-confusion hole it would otherwise be, and it is why **reserving your vendor prefixes belongs before turning mirroring on**.
 
-The disk grows without a ceiling of its own, so `mirror:prune` — nightly, retention measured on last use — is the thing to size before enabling it. **[docs/mirroring.md](docs/mirroring.md)** covers all of it: what consumers see, the freshness and failure behaviour, the access-control rule and its one sharp edge, and what it costs in disk.
+Two things to know before enabling it. The disk grows without a ceiling of its own, so `mirror:prune` — nightly, retention measured on last use — is what bounds it. And a **public** mirroring repository is an open proxy: Composer read endpoints carry no rate limit, so an anonymous caller can make the app fetch and keep archives. Keep mirroring on private repositories, or rate-limit the public mount at your proxy.
+
+**[docs/mirroring.md](docs/mirroring.md)** covers all of it: what consumers see, the freshness and failure behaviour, the access-control rule and its sharp edges, and what it costs in disk.
 
 ## Configuration reference
 
