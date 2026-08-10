@@ -35,7 +35,7 @@ class ActivityInfolist
                     ->state(fn (Activity $record): mixed => $record->properties->get('credential'))
                     ->placeholder('The panel or the console — no access token was presented.'),
                 Section::make('What changed')
-                    ->description('Only attributes the record marks as auditable are recorded — never a token, a password or any other secret.')
+                    ->description('Only attributes the record marks as auditable are recorded — never a token, a password or any other secret. A URL is stored with any credential it carried replaced by [redacted].')
                     ->columnSpanFull()
                     ->schema([
                         TextEntry::make('changes')

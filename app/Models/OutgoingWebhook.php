@@ -64,6 +64,25 @@ class OutgoingWebhook extends Model
     }
 
     /**
+     * For Slack, Teams and Discord the endpoint *is* the credential: anyone
+     * holding that path can post as the integration, and the `secret` this
+     * model takes such care to encrypt is not used by any of them. So the log
+     * keeps where a webhook points and not the rest of it.
+     *
+     * `url` still stays audited rather than being dropped, because "a delivery
+     * went somewhere it should not" is a change to this field and the origin is
+     * most of the answer. A repoint within the same host records an entry whose
+     * before and after read alike — which is the log saying it changed and
+     * declining to say what to, rather than saying nothing at all.
+     *
+     * @return list<string>
+     */
+    protected function opaqueUrlAttributes(): array
+    {
+        return ['url'];
+    }
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array

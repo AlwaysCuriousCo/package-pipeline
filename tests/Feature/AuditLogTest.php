@@ -8,12 +8,14 @@ use App\Filament\Resources\Activities\Pages\ListActivities;
 use App\Models\Activity;
 use App\Models\AuthenticationSource;
 use App\Models\DeployToken;
+use App\Models\OutgoingWebhook;
 use App\Models\Package;
 use App\Models\PackageAdvisory;
 use App\Models\Repository;
 use App\Models\Source;
 use App\Models\Team;
 use App\Models\Token;
+use App\Models\Upstream;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -338,6 +340,68 @@ class AuditLogTest extends TestCase
         foreach (['"token"', '"password"', '"client_secret"', '"webhook_secret"'] as $attribute) {
             $this->assertStringNotContainsString($attribute, $everythingLogged);
         }
+    }
+
+    /**
+     * The gate the other two cannot be: `repository`, `url` and `url` are
+     * innocent by name and carry no cast, and all three hold a value an
+     * operator can legitimately paste a credential into.
+     */
+    public function test_a_credential_inside_a_url_never_reaches_the_log(): void
+    {
+        Package::factory()->create([
+            'repository' => 'https://x-access-token:ghp_a_real_token@github.com/acme/widgets',
+        ]);
+
+        Upstream::factory()->create([
+            'url' => 'https://nexus_user:hunter2@nexus.internal:8081/repository/packagist/?private_token=glpat_secret&page=2',
+        ]);
+
+        $logged = Activity::query()->get()
+            ->map(fn (Activity $entry): string => (string) json_encode($entry->properties))
+            ->implode(' ');
+
+        foreach (['ghp_a_real_token', 'hunter2', 'nexus_user', 'glpat_secret'] as $secret) {
+            $this->assertStringNotContainsString($secret, $logged);
+        }
+
+        // What is left is still the answer to "where does this point": the
+        // host, the path, and the parameters that are not credentials.
+        $this->assertSame(
+            'https://[redacted]@github.com/acme/widgets',
+            $this->entriesFor(Package::class)[0]->properties->get('attributes')['repository'],
+        );
+        $this->assertSame(
+            'https://[redacted]@nexus.internal:8081/repository/packagist/?private_token=[redacted]&page=2',
+            $this->entriesFor(Upstream::class)[0]->properties->get('attributes')['url'],
+        );
+    }
+
+    /**
+     * The webhook endpoint is the one URL here whose path is the credential —
+     * anyone holding a Slack incoming-webhook path can post as it — so only
+     * where it points is kept.
+     */
+    public function test_a_webhook_endpoint_is_recorded_as_its_origin_only(): void
+    {
+        $webhook = OutgoingWebhook::factory()->create([
+            'url' => 'https://hooks.slack.com/services/T0000/B0000/AbCdEfGhIjKlMnOpQrSt',
+        ]);
+
+        $webhook->update(['url' => 'https://attacker.example.com/services/T1111/B1111/ZzZzZzZzZzZzZzZzZzZz']);
+
+        $logged = Activity::query()->get()
+            ->map(fn (Activity $entry): string => (string) json_encode($entry->properties))
+            ->implode(' ');
+
+        $this->assertStringNotContainsString('AbCdEfGhIjKlMnOpQrSt', $logged);
+        $this->assertStringNotContainsString('ZzZzZzZzZzZzZzZzZzZz', $logged);
+
+        // Where it pointed, and where it was repointed to, are both recorded.
+        $repointed = $this->entriesFor(OutgoingWebhook::class)[1];
+
+        $this->assertSame('https://hooks.slack.com/[redacted]', $repointed->properties->get('old')['url']);
+        $this->assertSame('https://attacker.example.com/[redacted]', $repointed->properties->get('attributes')['url']);
     }
 
     public function test_repositories_and_advisories_are_recorded(): void
