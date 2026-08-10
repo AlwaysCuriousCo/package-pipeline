@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Resources\Repositories\Pages\CreateRepository;
 use App\Filament\Resources\Repositories\Pages\EditRepository;
 use App\Filament\Resources\Repositories\Pages\ListRepositories;
+use App\Filament\Resources\Repositories\RepositoryResource;
 use App\Models\MirroredArchive;
 use App\Models\MirroredPackage;
 use App\Models\Package;
@@ -13,6 +14,7 @@ use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class RepositoryResourceTest extends TestCase
@@ -32,6 +34,27 @@ class RepositoryResourceTest extends TestCase
 
         Livewire::test(ListRepositories::class)
             ->assertCanSeeTableRecords($repositories);
+    }
+
+    /**
+     * On purpose, and the one place in the panel where a grant does not narrow
+     * a list. Package grants say what somebody may read; this screen is what
+     * the registry is made of, and ViewAny:Repository is the permission that
+     * decides who configures that. An operator holding it and no grant at all
+     * would otherwise be shown an empty list of the mounts they administer.
+     *
+     * @see RepositoryResource
+     */
+    public function test_the_index_is_not_narrowed_by_the_operators_own_grants(): void
+    {
+        $role = Role::findOrCreate('operator', 'web');
+        $role->givePermissionTo(['ViewAny:Repository', 'View:Repository', 'Update:Repository']);
+
+        $this->actingAs(tap(User::factory()->create())->assignRole($role));
+
+        $private = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+
+        Livewire::test(ListRepositories::class)->assertCanSeeTableRecords([$private]);
     }
 
     public function test_the_default_repository_lists_the_registry_root_not_a_bare_mount(): void

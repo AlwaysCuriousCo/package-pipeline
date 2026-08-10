@@ -176,6 +176,13 @@ class Repository extends Model
      * it has to stay one: a repository hidden from somebody who can see a
      * package inside it is a mount they are told to configure and cannot.
      *
+     * Read by the surfaces that *serve* the registry — /api/v1/repositories,
+     * through Token, and the Composer endpoints — where a listing is a
+     * directory of what exists shown to a credential. Not by the panel's
+     * Repositories screen, which is administration and is gated by
+     * ViewAny:Repository instead; see RepositoryResource for why that is the
+     * right gate there and this is not.
+     *
      * @param  Builder<self>  $query
      * @return Builder<self>
      */

@@ -14,6 +14,23 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 
+/**
+ * The registry's own mounts, configured by whoever runs it.
+ *
+ * Deliberately not row-scoped, unlike the package resource next to it. A grant
+ * says which packages somebody may *read*; it says nothing about who
+ * administers the registry, and this screen is administration — mount paths,
+ * the public flag, reserved vendors, upstream mirrors and their credentials.
+ * The gate is ViewAny:Repository, a permission a read-only role does not carry
+ * and one that means "configures the registry" when it is given out. Scoping on
+ * top of it would answer the wrong question with the wrong tool and hide from
+ * an operator the mounts they are here to look after — which is also why
+ * PackageForm's repository picker offers every mount rather than the author's.
+ *
+ * Repository::scopeVisibleToUser() belongs to the serving surfaces instead:
+ * /api/v1/repositories and the Composer endpoints, where a listing is a
+ * directory of what exists shown to a credential rather than a control panel.
+ */
 class RepositoryResource extends Resource
 {
     protected static ?string $model = Repository::class;
