@@ -145,18 +145,21 @@ php artisan pail --timeout=0
 The short version for production:
 
 - **Run a queue worker** (`php artisan queue:work --timeout=310`) — package syncs from the admin panel are queued jobs. Keep that timeout between the longest job's own (300 seconds, for a version import streaming a large archive) and the connection's `retry_after` (330): a worker that gives up sooner kills healthy imports, and a `retry_after` that fires first hands a still-running import to a second worker, which downloads and stores the same archive again. Raising `ImportVersion::$timeout` means raising both.
-- **Schedule syncs if you want them automatic.** Nothing is scheduled out of the box; add something like this to `routes/console.php` and run the scheduler (`php artisan schedule:work`, or cron):
+- **Run the scheduler** (`php artisan schedule:work`, or a `* * * * * php artisan schedule:run` cron entry). `routes/console.php` ships the maintenance schedule; `php artisan schedule:list` shows it:
 
-  ```php
-  use Illuminate\Support\Facades\Schedule;
+  | Task | When | Why |
+  | --- | --- | --- |
+  | `packages:sync --queue` | hourly | Releases arrive by webhook, so this is not the normal path. It is what covers packages whose webhook registration failed or was never made, and what makes a partial sync's "the next sync will retry them" true. It is cheap: a ref whose sha hasn't moved is skipped without an API read or a download, so a routine run fans out no import jobs. |
+  | `archives:clean` | 03:10 | Re-synced versions leave their previous archive behind by design and nothing else deletes one. |
+  | `model:prune` (notifications) | 03:30 | One row per admin per event, kept 30 days once read and 90 days unread. |
+  | `queue:prune-batches` | 03:40 | One row per sync, kept 48 hours (72 unfinished). |
 
-  Schedule::command('packages:sync --queue')->hourly();
-  ```
+  Every task is `onOneServer()`, which needs a shared cache store that supports locks — the default `database`, or `redis`. On a multi-container deployment running `CACHE_STORE=file` or `array`, each container holds its own lock and runs its own copy of every sweep.
 
 - **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
 - **Create the first admin account** with `php artisan admin:create --email=you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a sealed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same stored archives. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically. Downloads are then redirected to short-lived pre-signed URLs rather than streamed through PHP, so the bucket's endpoint has to resolve from wherever `composer install` runs — an internal-only hostname (a MinIO service name, say) breaks clients that the app itself can reach the bucket from.
-- **Prune orphaned archives occasionally** with `php artisan archives:clean` (`--dry-run` to preview) — re-synced versions write fresh files and leave their old ones behind by design. It's a fine candidate for the scheduler alongside `packages:sync`.
+- **Prune orphaned archives** with `php artisan archives:clean` (`--dry-run` to preview) — re-synced versions write fresh files and leave their old ones behind by design. The scheduler runs this nightly; the command is here for when you want it now.
 - **Register a separate GitHub App per environment** — an app's Setup URL points at exactly one deployment. See [docs/github-app.md](docs/github-app.md).
 - A health check endpoint is available at `/up`.
 
@@ -174,7 +177,8 @@ The short version for production:
    ```
 
 4. **Add a queue worker** to the environment (Resources → Queue Worker, default queue) and give it a **310-second timeout**, for the reason above. Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
-5. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
+5. **Add a scheduler** to the environment (Resources → Scheduler) so the maintenance tasks above actually run. Cloud's scheduler invokes `schedule:run` for you.
+6. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
 
 #### Create your super admin
 
