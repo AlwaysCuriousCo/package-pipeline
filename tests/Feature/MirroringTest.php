@@ -254,6 +254,23 @@ class MirroringTest extends TestCase
         $this->getJson('/p2/acme/secret.json')->assertNotFound();
     }
 
+    public function test_a_published_name_stored_in_mixed_case_still_beats_an_upstream(): void
+    {
+        $this->mirroring();
+
+        // A package synced from a repository whose composer.json declares
+        // `Acme/Secret` is stored exactly that way — nothing lowercases it on
+        // the way in. Composer then asks in lowercase, and on SQLite or
+        // PostgreSQL an equality against the column would miss it entirely and
+        // hand the name to packagist.org, where an attacker would have put one.
+        Package::factory()->create(['name' => 'Acme/Secret']);
+
+        $this->getJson('/p2/acme/secret.json')->assertNotFound();
+        $this->get('/dist/acme/secret/'.self::REFERENCE.'.zip')->assertNotFound();
+
+        $this->postJson('/security-advisories', ['packages' => ['acme/secret']])->assertOk();
+    }
+
     public function test_a_reserved_vendor_is_never_served_from_an_upstream(): void
     {
         $repository = $this->mirroring();
@@ -441,6 +458,37 @@ class MirroringTest extends TestCase
         Http::assertSentCount($sent);
     }
 
+    public function test_an_upstreams_credential_is_never_sent_to_the_host_it_names(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        $repository = Repository::default();
+        Upstream::factory()->create([
+            'repository_id' => $repository->getKey(),
+            'url' => self::UPSTREAM,
+            'token' => 'upstream-secret',
+        ]);
+
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'cdn.upstream.test/*' => Http::response(self::ZIP),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertOk();
+
+        // The upstream chooses the host its archives live on. Spending the
+        // operator's credential against whatever third party it names would
+        // hand a private registry's token to a CDN — and an object store
+        // refuses a request carrying both a signature and an Authorization
+        // header, so it would break signed dist URLs besides.
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), 'upstream.test/p2/')
+            && $request->hasHeader('Authorization'));
+
+        Http::assertSent(fn ($request): bool => ! str_contains($request->url(), 'cdn.upstream.test')
+            || ! $request->hasHeader('Authorization'));
+    }
+
     public function test_an_archive_that_does_not_match_the_published_shasum_is_refused(): void
     {
         Storage::fake(config('filesystems.dists'));
@@ -460,6 +508,28 @@ class MirroringTest extends TestCase
 
         $this->assertDatabaseCount('mirrored_archives', 0);
         $this->assertSame([], Storage::disk(config('filesystems.dists'))->allFiles('mirror'));
+    }
+
+    public function test_a_failed_archive_download_does_not_take_the_upstream_offline(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'upstream.test/p2/symfony/finder.json' => Http::response($this->upstreamDocument('symfony/finder')),
+            // A zipball whose GitHub repository was deleted or renamed. The
+            // archive host is not the upstream's API, and a 404 from it says
+            // nothing about whether the upstream is answering.
+            'cdn.upstream.test/*' => Http::response('', 404),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertNotFound();
+
+        // Otherwise one anonymous request for a broken reference switches
+        // mirroring off for everyone for the length of the backoff.
+        $this->getJson('/p2/symfony/finder.json')->assertOk();
     }
 
     public function test_advisories_are_passed_through_for_mirrored_packages(): void

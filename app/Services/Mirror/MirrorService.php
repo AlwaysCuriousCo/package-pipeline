@@ -11,6 +11,7 @@ use App\Models\Upstream;
 use App\Services\ArchiveStore;
 use Composer\MetadataMinifier\MetadataMinifier;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -114,11 +115,25 @@ class MirrorService
             return [];
         }
 
+        // Compared on `lower(name)`, not on the column. Composer names are
+        // canonically lowercase and the candidates always are, but a package
+        // synced from a repository whose composer.json declares `Acme/Widgets`
+        // is stored exactly that way — and on SQLite or PostgreSQL an equality
+        // against the column would not match it. Missing a published package
+        // here is the one mistake that matters: it is what would let an
+        // upstream answer for a private name.
+        //
+        // Not index-assisted, deliberately. The index on `name` cannot serve a
+        // case-insensitive comparison, and a scan of the packages this
+        // registry publishes — a table measured in hundreds — is a great deal
+        // cheaper than the hole.
+        $vendorNames = array_map(fn (string $name): string => mb_strtolower($name), $candidates);
+
         $published = Package::query()
-            ->whereIn('name', $candidates)
+            ->whereIn(DB::raw('lower(name)'), $vendorNames)
             ->pluck('name')
-            // Not `mb_strtolower(...)` directly: Collection::map hands the key
-            // to the callback as a second argument, which lands in the
+            // Not `mb_strtolower(...)` as a callable: Collection::map hands the
+            // key to the callback as a second argument, where it lands in the
             // encoding parameter.
             ->map(fn (string $name): string => mb_strtolower($name))
             ->flip();
@@ -542,21 +557,29 @@ class MirrorService
         ?string $body,
         Response $response,
     ): MirroredPackage {
-        $mirrored = $cached ?? new MirroredPackage([
+        // firstOrCreate rather than a plain insert: a cold package requested by
+        // two builds at once has both of them find nothing and then race the
+        // unique index, which is a 500 for whichever loses. Laravel catches the
+        // violation and re-selects, so the loser updates the winner's row with
+        // the same upstream answer.
+        $mirrored = $cached ?? MirroredPackage::firstOrCreate([
             'upstream_id' => $upstream->getKey(),
             'name' => $name,
             'is_dev' => $dev,
+        ], [
+            'fetched_at' => now(),
+            'used_at' => now(),
         ]);
 
         $digest = $body === null ? null : hash('xxh128', $body);
 
+        // `used_at` is deliberately absent: it was set when the row was
+        // created, and from then on it means "last served", which is what
+        // retention prunes on. A revalidation is not a use.
         $attributes = [
             'fetched_at' => now(),
             'upstream_etag' => $this->header($response, 'ETag'),
             'upstream_last_modified' => $this->header($response, 'Last-Modified'),
-            // Only on the way in. Afterwards it means "last served", which is
-            // what retention prunes on, and a revalidation is not a use.
-            ...($mirrored->exists ? [] : ['used_at' => now()]),
         ];
 
         if ($digest !== $mirrored->digest) {
@@ -778,7 +801,14 @@ class MirrorService
      */
     private function fetchArchive(Upstream $upstream, string $name, string $reference, array $dist): ?MirroredArchive
     {
-        if ($this->unreachable($upstream)) {
+        // An archive is fetched from whatever host the upstream's metadata
+        // named — a CDN or an object store, not the upstream's own API — so
+        // nothing here touches the failure backoff, in either direction. A
+        // codeload 404 for one deleted repository says nothing about whether
+        // packagist.org is answering, and marking the upstream unreachable for
+        // it would let any anonymous request for one broken reference switch
+        // mirroring off for everybody for minutes at a time.
+        if (! preg_match('#^https?://#i', $dist['url'])) {
             return null;
         }
 
@@ -792,7 +822,12 @@ class MirrorService
             $response = (new UpstreamClient($upstream))->download($dist['url'], $temporary);
 
             if (! $response->successful()) {
-                $this->markUnreachable($upstream, "archive download responded {$response->status()}");
+                Log::warning('Could not download an upstream archive.', [
+                    'upstream' => $upstream->url,
+                    'package' => $name,
+                    'reference' => $reference,
+                    'status' => $response->status(),
+                ]);
 
                 return null;
             }
@@ -829,10 +864,17 @@ class MirrorService
 
             $path = $this->archives->storeMirrored($upstream, $name, $reference, $temporary);
 
-            return MirroredArchive::create([
+            // firstOrCreate, not create: two builds starting at once is the
+            // ordinary case, not an exotic interleaving, and both of them find
+            // no row and then race the unique index. The loser takes the
+            // winner's row — the bytes are the same release, verified against
+            // the same sha1 — and leaves its own file for mirror:prune, which
+            // is what the orphan sweep is for.
+            return MirroredArchive::firstOrCreate([
                 'upstream_id' => $upstream->getKey(),
                 'name' => $name,
                 'reference' => $reference,
+            ], [
                 'path' => $path,
                 'shasum' => $dist['shasum'],
                 'size' => $size,

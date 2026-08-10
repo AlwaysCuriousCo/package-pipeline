@@ -77,10 +77,12 @@ final class UpstreamClient
     {
         $url = str_replace('%package%', $package, $this->endpoints()['metadata']);
 
-        return $this->request()
+        $absolute = $this->absolute($url);
+
+        return $this->request($absolute)
             ->when($etag !== null, fn (PendingRequest $request) => $request->withHeader('If-None-Match', (string) $etag))
             ->when($lastModified !== null, fn (PendingRequest $request) => $request->withHeader('If-Modified-Since', (string) $lastModified))
-            ->get($this->absolute($url));
+            ->get($absolute);
     }
 
     /**
@@ -99,7 +101,9 @@ final class UpstreamClient
             return null;
         }
 
-        return $this->request()->asForm()->post($this->absolute($url), ['packages' => $packages]);
+        $absolute = $this->absolute($url);
+
+        return $this->request($absolute)->asForm()->post($absolute, ['packages' => $packages]);
     }
 
     /**
@@ -112,7 +116,7 @@ final class UpstreamClient
      */
     public function download(string $url, string $destination): Response
     {
-        return $this->request()
+        return $this->request($url)
             // How long this takes is a property of the archive, not of the
             // upstream's health, so the API budget would cut a large release
             // off mid-stream.
@@ -128,7 +132,9 @@ final class UpstreamClient
      */
     private function discover(): ?array
     {
-        $response = rescue(fn (): Response => $this->request()->acceptJson()->get($this->upstream->url('/packages.json')));
+        $root = $this->upstream->url('/packages.json');
+
+        $response = rescue(fn (): Response => $this->request($root)->acceptJson()->get($root));
 
         if (! $response instanceof Response || ! $response->successful()) {
             return null;
@@ -166,17 +172,57 @@ final class UpstreamClient
             : $this->upstream->url('/'.ltrim($url, '/'));
     }
 
-    private function request(): PendingRequest
+    /**
+     * A request to the given URL, credentialed only if it is going to the
+     * upstream itself.
+     *
+     * The host check is the point. An upstream's metadata names the host its
+     * archives live on — codeload.github.com for a packagist-shaped upstream,
+     * an object store for a self-hosted one — and that host is chosen by the
+     * upstream, not by us. Attaching the credential unconditionally would mean
+     * the operator's token for their private registry is spent, as an
+     * Authorization header, against whatever third party that registry happens
+     * to name. Guzzle strips the header across a redirect for exactly this
+     * reason; there is no reason to put it on the first request either.
+     *
+     * It is also what makes pre-signed dist URLs work at all: an object store
+     * refuses a request that carries both a signature and an Authorization
+     * header, so the credentialed version would fail against every upstream
+     * that signs its downloads.
+     */
+    private function request(string $url): PendingRequest
     {
-        return Http::timeout(HttpTimeouts::API)
-            ->connectTimeout(HttpTimeouts::CONNECT)
-            // The username is ignored by every Composer repository that reads
-            // a token this way — including this app, whose own instructions
-            // are `composer config http-basic.<host> token <your-token>` — so
-            // one credential field is all an upstream needs.
-            ->when(
-                filled($this->upstream->token),
-                fn (PendingRequest $request) => $request->withBasicAuth('token', (string) $this->upstream->token),
-            );
+        $request = Http::timeout(HttpTimeouts::API)->connectTimeout(HttpTimeouts::CONNECT);
+
+        if (blank($this->upstream->token) || ! $this->isUpstreamHost($url)) {
+            return $request;
+        }
+
+        // The username is ignored by every Composer repository that reads a
+        // token this way — including this app, whose own instructions are
+        // `composer config http-basic.<host> token <your-token>` — so one
+        // credential field is all an upstream needs.
+        return $request->withBasicAuth('token', (string) $this->upstream->token);
+    }
+
+    /**
+     * Whether a URL addresses the upstream itself, scheme and host and port.
+     *
+     * All three, because none of them alone is the same origin: a token sent
+     * to the http:// spelling of an https:// upstream is a token sent in
+     * clear, and a different port is a different service.
+     */
+    private function isUpstreamHost(string $url): bool
+    {
+        $target = parse_url($url);
+        $upstream = parse_url($this->upstream->url);
+
+        if (! is_array($target) || ! is_array($upstream)) {
+            return false;
+        }
+
+        return ($target['scheme'] ?? null) === ($upstream['scheme'] ?? null)
+            && mb_strtolower((string) ($target['host'] ?? '')) === mb_strtolower((string) ($upstream['host'] ?? ''))
+            && ($target['port'] ?? null) === ($upstream['port'] ?? null);
     }
 }

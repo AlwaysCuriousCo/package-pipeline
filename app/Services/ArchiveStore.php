@@ -109,19 +109,18 @@ class ArchiveStore
      * that checked the bytes against the shasum the upstream published, and a
      * `mirrored_archives` row exists precisely to record that the check passed.
      *
-     * Keyed by the upstream's reference rather than a fresh uuid, unlike a
-     * published archive: an upstream reference names an immutable release, so
-     * re-fetching one can only ever write the same bytes over themselves,
-     * where a re-synced *version* legitimately changes what a tag points at.
+     * Keyed by a fresh uuid for the same reason a published archive is: two
+     * builds cold-starting at once both fetch the same release, and a
+     * deterministic path would have one of them truncating the file the other
+     * is streaming to a client. The reference is immutable, so the bytes would
+     * be identical — but a half-written file is not the bytes.
      *
-     * The upstream is in the path because "immutable" is only that upstream's
-     * word. Two upstreams offering one name at one reference would otherwise
-     * share a file while each row vouched for its own sha1 — and the second to
-     * write would have its bytes served under the first one's hash.
+     * The loser's file is claimed by no row and is swept by `mirror:prune`,
+     * which is what its orphan pass is for.
      */
     public function storeMirrored(Upstream $upstream, string $name, string $reference, string $zip): string
     {
-        $path = self::MIRROR_PREFIX."/{$upstream->getKey()}/{$name}/{$reference}.zip";
+        $path = self::MIRROR_PREFIX."/{$upstream->getKey()}/{$name}/{$reference}/".Str::uuid7().'.zip';
 
         $this->write($path, $zip);
 
