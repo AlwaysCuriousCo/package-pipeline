@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\Packages\Widgets\PackageSyncProgress;
 use App\Jobs\DiscoverVersions;
+use App\Jobs\FinalizePackageSync;
 use App\Jobs\PackageSyncBatch;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
@@ -320,5 +321,89 @@ class PackageSyncBatchTest extends TestCase
 
         Livewire::test(PackageSyncProgress::class, ['record' => $this->makePackage()])
             ->assertDontSee('Sync in progress');
+    }
+
+    /**
+     * The batch allows failures, so a repository whose every ref is broken
+     * finishes "successfully" with nothing imported. Finalizing throws on
+     * that, and the throw is the only thing between the package and a sync
+     * that appears to have worked.
+     */
+    public function test_a_batch_that_imported_nothing_at_all_records_why_and_raises_the_alarm(): void
+    {
+        Notification::fake();
+
+        User::factory()->superAdmin()->create();
+
+        $package = $this->makePackage();
+
+        $batch = Bus::findBatch($this->storedBatch([
+            'total_jobs' => 3,
+            'pending_jobs' => 0,
+            'failed_jobs' => 2,
+            'finished_at' => now()->getTimestamp(),
+        ]));
+
+        $this->assertNotNull($batch);
+
+        (new FinalizePackageSync($package->id, []))($batch);
+
+        $this->assertSame('All 2 version imports failed.', $package->refresh()->sync_error);
+        $this->assertNull($package->last_synced_at);
+
+        Notification::assertSentTo(
+            User::query()->get(),
+            PackageSyncFailed::class,
+            fn (PackageSyncFailed $notification): bool => str_contains($notification->reason, 'All 2 version imports failed.'),
+        );
+    }
+
+    /**
+     * DiscoverVersions::failed() cancels the batch and has already said why,
+     * so finalizing must not follow it with a contradicting "synced".
+     */
+    public function test_a_cancelled_batch_leaves_the_failure_that_cancelled_it_standing(): void
+    {
+        Notification::fake();
+
+        User::factory()->superAdmin()->create();
+
+        $package = $this->makePackage();
+        $package->forceFill(['sync_error' => 'GitHub timed out.'])->save();
+
+        $batch = Bus::findBatch($this->storedBatch(['cancelled_at' => now()->getTimestamp()]));
+
+        $this->assertNotNull($batch);
+
+        (new FinalizePackageSync($package->id, []))($batch);
+
+        $this->assertSame('GitHub timed out.', $package->refresh()->sync_error);
+        $this->assertNull($package->last_synced_at);
+
+        Notification::assertNothingSent();
+    }
+
+    /**
+     * The finalizer carries an id rather than the package, precisely because
+     * the row may be gone by the time the batch drains — deleting a package
+     * mid-sync is a decision, not a failure to report.
+     */
+    public function test_a_package_deleted_while_its_batch_drained_finishes_quietly(): void
+    {
+        Notification::fake();
+
+        User::factory()->superAdmin()->create();
+
+        $package = $this->makePackage();
+        $packageId = $package->id;
+        $package->delete();
+
+        $batch = Bus::findBatch($this->storedBatch(['pending_jobs' => 0, 'finished_at' => now()->getTimestamp()]));
+
+        $this->assertNotNull($batch);
+
+        (new FinalizePackageSync($packageId, []))($batch);
+
+        Notification::assertNothingSent();
     }
 }
