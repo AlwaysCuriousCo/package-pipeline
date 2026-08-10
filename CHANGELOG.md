@@ -184,6 +184,27 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Fixed
 
+- `archives:audit` refuses at the scale of a wrong disk. It used to decline only
+  when the dist disk listed *nothing*, which one file defeated: a bucket
+  repointed or restored from an older snapshot, plus a single package getting a
+  tag at 03:00, and the 03:20 sweep cleared every other version in the registry
+  unattended. It now refuses once more than a tenth of the versions it checked
+  (and more than twenty of them) come up missing, and `--force` is the way past
+  it. Versions of packages published by artifact upload are never cleared —
+  nothing can re-sync them, so those columns are what a restore is done from.
+  The clear also stops stamping `updated_at`, which was invalidating the `/p2`
+  metadata of every affected package for every Composer client.
+- The grant pivots are indexed in the direction they are read. Each had only its
+  unique pair, and each is queried by the column that pair puts second — so
+  `team_user`, `package_team`, `repository_team`, `package_user` and
+  `repository_user` were being scanned on a path that runs once per metadata and
+  once per dist request for a scoped client. `package_advisories` had no index on
+  `package_id` at all, on the endpoint Composer 2.9 calls inside every
+  `composer update`.
+- Reversing the subdirectory migration refuses instead of failing partway
+  through. It restored a unique index that cannot exist once any repository URL
+  publishes more than one package, having already dropped the wider one — which
+  on an engine without transactional DDL left `packages` with neither.
 - A sync batch left behind by a lost worker is cancelled before its replacement
   starts, instead of letting stale import jobs race the new sync.
 - Recording a download no longer stamps `updated_at` on the package and version
@@ -225,6 +246,16 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Security
 
+- A composer.json name is validated against Composer's grammar before a sync
+  adopts it. The sync path had never checked, on the reasoning that the name
+  came out of a file Composer had validated — but nothing puts that file through
+  Composer on the way here, and it is written by whoever controls the
+  repository. A package declaring `../mirror/...` stored its archive outside the
+  prefix `archives:clean` sweeps and inside the one `mirror:prune` deletes from,
+  after which `archives:audit` cleared the row: a nightly loop reachable by
+  pushing a tag. `ArchiveStore` now refuses to write outside its own prefix as
+  well, because Flysystem only objects to a path leaving the disk root, and one
+  prefix leading into the other never does.
 - Team grants were added inside `Package::scopeVisibleToUser` and
   `Repository::scopeVisibleToUser` — the single chokepoint every read in the app
   goes through — rather than beside them, so no surface can be out of step with
