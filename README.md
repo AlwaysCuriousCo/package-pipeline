@@ -189,6 +189,16 @@ Each repository can reserve vendor prefixes — `acme`, meaning every `acme/…`
 
 This is the server half of a dependency-confusion defence, and on its own it is the smaller half. A project that lists this registry alongside packagist.org will resolve a private name from whichever repository answers for it, and only that project's `composer.json` can settle that. [docs/dependency-confusion.md](docs/dependency-confusion.md) has the configuration to hand consuming projects, and why each part of it is there.
 
+### Upstream mirroring
+
+A repository can be given one or more **upstreams** — packagist.org, a corporate proxy, another private registry — and will then answer for packages it does not publish, caching the metadata and the release zip on your own infrastructure. One URL resolves a project's whole dependency graph, and a build stops depending on packagist.org and GitHub being up. Nothing is bulk-imported: a package is fetched the first time somebody asks for it, and every install afterwards is served from here.
+
+It is off until an upstream is added, and an installation with none behaves exactly as it always has.
+
+A local package always wins, unconditionally: a name published anywhere in this installation, or under a reserved vendor, is never served from an upstream — visible to the caller or not. That is what keeps mirroring from becoming the dependency-confusion hole it would otherwise be, and it is why **reserving your vendor prefixes belongs before turning mirroring on**.
+
+The disk grows without a ceiling of its own, so `mirror:prune` — nightly, retention measured on last use — is the thing to size before enabling it. **[docs/mirroring.md](docs/mirroring.md)** covers all of it: what consumers see, the freshness and failure behaviour, the access-control rule and its one sharp edge, and what it costs in disk.
+
 ## Configuration reference
 
 Everything lives in `.env`, and `.env.example` carries the same notes in situ. Below are the knobs that belong to this app rather than to a stock Laravel one; the stock ones that matter most in production — `QUEUE_CONNECTION`, `CACHE_STORE`, `FILESYSTEM_DISK`, `AWS_*` — are covered under [Recommended drivers](docs/deployment.md#recommended-drivers).
@@ -212,6 +222,19 @@ GitLab needs no environment variables at all — a GitLab source carries its own
 | `ARTIFACT_UPLOAD_MAX_MB` | Largest artifact zip `POST /upload/{vendor}/{package}` accepts, in megabytes (default `100`). PHP's `upload_max_filesize` and `post_max_size` have to allow the same size, or PHP discards the body before the app sees it. |
 | `METADATA_CACHE_DAYS` | How long a rendered `/p2` payload is kept (default `7`). Entries are keyed by a fingerprint of the versions behind them, so they supersede themselves rather than needing to be cleared — this only bounds how long the leftovers linger. |
 | `METADATA_CACHE_MAX_KB` | Largest rendered payload worth storing (default `4096`). A bigger one is served from the version rows every time, which for a package that fat is the lesser problem. `0` turns the cache off entirely. |
+
+**Upstream mirroring**
+
+None of these turns mirroring on — that is a per-repository decision made in the panel, and an installation with no upstreams never reaches any of it. These are the numbers that apply once one has. Full explanations in [docs/mirroring.md](docs/mirroring.md#configuration-reference).
+
+| Variable | Purpose |
+| --- | --- |
+| `MIRROR_RETENTION_DAYS` | How long since it was last served a cached document or archive survives `mirror:prune` (default `30`). **The knob that bounds what the mirror costs in disk**, since nothing else ever deletes one. |
+| `MIRROR_METADATA_TTL_MINUTES` | How long a cached upstream document is served before the next request revalidates it (default `60`). Expiry costs a conditional round trip, not a download. |
+| `MIRROR_MISSING_TTL_MINUTES` | The same for a name the upstream does not have (default `10`). Much shorter, because a package published a minute ago is the one somebody is waiting on. |
+| `MIRROR_ADVISORY_TTL_MINUTES` | How long an upstream's `composer audit` answer is reused (default `10`). |
+| `MIRROR_FAILURE_BACKOFF_MINUTES` | How long an upstream that has just failed is left alone, serving only what is already cached (default `5`). Without it an outage costs every lookup a connect timeout. |
+| `MIRROR_MAX_ARCHIVE_MB` / `MIRROR_MAX_METADATA_KB` | Ceilings on what will be cached from an upstream (default `256` / `8192`). `ARTIFACT_UPLOAD_MAX_MB` bounds what one of your own tokens may spend; these bound what a stranger's published package can. |
 
 **Queue timing**
 
@@ -343,6 +366,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/dependency-confusion.md](docs/dependency-confusion.md) — reserving vendor prefixes here, and the Composer configuration each consuming project needs so a public package cannot win a private name.
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
+- [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.
 - [docs/packistry-feature-analysis.md](docs/packistry-feature-analysis.md) — feature comparison against [Packistry](https://github.com/packistry/packistry) that informs the roadmap.

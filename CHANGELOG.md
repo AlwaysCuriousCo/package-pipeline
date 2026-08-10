@@ -44,6 +44,26 @@ shape rather than a delta from a previous one.
   configuration that makes this registry canonical for your vendors — is in
   [docs/dependency-confusion.md](docs/dependency-confusion.md), and matters
   more than the server half.
+- Upstream mirroring: a Composer repository can be given one or more upstreams
+  — packagist.org, a corporate proxy, another private registry — and will then
+  serve packages it does not publish, caching the metadata and the release zip
+  on your own infrastructure. One URL resolves a consuming project's whole
+  dependency graph, and a build stops depending on packagist.org and GitHub
+  being up. On-demand only: nothing is fetched until a client asks for it.
+  Off until an upstream is added, and an installation with none behaves exactly
+  as before.
+
+  A local package always wins, unconditionally — a name published anywhere in
+  this installation, or under a reserved vendor, is never served from an
+  upstream, visible to the caller or not. **Reserve your vendor prefixes before
+  enabling mirroring**: an unreserved vendor is mirrorable, which is the whole
+  hole [docs/dependency-confusion.md](docs/dependency-confusion.md) is about.
+
+  Archives are verified against the `shasum` the upstream published before
+  being stored, `composer audit` is passed through for mirrored names so
+  mirroring does not silently switch auditing off for most of a graph, and
+  `mirror:prune` (nightly, retention measured on last use) is the only thing
+  that bounds the disk. See [docs/mirroring.md](docs/mirroring.md).
 - Artifact uploads from CI (`POST /upload/{vendor}/{package}`), for packages
   that are built rather than tagged.
 - A versioned JSON management API at `/api/v1` — list and show packages with
@@ -66,7 +86,8 @@ shape rather than a delta from a previous one.
 - Operational commands, so a deployment can be provisioned without a browser:
   `admin:create`, `user:add`, `user:reset-password`, `package:add`,
   `package:delete`, `package:rebuild`, `packages:sync`, `token:add`,
-  `token:revoke`, `archives:clean`, and `downloads:recalculate`.
+  `token:revoke`, `archives:clean`, `mirror:prune`, and
+  `downloads:recalculate`.
 - CI across PHP 8.3, 8.4 and 8.5, with code style (Pint) and static analysis
   (PHPStan via Larastan, level 6) enforced as their own job.
 

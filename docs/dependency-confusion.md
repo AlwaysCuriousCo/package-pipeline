@@ -233,9 +233,29 @@ With `exclude` in place this fails to find the package at all. Without it, and
 with somebody squatting the name, it finds one — which is the failure this
 whole document exists to prevent, and the only way to see it is to go looking.
 
+## If this registry mirrors packagist.org
+
+[Upstream mirroring](mirroring.md) makes a repository answer for packages it
+does not publish, which is exactly the capability this document is about
+containing. Two things change, and both are in your favour:
+
+- **Step 3 becomes applicable everywhere.** Turning packagist.org off in the
+  consuming project — the strongest form of the defence, and previously the
+  least often usable — is what mirroring is for. One repository entry, one
+  place a name can come from.
+- **Reservations get sharper teeth, and become mandatory.** A name published
+  anywhere in this installation, or under a reserved vendor, is never served
+  from an upstream. But the converse is the thing to internalise: an
+  *unreserved* vendor is mirrorable, so a mirroring registry will happily serve
+  packagist.org's `acme/anything` if nothing here has claimed `acme`. **Reserve
+  your vendor prefixes before enabling mirroring**, not after.
+
+Everything else on this page still applies unchanged.
+
 ## Further reading
 
 - [Repository priorities](https://getcomposer.org/doc/articles/repository-priorities.md) — canonical repositories, `only`, `exclude`, and how lookup order works.
 - [Repositories](https://getcomposer.org/doc/05-repositories.md) — repository types and disabling packagist.org.
 - [Preventing Dependency Confusion in PHP with Composer](https://blog.packagist.com/preventing-dependency-hijacking/) — the Composer team's own guidance, February 2021.
 - [Dependency Confusion](https://medium.com/@alex.birsan/dependency-confusion-4a5d60fec610) — Alex Birsan's original research, February 2021.
+- [docs/mirroring.md](mirroring.md) — serving public packages through this registry, and the rules that keep it from reopening this hole.
