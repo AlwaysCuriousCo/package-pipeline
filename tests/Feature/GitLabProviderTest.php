@@ -104,6 +104,26 @@ class GitLabProviderTest extends TestCase
         $this->assertSame(['v1.0.0', 'v1.1.0'], array_keys($tags));
     }
 
+    /**
+     * GitLab's raw-file endpoint takes the whole file path as one URL segment,
+     * so a subdirectory package's manifest travels with its separators encoded
+     * — "packages/widgets/composer.json" is one component, not three.
+     */
+    public function test_a_subdirectory_manifest_is_read_from_the_encoded_path(): void
+    {
+        Http::fake([
+            'gitlab.com/api/v4/projects/group%2Fwidgets/repository/files/packages%2Fwidgets%2Fcomposer.json/raw*' => Http::response(
+                ['name' => 'group/widgets'],
+            ),
+        ]);
+
+        $package = $this->makeGitLabPackage();
+
+        $manifest = $package->client()->composerJson('main', 'packages/widgets');
+
+        $this->assertSame('group/widgets', $manifest['name']);
+    }
+
     public function test_the_gitlab_fallback_never_leaks_the_github_token(): void
     {
         config(['services.github.token' => 'ghp_environment']);

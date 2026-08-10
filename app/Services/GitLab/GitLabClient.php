@@ -69,9 +69,10 @@ class GitLabClient implements RepositoryClient
     }
 
     /**
+     * @param  string  $directory  the package's subdirectory, empty for the root
      * @return array<string, mixed>|null
      */
-    public function composerJson(?string $ref = null): ?array
+    public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
         // GitLab's raw-file endpoint requires a ref; "the default branch" has
         // to be asked for by name first.
@@ -81,8 +82,13 @@ class GitLabClient implements RepositoryClient
             return null;
         }
 
+        // Unlike GitHub's, this endpoint takes the whole file path as a single
+        // URL segment, so the separators are encoded along with everything
+        // else — "packages/foo/composer.json" travels as one component.
+        $path = rawurlencode(ltrim("{$directory}/composer.json", '/'));
+
         $response = $this->request()->get(
-            "/projects/{$this->projectId()}/repository/files/composer.json/raw",
+            "/projects/{$this->projectId()}/repository/files/{$path}/raw",
             ['ref' => $ref],
         );
 

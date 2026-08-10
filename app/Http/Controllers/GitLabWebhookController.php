@@ -44,21 +44,39 @@ class GitLabWebhookController extends Controller
             ], ResponseCode::HTTP_ACCEPTED);
         }
 
-        if (! $package->webhook_enabled) {
+        // Every package published from the project, not only the one the hook
+        // was created for: a project may hold several — a monorepo does by
+        // design — and a push says nothing about which of them it touched. The
+        // GitHub controller resolves the same set for the same reason; see the
+        // comment there. Falls back to the package itself so a row whose
+        // derived path is somehow missing still syncs on its own hook.
+        $packages = Package::allForRepositoryPath((string) $package->repository_path);
+
+        if ($packages->isEmpty()) {
+            $packages = $package->newCollection([$package]);
+        }
+
+        $enabled = $packages->filter(fn (Package $target): bool => $target->webhook_enabled);
+
+        if ($enabled->isEmpty()) {
             return response()->json([
                 'status' => 'ignored',
                 'detail' => "Auto-sync is switched off for {$package->name}.",
             ], ResponseCode::HTTP_ACCEPTED);
         }
 
-        $package->forceFill(['webhook_received_at' => now()])->save();
+        foreach ($enabled as $target) {
+            $target->forceFill(['webhook_received_at' => now()])->save();
 
-        SyncPackageJob::debounced($package);
+            SyncPackageJob::debounced($target);
+        }
+
+        $names = $enabled->pluck('name')->implode(', ');
 
         return response()->json([
             'status' => 'accepted',
-            'package' => $package->name,
-            'detail' => "Syncing {$package->name}.",
+            'package' => $names,
+            'detail' => "Syncing {$names}.",
         ], ResponseCode::HTTP_ACCEPTED);
     }
 

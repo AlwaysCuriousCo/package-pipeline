@@ -36,6 +36,9 @@ class PackageResource extends JsonResource
             // repository serving it; the model carries the same collision and
             // names the relation composerRepository() for the same reason.
             'url' => $this->repository,
+            // Where in that repository the package lives; empty for the root,
+            // which is what all but a monorepo's packages are.
+            'subdirectory' => $this->subdirectory,
             'provider' => $this->repository === null ? null : $this->provider()->value,
             'latest_version' => $this->latest_version,
             'abandoned' => $this->abandoned,

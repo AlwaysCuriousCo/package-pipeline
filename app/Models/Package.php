@@ -28,7 +28,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -49,6 +49,11 @@ class Package extends Model
     protected $attributes = [
         'webhook_enabled' => true,
         'abandoned' => false,
+        // The column's default, restated for the same reason: a package built
+        // in memory is asked where in its repository it lives — by the wizard
+        // reading a composer.json, by the client factories — before it has
+        // ever been read back from the database.
+        'subdirectory' => '',
     ];
 
     /**
@@ -61,7 +66,7 @@ class Package extends Model
     protected function auditedAttributes(): array
     {
         return [
-            'name', 'repository', 'repository_id', 'source_id', 'type',
+            'name', 'repository', 'subdirectory', 'repository_id', 'source_id', 'type',
             'abandoned', 'replacement_package', 'webhook_enabled',
         ];
     }
@@ -109,6 +114,13 @@ class Package extends Model
             // Before every check below, so all of them see the one spelling
             // this package will actually be served under.
             $package->normalizeName();
+
+            // Likewise the one spelling of the subdirectory, since it is half
+            // of the (repository_id, repository, subdirectory) unique index:
+            // "packages/foo", "/packages/foo/" and "packages//foo" are the
+            // same place, and stored as written they would be three packages
+            // publishing the same tree from the same repository.
+            $package->normalizeSubdirectory();
 
             // After the repository is settled, because which repository the
             // package lands in is half of the question this asks.
@@ -314,6 +326,47 @@ class Package extends Model
         if ($this->isDirty('name')) {
             $this->name = mb_strtolower((string) $this->name);
         }
+    }
+
+    /**
+     * Fold the subdirectory down to a bare relative path — no leading or
+     * trailing slashes, no empty segments — and refuse one that climbs out of
+     * the repository.
+     *
+     * The value is interpolated into provider API paths and matched against
+     * archive entry names, so a `..` segment is the one input here that could
+     * make this registry publish a tree the package was never given. The panel
+     * and the API both validate the field with a pattern that admits no such
+     * thing and report it as a field error; this is the backstop for the path
+     * that forgot, and it throws for the same reason guardReservedVendor()
+     * does — quietly rewriting a traversal into something innocuous would hide
+     * the attempt rather than stop it.
+     *
+     * @throws InvalidArgumentException
+     */
+    public function normalizeSubdirectory(): void
+    {
+        $segments = array_values(array_filter(
+            preg_split('#[\\\\/]+#', trim((string) $this->subdirectory)) ?: [],
+            fn (string $segment): bool => $segment !== '' && $segment !== '.',
+        ));
+
+        throw_if(in_array('..', $segments, true), new InvalidArgumentException(
+            "The subdirectory [{$this->subdirectory}] climbs out of the repository."
+        ));
+
+        $this->subdirectory = implode('/', $segments);
+    }
+
+    /**
+     * Whether this package is published from somewhere inside its repository
+     * rather than from the repository root — the monorepo case, which every
+     * path that reads a composer.json or stores an archive has to handle
+     * differently.
+     */
+    public function hasSubdirectory(): bool
+    {
+        return (string) $this->subdirectory !== '';
     }
 
     /**
@@ -541,6 +594,29 @@ class Package extends Model
     }
 
     /**
+     * The other packages published from this package's repository — the rest
+     * of the monorepo, wherever in the registry they are served from.
+     *
+     * Deliveries are dispatched by repository path rather than by Composer
+     * repository (see allForRepositoryPath), so these are exactly the packages
+     * a push to this one's repository also syncs.
+     *
+     * @return Builder<self>
+     */
+    public function siblings(): Builder
+    {
+        // An unsaved package, or one whose URL names no repository, has no
+        // siblings rather than "every package with a null path".
+        if ($this->repository_path === null || ! $this->exists) {
+            return self::query()->whereRaw('1 = 0');
+        }
+
+        return self::query()
+            ->where('repository_path', $this->repository_path)
+            ->whereKeyNot($this->getKey());
+    }
+
+    /**
      * How events for this package's repository reach the app.
      *
      * An installed GitHub App delivers for every repository it can see through
@@ -564,6 +640,16 @@ class Package extends Model
             return WebhookCoverage::Repository;
         }
 
+        // A hook another package already carries on the same repository is
+        // just as concrete, and delivers here just as surely: the controllers
+        // sync every package published from the repository a delivery names,
+        // not only the one the hook was created for. So a monorepo needs one
+        // hook rather than one per package — which matters beyond tidiness,
+        // since GitHub caps a repository at 20 of them.
+        if ($this->coveringSibling() instanceof self) {
+            return WebhookCoverage::Sibling;
+        }
+
         // Confirmed with GitHub rather than assumed from a secret sitting in
         // this app's environment: an app whose webhook was never switched on
         // delivers nothing, and a package told it is covered by one would
@@ -573,6 +659,29 @@ class Package extends Model
         }
 
         return filled($this->webhook_error) ? WebhookCoverage::Failed : WebhookCoverage::None;
+    }
+
+    /**
+     * The sibling package whose repository hook also delivers for this one, or
+     * null when none does.
+     *
+     * The provider is compared rather than trusted from the path alone:
+     * `repository_path` is "owner/repo" with the host discarded, so a package
+     * on github.com/acme/mono and one on gitlab.com/acme/mono share it while
+     * sharing nothing else — and a hook on one delivers nothing for the other.
+     *
+     * Filtered in PHP because the provider is not a column: it comes from the
+     * linked source, falling back to the URL's host. The set being filtered is
+     * the packages on one repository path that carry a hook, which is at most
+     * a handful and usually none.
+     */
+    private function coveringSibling(): ?self
+    {
+        return $this->siblings()
+            ->whereNotNull('webhook_id')
+            ->with('source')
+            ->get()
+            ->first(fn (self $sibling): bool => $sibling->provider() === $this->provider());
     }
 
     /**
@@ -593,15 +702,30 @@ class Package extends Model
      * A guess for the create wizard, used only when the repository's own
      * composer.json cannot be read; the first sync replaces it with the real
      * name. Null when the repository URL names no GitHub repository at all.
+     *
+     * A package in a subdirectory takes its name from that directory rather
+     * than from the repository: "owner/repo" is the monorepo, and every
+     * package in it would otherwise be guessed the same name — which is not
+     * merely unhelpful but unusable, since names are unique per Composer
+     * repository and the second package would be refused.
      */
     public function suggestedName(): ?string
     {
         try {
             // Composer names are lowercase, GitHub paths need not be.
-            return mb_strtolower($this->repositoryPath());
+            $path = mb_strtolower($this->repositoryPath());
         } catch (InvalidArgumentException) {
             return null;
         }
+
+        if (! $this->hasSubdirectory()) {
+            return $path;
+        }
+
+        $vendor = strtok($path, '/');
+        $directory = mb_strtolower(basename((string) $this->subdirectory));
+
+        return $vendor === false ? $path : "{$vendor}/{$directory}";
     }
 
     /**

@@ -32,6 +32,7 @@ class PackageForm
             ->components([
                 self::name(),
                 self::repository(),
+                self::subdirectory(),
                 self::composerRepository(),
                 self::source(),
                 self::token(),
@@ -173,14 +174,75 @@ class PackageForm
             ->required(fn (?Package $record): bool => $record === null || filled($record->repository))
             ->url()
             ->maxLength(255)
+            // One URL may now be claimed several times over — once per
+            // subdirectory — so the rule matches the widened unique index
+            // rather than the repository alone. Normalized the same way the
+            // model will normalize it, or "packages/foo" and "/packages/foo/"
+            // would clear this rule and collide in the index.
             ->unique(
                 ignoreRecord: true,
-                modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
+                modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get)
+                    ->where('subdirectory', self::normalizedSubdirectory($get)),
             )
+            ->validationMessages([
+                'unique' => 'This Composer repository already serves that subdirectory of that repository URL.',
+            ])
             ->placeholder('https://github.com/vendor/package')
             ->helperText(fn (?Package $record): ?string => $record !== null && blank($record->repository)
                 ? 'This package is published by artifact upload; setting a repository URL turns syncing on.'
                 : null);
+    }
+
+    /**
+     * Where in the repository this package lives — the monorepo field.
+     *
+     * Empty is the repository root, which is what every package was before
+     * subdirectories existed and what almost all of them still are, so the
+     * field is optional and unobtrusive rather than a decision to be made.
+     */
+    public static function subdirectory(): TextInput
+    {
+        return TextInput::make('subdirectory')
+            ->label('Subdirectory')
+            // Drives the URL rule above, which is unique per subdirectory.
+            ->live(onBlur: true)
+            ->maxLength(255)
+            // A bare relative path. Package::normalizeSubdirectory() refuses a
+            // `..` segment by throwing, which from a form would be a 500 where
+            // the admin wanted to be told what is wrong with the field.
+            // Wrapped in a closure Filament evaluates, exactly as the reserved
+            // vendor rule on name() is: an unwrapped one is taken for something
+            // to inject the schema's own arguments into, not for the rule.
+            ->rules([
+                fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                    $segments = preg_split('#[\\\\/]+#', trim((string) $value)) ?: [];
+
+                    if (in_array('..', $segments, true)) {
+                        $fail('A subdirectory cannot climb out of the repository with "..".');
+                    }
+                },
+            ])
+            // Never null: the column is part of a unique index, and no engine
+            // considers two nulls equal — an emptied field has to arrive as
+            // the empty string the "repository root" case is stored as.
+            ->dehydrateStateUsing(fn (?string $state): string => (string) $state)
+            ->placeholder('Empty — the repository root')
+            ->helperText('For a repository that publishes several packages: the directory holding this one\'s composer.json. Its dist archives carry that directory alone, re-rooted, so consumers install it exactly as they would a repository of its own.');
+    }
+
+    /**
+     * The subdirectory as Package will store it, so the URL's unique rule asks
+     * about the value that will actually meet the index.
+     */
+    private static function normalizedSubdirectory(Get $get): string
+    {
+        $package = new Package(['subdirectory' => (string) $get('subdirectory')]);
+
+        // A traversal is refused by the field's own rule; here it only has to
+        // not blow up while another field is being validated.
+        rescue(fn () => $package->normalizeSubdirectory(), report: false);
+
+        return (string) $package->subdirectory;
     }
 
     public static function source(): Select

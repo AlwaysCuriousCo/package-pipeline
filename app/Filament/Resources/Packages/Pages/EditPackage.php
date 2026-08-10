@@ -54,6 +54,7 @@ class EditPackage extends EditRecord
                 WebhookCoverage::Disabled => "Pushes to {$package->repositoryPath()} will no longer sync this package, and its webhook has been removed from GitHub.",
                 WebhookCoverage::Application => 'Pushes are delivered through the GitHub App\'s webhook, so there was nothing to create.',
                 WebhookCoverage::Repository => "A webhook is set up on {$package->repositoryPath()}.",
+                WebhookCoverage::Sibling => "Another package published from {$package->repositoryPath()} already carries a webhook for it, and pushes sync every package in the repository — so there was nothing to create.",
                 WebhookCoverage::Failed => (string) app(WebhookRegistrar::class)->unmetRequirement($package),
                 WebhookCoverage::None => 'No webhook covers this repository yet.',
             })

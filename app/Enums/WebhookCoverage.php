@@ -20,6 +20,12 @@ enum WebhookCoverage: string implements HasColor, HasLabel
     /** Covered by a hook created on the repository itself. */
     case Repository = 'repository';
 
+    /**
+     * Covered by the hook another package published from the same repository
+     * already carries — the monorepo case, where one hook serves them all.
+     */
+    case Sibling = 'sibling';
+
     /** Creating the repository hook was attempted and failed. */
     case Failed = 'failed';
 
@@ -34,6 +40,7 @@ enum WebhookCoverage: string implements HasColor, HasLabel
         return match ($this) {
             self::Application => 'GitHub App webhook',
             self::Repository => 'Repository webhook',
+            self::Sibling => 'Shared repository webhook',
             self::Failed => 'Not created',
             self::Disabled => 'Off',
             self::None => 'None',
@@ -43,7 +50,7 @@ enum WebhookCoverage: string implements HasColor, HasLabel
     public function getColor(): string
     {
         return match ($this) {
-            self::Application, self::Repository => 'success',
+            self::Application, self::Repository, self::Sibling => 'success',
             self::Failed => 'danger',
             self::Disabled => 'gray',
             self::None => 'warning',
@@ -55,6 +62,8 @@ enum WebhookCoverage: string implements HasColor, HasLabel
      */
     public function isActive(): bool
     {
-        return $this === self::Application || $this === self::Repository;
+        return $this === self::Application
+            || $this === self::Repository
+            || $this === self::Sibling;
     }
 }

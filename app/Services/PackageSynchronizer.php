@@ -24,6 +24,7 @@ class PackageSynchronizer
 {
     public function __construct(
         private readonly ArchiveStore $archives,
+        private readonly ArchiveSubtree $subtrees = new ArchiveSubtree,
         private readonly VersionNormalizer $normalizer = new VersionNormalizer,
     ) {}
 
@@ -116,7 +117,7 @@ class PackageSynchronizer
             return;
         }
 
-        $name = $package->client()->composerJson()['name'] ?? null;
+        $name = $package->client()->composerJson(directory: $package->subdirectory)['name'] ?? null;
 
         // Compared against the stored name in the case it will be stored in.
         // The model normalizes on the way in either way, but a raw comparison
@@ -192,7 +193,7 @@ class PackageSynchronizer
 
         $client = $package->client();
 
-        $composerJson = $client->composerJson($ref['reference']);
+        $composerJson = $client->composerJson($ref['reference'], $package->subdirectory);
 
         if (! isset($composerJson['name'])) {
             $package->versions()->where('version', $version)->delete();
@@ -214,7 +215,7 @@ class PackageSynchronizer
             'metadata' => [...$composerJson, 'version' => $version],
         ];
 
-        $zip = $this->downloadArchive($client, $ref['reference']);
+        $zip = $this->downloadArchive($package, $client, $ref['reference'], $version);
 
         try {
             // Row and archive columns land together, so a version is never
@@ -470,12 +471,21 @@ class PackageSynchronizer
     }
 
     /**
-     * Download the zipball for a ref to a temporary file, returning its path.
+     * Download the zipball for a ref to a temporary file, as the dist this
+     * package should serve, returning its path.
+     *
+     * A provider archives whole repositories, which is exactly the dist for a
+     * package published from the repository root and is not the dist for one
+     * published from a subdirectory — so a monorepo package's download is cut
+     * down to its own tree before it goes any further. That happens here, on
+     * the temporary file, rather than in ArchiveStore: what is stored is what
+     * Composer downloads, and the shasum recorded beside it has to be the
+     * hash of the bytes actually served.
      *
      * The caller owns the file's lifetime; import() deletes the download once
      * the archive is stored or abandoned.
      */
-    private function downloadArchive(RepositoryClient $client, string $reference): string
+    private function downloadArchive(Package $package, RepositoryClient $client, string $reference, string $version): string
     {
         $temporary = tempnam(sys_get_temp_dir(), 'package-archive-');
 
@@ -483,6 +493,10 @@ class PackageSynchronizer
 
         try {
             $client->downloadZipball($reference, $temporary);
+
+            if ($package->hasSubdirectory()) {
+                $this->subtrees->reroot($temporary, $package->subdirectory, $this->archiveRoot($package, $version));
+            }
         } catch (Throwable $exception) {
             File::delete($temporary);
 
@@ -490,6 +504,21 @@ class PackageSynchronizer
         }
 
         return $temporary;
+    }
+
+    /**
+     * What to call the single directory a re-rooted archive is wrapped in.
+     *
+     * Composer discards this name, so it only has to be legible to whoever
+     * opens the zip and distinct from the provider's own wrapper — which the
+     * package name makes it, since that is not derived from the repository
+     * path a provider names its wrapper after.
+     */
+    private function archiveRoot(Package $package, string $version): string
+    {
+        $root = preg_replace('#[^A-Za-z0-9._-]+#', '-', "{$package->name}-{$version}");
+
+        return trim((string) $root, '-.') ?: 'package';
     }
 
     /**

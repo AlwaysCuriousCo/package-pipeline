@@ -33,9 +33,15 @@ interface RepositoryClient
      * when no ref is given. Null when the file is missing, out of reach, or
      * not valid JSON.
      *
+     * @param  string  $directory  where in the repository to read it from,
+     *                             empty for the root. One repository may hold
+     *                             several packages, each with a manifest of
+     *                             its own — so which manifest is being asked
+     *                             for is the caller's to say, not a property
+     *                             of the repository this client speaks to.
      * @return array<string, mixed>|null
      */
-    public function composerJson(?string $ref = null): ?array;
+    public function composerJson(?string $ref = null, string $directory = ''): ?array;
 
     /**
      * The commit date of the given ref, or null when the provider does not

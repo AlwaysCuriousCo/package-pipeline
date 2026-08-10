@@ -79,13 +79,21 @@ class GitHubClient implements RepositoryClient
      * it has ever been synced. Null when the file is missing, the repository
      * is out of reach, or the contents are not valid JSON.
      *
+     * @param  string  $directory  the package's subdirectory, empty for the root
      * @return array<string, mixed>|null
      */
-    public function composerJson(?string $ref = null): ?array
+    public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
+        // The contents endpoint takes the file path in the URL, so the
+        // segments are encoded individually — a path is not one component.
+        $path = implode('/', array_map(rawurlencode(...), array_filter([
+            ...explode('/', $directory),
+            'composer.json',
+        ], fn (string $segment): bool => $segment !== '')));
+
         $response = $this->request()
             ->withHeaders(['Accept' => 'application/vnd.github.raw+json'])
-            ->get("/repos/{$this->repositoryPath}/contents/composer.json", filled($ref) ? ['ref' => $ref] : []);
+            ->get("/repos/{$this->repositoryPath}/contents/{$path}", filled($ref) ? ['ref' => $ref] : []);
 
         if ($response->status() === 404) {
             return null;

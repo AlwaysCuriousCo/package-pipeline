@@ -42,6 +42,12 @@ class PackageWizard
                         // the owner out of whatever has been typed so far.
                         ->live(onBlur: true)
                         ->helperText('The package name and description are read from this repository\'s composer.json.'),
+                    // On the first step rather than the second, because it is
+                    // part of naming what is being imported: the manifest read
+                    // on leaving this step is the one in this directory, and a
+                    // monorepo has no useful composer.json anywhere else.
+                    PackageForm::subdirectory()
+                        ->helperText('Leave empty unless the repository publishes several packages. For a monorepo, the directory holding this package\'s composer.json — e.g. packages/widgets.'),
                     // Remembers which URL was read and with what credentials,
                     // so returning to this step does not re-read the repository
                     // and overwrite the edits made since — while coming back to
@@ -90,7 +96,7 @@ class PackageWizard
         $failure = null;
 
         try {
-            $composerJson = $package->client()->composerJson();
+            $composerJson = $package->client()->composerJson(directory: $package->subdirectory);
         } catch (Throwable $exception) {
             $composerJson = null;
             $failure = $exception->getMessage();
@@ -130,6 +136,7 @@ class PackageWizard
     {
         return json_encode([
             trim((string) $get('repository')),
+            trim((string) $get('subdirectory')),
             $get('source_id'),
             $get('token') ?: null,
         ]);
@@ -147,6 +154,12 @@ class PackageWizard
             'source_id' => $get('source_id'),
             'token' => $get('token') ?: null,
         ]);
+
+        // Normalized here as the model would on save, so the manifest is read
+        // from the same place the sync will read it from — the field admits
+        // "/packages/widgets/", the provider APIs do not.
+        $package->subdirectory = (string) $get('subdirectory');
+        rescue(fn () => $package->normalizeSubdirectory(), report: false);
 
         $package->linkSource();
 

@@ -67,6 +67,8 @@ An inline `packages:sync` or `package:rebuild` stands aside for a package whose 
 
 Once a package has synced, its versions, release heatmap, and any sync errors all show on its admin page.
 
+A repository that holds several packages — a monorepo — is added once per package, each with its **Subdirectory** filled in. See [docs/monorepos.md](docs/monorepos.md).
+
 `GITHUB_TOKEN` is deliberately a last resort — it's a person's credential with broad reach. For anything beyond a first spin, connect a **source** instead (next section) and clear the global token.
 
 ### Connect a GitHub source (the recommended way)
@@ -261,7 +263,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | --- | --- |
 | `packages:sync [name]` | Sync versions from their sources. Takes a composer name or `owner/repo`; `--source=` narrows to one source, `--queue` dispatches instead of running inline. The scheduler runs `--queue` hourly. |
 | `package:rebuild [name]` | Re-import every version, trusting nothing already stored. The recovery path for corrupted archives or metadata drift — reach for it when a sync says everything is current but the output isn't. |
-| `package:add <url>` | Create a package from a VCS repository URL and queue its first sync. `--name=`, `--repo=` (which Composer repository to serve it from), `--token=`, `--no-webhook`, `--no-sync`. The scriptable equivalent of the create wizard. |
+| `package:add <url>` | Create a package from a VCS repository URL and queue its first sync. `--name=`, `--repo=` (which Composer repository to serve it from), `--subdirectory=` (for a monorepo), `--token=`, `--no-webhook`, `--no-sync`. The scriptable equivalent of the create wizard. |
 | `package:delete <name>` | Delete a package, its versions and its stored archives. `--repo=` disambiguates a name served in more than one repository; `--force` skips the confirmation. |
 
 **Archives**
@@ -370,6 +372,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/metrics.md](docs/metrics.md) — the Prometheus endpoint: what it exposes, why it is off by default, what to alert on, and what a scrape costs.
+- [docs/monorepos.md](docs/monorepos.md) — publishing several packages from one repository: the subdirectory field, how a dist for part of a repository is built, and what a push to a monorepo syncs.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.

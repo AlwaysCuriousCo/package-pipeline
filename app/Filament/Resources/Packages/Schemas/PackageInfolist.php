@@ -26,6 +26,16 @@ class PackageInfolist
                     ->openUrlInNewTab()
                     ->color('primary')
                     ->placeholder('None — published by artifact upload'),
+                TextEntry::make('subdirectory')
+                    ->label('Subdirectory')
+                    ->badge()
+                    ->color('gray')
+                    ->fontFamily(FontFamily::Mono)
+                    // Shown only when there is one to show: the root is where
+                    // almost every package lives, and a row saying so on every
+                    // package would be a row nobody reads.
+                    ->visible(fn (Package $record): bool => $record->hasSubdirectory())
+                    ->helperText('This package is one of several published from the repository. Its dist archives carry this directory alone, re-rooted.'),
                 TextEntry::make('latest_version')
                     ->label('Latest version')
                     ->badge()

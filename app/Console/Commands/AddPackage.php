@@ -8,6 +8,7 @@ use App\Models\Repository;
 use App\Models\ReservedVendor;
 use App\Services\GitHub\WebhookRegistrar;
 use Illuminate\Console\Command;
+use InvalidArgumentException;
 
 use function Laravel\Prompts\text;
 
@@ -20,6 +21,7 @@ class AddPackage extends Command
     protected $signature = 'package:add
         {repository? : The VCS repository URL (https://github.com/owner/repo); prompted for when omitted}
         {--name= : The composer name; guessed from the URL when omitted}
+        {--subdirectory= : Where in the repository the package lives, for a monorepo (e.g. packages/widgets)}
         {--repo= : The Composer repository path to serve it from; the root repository when omitted}
         {--token= : A provider access token, for repositories no connected source covers}
         {--no-webhook : Do not create a repository webhook}
@@ -49,9 +51,20 @@ class AddPackage extends Command
 
         $package = new Package([
             'repository' => $url,
+            'subdirectory' => (string) $this->option('subdirectory'),
             'token' => $this->option('token') ?: null,
             'repository_id' => $repository->id,
         ]);
+
+        // Folded now rather than on save, because both the guessed name and
+        // the collision check below are decided from it.
+        try {
+            $package->normalizeSubdirectory();
+        } catch (InvalidArgumentException $exception) {
+            $this->components->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
 
         $name = $this->option('name') ?: $package->suggestedName();
 
@@ -63,8 +76,15 @@ class AddPackage extends Command
 
         $package->name = $name;
 
+        // The URL half is asked per subdirectory, matching the unique index:
+        // a monorepo publishes several packages from one URL, and only the
+        // same directory of it twice is a collision.
         $collision = $repository->packages()
-            ->where(fn ($query) => $query->where('name', $name)->orWhere('repository', $url))
+            ->where(fn ($query) => $query
+                ->where('name', $name)
+                ->orWhere(fn ($sameTree) => $sameTree
+                    ->where('repository', $url)
+                    ->where('subdirectory', $package->subdirectory)))
             ->first();
 
         if ($collision instanceof Package) {

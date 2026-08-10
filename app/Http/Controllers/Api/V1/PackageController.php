@@ -16,6 +16,7 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 
 /**
  * The packages this registry serves, for the callers that cannot open a
@@ -108,11 +109,20 @@ class PackageController extends ApiController
             'This token may not create packages in this repository.',
         );
 
+        // Normalized before the rules run, because it is one of the columns the
+        // URL's uniqueness is judged against and the model will fold it the
+        // same way on save — a check against the typed spelling would clear a
+        // collision the insert then hits as a bare unique-index error.
+        $subdirectory = $this->subdirectory($request);
+
         $validated = $request->validate([
             'url' => [
                 'required', 'string', 'url', 'max:255',
-                Rule::unique('packages', 'repository')->where('repository_id', $repository->id),
+                Rule::unique('packages', 'repository')
+                    ->where('repository_id', $repository->id)
+                    ->where('subdirectory', $subdirectory),
             ],
+            'subdirectory' => ['nullable', 'string', 'max:255'],
             'name' => [
                 'nullable', 'string', 'max:255', 'regex:'.self::NAME_PATTERN,
                 Rule::unique('packages', 'name')->where('repository_id', $repository->id),
@@ -124,13 +134,14 @@ class PackageController extends ApiController
             'webhook' => ['boolean'],
         ], [
             'name.regex' => 'The name must be a Composer package name, like "acme/widgets".',
-            'url.unique' => 'This repository URL is already served by a package in this Composer repository.',
+            'url.unique' => 'This repository URL and subdirectory are already served by a package in this Composer repository.',
             'name.unique' => 'This Composer repository already serves a package with that name.',
         ]);
 
         $package = new Package([
             'repository_id' => $repository->id,
             'repository' => $validated['url'],
+            'subdirectory' => $subdirectory,
             'webhook_enabled' => $request->boolean('webhook', true),
         ]);
 
@@ -177,6 +188,31 @@ class PackageController extends ApiController
             ])
             ->response()
             ->setStatusCode(201);
+    }
+
+    /**
+     * The subdirectory as Package will store it, empty for a package published
+     * from the repository root.
+     *
+     * A `..` segment is the one shape the model refuses outright, by throwing.
+     * Caught here it is a 422 on the field that has to change, like every
+     * other bad input this endpoint answers with.
+     */
+    private function subdirectory(Request $request): string
+    {
+        $given = $request->input('subdirectory');
+
+        // Anything that is not a string is left to the rule below to reject;
+        // it must not blow up on the way to being reported.
+        $package = new Package(['subdirectory' => is_string($given) ? $given : '']);
+
+        try {
+            $package->normalizeSubdirectory();
+        } catch (InvalidArgumentException $exception) {
+            throw ValidationException::withMessages(['subdirectory' => $exception->getMessage()]);
+        }
+
+        return (string) $package->subdirectory;
     }
 
     /**

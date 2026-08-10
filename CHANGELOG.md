@@ -18,6 +18,12 @@ shape rather than a delta from a previous one.
   per-package wiring.
 - Multiple named repositories, mounted at `/r/{path}` alongside the default one
   at the root, so a deployment can serve more than one audience.
+- Monorepo packages: a per-package **subdirectory**, so one repository URL can
+  publish several packages. A subdirectory package's dist archive is cut out of
+  the provider's whole-repository zipball and re-rooted, without unpacking it,
+  so what Composer downloads is that directory alone. A push syncs every
+  package published from the repository, and one webhook covers all of them.
+  See [docs/monorepos.md](docs/monorepos.md).
 - Package syncing from a GitHub repository's tags and branches, run as queued
   job batches with live progress on the package's page. `package:rebuild`
   re-imports every version trusting nothing already stored — the recovery path

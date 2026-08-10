@@ -28,6 +28,17 @@ class PackageFactory extends Factory
     }
 
     /**
+     * Indicate that the package is published from a directory inside its
+     * repository rather than from the root.
+     */
+    public function inSubdirectory(string $subdirectory = 'packages/widgets'): static
+    {
+        return $this->state(fn (array $attributes): array => [
+            'subdirectory' => $subdirectory,
+        ]);
+    }
+
+    /**
      * Indicate that the package has not been released yet.
      */
     public function unreleased(): static
