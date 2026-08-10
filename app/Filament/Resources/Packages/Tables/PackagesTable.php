@@ -48,6 +48,11 @@ class PackagesTable
                     ->openUrlInNewTab()
                     ->color('primary')
                     ->limit(50)
+                    // Several packages may share one URL, and without this the
+                    // rows of a monorepo are indistinguishable in this column.
+                    ->description(fn (Package $record): ?string => $record->hasSubdirectory()
+                        ? $record->subdirectory
+                        : null)
                     ->placeholder('Uploaded artifacts'),
                 TextColumn::make('composerRepository.name')
                     ->label('Served in')
