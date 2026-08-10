@@ -59,9 +59,11 @@ final class UpstreamClient
      * second connect timeout) in front of every metadata request that was
      * already going to fail.
      *
+     * @param  int|null  $budget  seconds this discovery may take, when the
+     *                            caller is working inside one
      * @return array{metadata: string, advisories: ?string}
      */
-    public function endpoints(): array
+    public function endpoints(?int $budget = null): array
     {
         $key = "mirror:endpoints:{$this->upstream->getKey()}:".md5($this->upstream->url);
 
@@ -72,7 +74,7 @@ final class UpstreamClient
             return $cached;
         }
 
-        $discovered = $this->discover();
+        $discovered = $this->discover($budget);
 
         $minutes = (int) config($discovered === null
             ? 'registry.mirror.missing_ttl_minutes'
@@ -125,11 +127,15 @@ final class UpstreamClient
      * POST with `packages[]`, which is the shape Composer's own client sends
      * and therefore the one every implementation of this endpoint accepts.
      *
+     * On a budget, including the discovery in front of it, because this whole
+     * call happens inside the ten seconds Composer allows the request it is
+     * answering. See HttpTimeouts::ADVISORY.
+     *
      * @param  list<string>  $packages
      */
     public function advisories(array $packages): ?Response
     {
-        $url = $this->endpoints()['advisories'];
+        $url = $this->endpoints(HttpTimeouts::ADVISORY)['advisories'];
 
         if ($url === null) {
             return null;
@@ -137,7 +143,7 @@ final class UpstreamClient
 
         $absolute = $this->absolute($url);
 
-        return $this->request($absolute)->asForm()->post($absolute, ['packages' => $packages]);
+        return $this->request($absolute, HttpTimeouts::ADVISORY)->asForm()->post($absolute, ['packages' => $packages]);
     }
 
     /**
@@ -229,11 +235,11 @@ final class UpstreamClient
      *
      * @return array{metadata: string, advisories: ?string}|null
      */
-    private function discover(): ?array
+    private function discover(?int $budget = null): ?array
     {
         $root = $this->upstream->url('/packages.json');
 
-        $response = rescue(fn (): Response => $this->request($root)->acceptJson()->get($root));
+        $response = rescue(fn (): Response => $this->request($root, $budget)->acceptJson()->get($root));
 
         if (! $response instanceof Response || ! $response->successful()) {
             return null;
@@ -289,10 +295,13 @@ final class UpstreamClient
      * header, so the credentialed version would fail against every upstream
      * that signs its downloads.
      */
-    private function request(string $url): PendingRequest
+    private function request(string $url, ?int $budget = null): PendingRequest
     {
-        $request = Http::timeout(HttpTimeouts::API)
-            ->connectTimeout(HttpTimeouts::CONNECT)
+        // A budget bounds the connection as well as the read, because a
+        // caller that has ten seconds has them for the whole request and an
+        // upstream that never completes its handshake would spend them there.
+        $request = Http::timeout($budget ?? HttpTimeouts::API)
+            ->connectTimeout(min($budget ?? HttpTimeouts::CONNECT, HttpTimeouts::CONNECT))
             // Stated rather than left to Guzzle's defaults, which are the same
             // five hops but say nothing about which schemes may be redirected
             // to. Every one of those hops is a destination of the upstream's

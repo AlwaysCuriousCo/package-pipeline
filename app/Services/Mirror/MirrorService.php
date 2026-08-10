@@ -447,10 +447,18 @@ class MirrorService
 
         $found = [];
 
+        // Composer allows the request this is answering ten seconds, so the
+        // upstreams are asked until that is spent rather than until they run
+        // out: one upstream's worst case is the connection plus the read, and
+        // after that there is nothing left to ask a second one with. What a
+        // caller gets then is the coverage of the upstreams that did answer,
+        // which is what it would have got from an upstream that had nothing.
+        $deadline = microtime(true) + HttpTimeouts::ADVISORY * 2;
+
         foreach ($repository->activeUpstreams() as $upstream) {
             $outstanding = array_values(array_diff($wanted, array_keys($found)));
 
-            if ($outstanding === []) {
+            if ($outstanding === [] || microtime(true) >= $deadline) {
                 break;
             }
 

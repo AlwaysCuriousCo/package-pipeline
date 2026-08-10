@@ -41,7 +41,15 @@ $composer = function (): void {
         // audit needs explaining. Read authentication, like the rest of the
         // group: an advisory names a package, and naming one is exactly what
         // a private repository does not do to an anonymous caller.
+        //
+        // Throttled, alone among the read endpoints, because it is the only
+        // one that is not fan-out: Composer posts here once per audit with the
+        // whole installed set, rather than once per package. A ceiling that
+        // would break a cold `composer install` of a few hundred dependencies
+        // is nowhere near what one audit spends — and on a mirroring
+        // repository each of these can cost an outbound request of the app's.
         Route::match(['get', 'post'], '/security-advisories', [ComposerRepositoryController::class, 'securityAdvisories'])
+            ->middleware('throttle:advisories')
             ->name('security-advisories');
         Route::get('/p2/{vendor}/{package}.json', [ComposerRepositoryController::class, 'metadata'])
             // Greedy segment so package names containing dots still match.

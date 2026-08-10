@@ -411,7 +411,14 @@ class ComposerRepositoryController extends Controller
     public function securityAdvisories(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'packages' => ['array'],
+            // Bounded because this list is the request: a name here costs a
+            // row in an `in (…)` and, for a mirroring repository, a place in
+            // an upstream POST. No `composer.lock` in existence names two
+            // thousand packages — Composer sends the installed set, and the
+            // largest applications are well under half of that — so this
+            // refuses nothing anybody has, and stops one read token asking
+            // about a hundred thousand names at a time.
+            'packages' => ['array', 'max:2000'],
             'packages.*' => ['string', 'max:255'],
         ]);
 

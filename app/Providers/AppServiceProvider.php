@@ -115,6 +115,20 @@ class AppServiceProvider extends ServiceProvider
             (string) ($request->bearerToken() ?: $request->getPassword()),
         ));
 
+        // `composer audit` posts the whole installed set in one request, which
+        // makes this the one Composer read endpoint a limit can apply to
+        // without breaking the traffic Composer generates — every other one is
+        // asked per package, and a ceiling tight enough to matter there would
+        // cut off a cold install of a few hundred dependencies. An audit runs
+        // once per `composer update`, so sixty a minute per credential is far
+        // past any build; what it bounds is a caller looping the one endpoint
+        // here that can name a thousand packages and, on a mirroring
+        // repository, spend an outbound request of ours.
+        RateLimiter::for('advisories', fn (Request $request): array => $this->credentialAndAddressLimits(
+            $request,
+            (string) ($request->getPassword() ?: $request->bearerToken()),
+        ));
+
         // Uploads are exactly the traffic that arrives from one egress IP: a CI
         // fleet, and a monorepo release publishing a package per component in a
         // single run — hence the same pair, per credential and per address. The

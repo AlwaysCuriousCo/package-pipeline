@@ -144,6 +144,43 @@ class RateLimitTest extends TestCase
     }
 
     /**
+     * The one Composer read endpoint that carries a budget, because it is the
+     * one that is not asked per package: an audit posts the whole installed
+     * set in a single request, so a ceiling here cannot break the fan-out that
+     * makes every other read endpoint unthrottleable.
+     */
+    public function test_audits_carry_a_budget_per_credential(): void
+    {
+        $first = $this->issueToken()->plainText;
+
+        for ($audit = 1; $audit <= self::PAST_ANY_BUDGET; $audit++) {
+            $this->withToken($first)->postJson('/r/internal/security-advisories', ['packages' => ['acme/widgets']]);
+        }
+
+        $this->withToken($first)
+            ->postJson('/r/internal/security-advisories', ['packages' => ['acme/widgets']])
+            ->assertStatus(429);
+
+        // And a `composer install` from the same address is untouched by it:
+        // the fan-out endpoints are where a limit would do the damage.
+        $this->withToken($this->issueToken()->plainText)
+            ->getJson('/r/internal/p2/acme/widgets.json')
+            ->assertOk();
+    }
+
+    public function test_an_audit_cannot_name_an_unbounded_number_of_packages(): void
+    {
+        // One name is one row in an `in (…)` and, on a mirroring repository,
+        // one place in an outbound POST. Composer sends what is installed; no
+        // lock file names this many.
+        $this->withToken($this->issueToken()->plainText)
+            ->postJson('/r/internal/security-advisories', [
+                'packages' => array_map(fn (int $index): string => "acme/package-{$index}", range(1, 2001)),
+            ])
+            ->assertUnprocessable();
+    }
+
+    /**
      * Keyed by the credential for the same reason uploads are, and applied in
      * front of authentication so an unauthenticated flood is bounded too —
      * which is what puts a ceiling on guessing at tokens here.

@@ -49,6 +49,23 @@ final class HttpTimeouts
     public const LOGIN = 10;
 
     /**
+     * Asking an upstream about vulnerabilities, which happens inside somebody
+     * else's budget.
+     *
+     * Composer allows this app's `/security-advisories` ten seconds and no
+     * more — `getSecurityAdvisories` sets that on its own request — so a
+     * mirroring registry that spent the API budget on the upstream would
+     * exceed the caller's before it could answer, and fail their audit rather
+     * than merely answering it late. Applied to the connection *and* the read,
+     * so the worst case is twice this and still inside what the caller allows.
+     *
+     * An audit is also the one outbound call here whose answer is optional:
+     * `composer audit` must not fail an install, so a budget too short for a
+     * struggling upstream costs a passthrough that was best-effort anyway.
+     */
+    public const ADVISORY = 4;
+
+    /**
      * The login budget spelled as Guzzle options, for Socialite: it exchanges
      * the authorization code over a client of its own rather than through the
      * HTTP facade, and that client has no timeout at all until it is given

@@ -204,6 +204,13 @@ because an audit runs on every build and the feed behind the answer is itself
 hours old. A failed advisory lookup is never fatal: a broken audit must not
 break an install.
 
+The upstream is also asked on a short budget. Composer allows its request to
+this app ten seconds, so a mirroring registry that spent its ordinary API
+timeout on the upstream would blow the caller's budget and fail the audit
+rather than merely answering it late. An upstream that has not answered inside
+that gets left out of this audit, which is indistinguishable from an upstream
+that had nothing to report.
+
 ## Freshness
 
 | | Default | What it bounds |
