@@ -29,7 +29,9 @@ downloaded_at,package,repository,version,token_prefix
 `repository` is the Composer repository's URL path; the default repository is
 served at the registry root and is written `(root)`. `token_prefix` is the
 credential's prefix, which stays meaningful after the token is revoked — a
-download served anonymously from a public repository is `(anonymous)`.
+download served anonymously from a public repository is `(anonymous)`, and so
+is one an admin took from the panel's versions list, which presents a session
+rather than a token.
 
 Dates are ISO 8601 with an offset, so they read the same whichever database the
 registry is deployed on.

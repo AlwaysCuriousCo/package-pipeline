@@ -7,6 +7,7 @@ use App\Http\Controllers\PasswordSetupController;
 use App\Http\Controllers\SbomExportController;
 use App\Http\Controllers\SourceConnectionController;
 use App\Http\Controllers\SsoController;
+use App\Http\Controllers\VersionArchiveController;
 use Illuminate\Support\Facades\Route;
 
 // The app is administered entirely through Filament, so the root URL lands on
@@ -80,6 +81,13 @@ Route::get('/exports/downloads', DownloadExportController::class)
 Route::get('/exports/sbom', SbomExportController::class)
     ->middleware('auth')
     ->name('exports.sbom');
+
+// The stored zip for one package version, for an admin who needs the artifact
+// itself rather than what the panel says about it. Scoped to the signed-in
+// admin's own grants, and outside /admin for the same reason the exports are.
+Route::get('/downloads/versions/{version}', VersionArchiveController::class)
+    ->middleware('auth')
+    ->name('downloads.version');
 
 // The GitHub App install handshake for connecting a source. Both legs are
 // admin-only: the callback attaches an installation to a source, so it must

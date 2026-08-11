@@ -188,7 +188,7 @@ class SbomExport
                 'tools' => [
                     'components' => [[
                         'type' => 'application',
-                        'group' => 'always-curious',
+                        'group' => 'alwayscurious',
                         'name' => 'package-pipeline',
                     ]],
                 ],
