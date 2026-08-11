@@ -7,6 +7,7 @@ use App\Models\Token;
 use App\Models\User;
 use BackedEnum;
 use Carbon\CarbonImmutable;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\CheckboxList;
@@ -28,6 +29,13 @@ use Illuminate\Database\Eloquent\Builder;
  * Every panel user manages their own tokens here — issuing one is how their
  * Composer clients authenticate — and only their own: the page's queries are
  * pinned to the signed-in user, so it needs no Shield permission.
+ *
+ * Which is exactly why the abilities on offer are not the whole enum. The page
+ * is reachable by anybody who can sign in, and a token it issues acts as the
+ * person who issued it, so an ability that would let a role do what the panel
+ * refuses it is not offered — and is refused again on submit.
+ *
+ * @see TokenAbility::issuableBy()
  */
 class ApiTokens extends Page implements HasTable
 {
@@ -104,9 +112,22 @@ class ApiTokens extends Page implements HasTable
                         ->placeholder('ci-deploy')
                         ->helperText('What this token is for — shown in listings, and how you will recognise it later.'),
                     CheckboxList::make('abilities')
-                        ->options(TokenAbility::class)
+                        ->options(fn (): array => $this->issuableAbilities())
                         ->default([TokenAbility::RepositoryRead->value])
-                        ->required(),
+                        ->required()
+                        // The options are what this account's role permits, and
+                        // the browser is under no obligation to post them:
+                        // Livewire state arrives from the client like any other
+                        // form field. So the same question is asked here, on the
+                        // way in, where it is the one that decides.
+                        ->rule(fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                            $refused = array_diff((array) $value, array_keys($this->issuableAbilities()));
+
+                            if ($refused !== []) {
+                                $fail('Your role may not issue a token with: '.implode(', ', $refused).'.');
+                            }
+                        })
+                        ->helperText('A token can never do more than you can: what it may reach, and what it may change, still answer to your own grants and role.'),
                     DatePicker::make('expires_at')
                         ->label('Expires')
                         ->minDate(now()->addDay())
@@ -131,6 +152,24 @@ class ApiTokens extends Page implements HasTable
                         ->send();
                 }),
         ];
+    }
+
+    /**
+     * The abilities this account may put on a token, as checkbox options.
+     *
+     * @return array<string, string>
+     *
+     * @see TokenAbility::issuableBy() for what is offered to whom, and why
+     */
+    private function issuableAbilities(): array
+    {
+        $options = [];
+
+        foreach (TokenAbility::issuableBy($this->user()) as $ability) {
+            $options[$ability->value] = $ability->getLabel();
+        }
+
+        return $options;
     }
 
     private function user(): User

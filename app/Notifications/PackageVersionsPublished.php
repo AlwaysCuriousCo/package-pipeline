@@ -2,14 +2,17 @@
 
 namespace App\Notifications;
 
+use App\Enums\WebhookEvent;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
+use App\Notifications\Concerns\AboutOnePackage;
+use App\Notifications\Concerns\RoutedByAdminNotifier;
+use App\Notifications\Contracts\SendsWebhook;
 use App\Services\SyncOutcome;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Slack\BlockKit\Blocks\ContextBlock;
 use Illuminate\Notifications\Slack\BlockKit\Blocks\SectionBlock;
@@ -22,24 +25,40 @@ use Illuminate\Notifications\Slack\SlackMessage;
  * happens on every commit, and a bell that rings on every commit is a bell
  * nobody reads.
  */
-class PackageVersionsPublished extends Notification implements ShouldQueue
+class PackageVersionsPublished extends Notification implements SendsWebhook, ShouldQueue
 {
-    use Queueable;
+    use AboutOnePackage, Queueable, RoutedByAdminNotifier;
 
     public function __construct(
         public readonly Package $package,
         public readonly SyncOutcome $outcome,
     ) {}
 
-    /**
-     * @return list<string>
-     */
-    public function via(object $notifiable): array
+    public function webhookEvent(): WebhookEvent
     {
-        // Users read these in the panel's bell; the Slack channel is routed to
-        // anonymously, because it belongs to the installation rather than to
-        // any one person. @see \App\Services\AdminNotifier
-        return $notifiable instanceof AnonymousNotifiable ? ['slack'] : ['database'];
+        return WebhookEvent::VersionPublished;
+    }
+
+    /**
+     * The releases, not the whole sync. A receiver's usual job is "deploy the
+     * new version", so the versions that are new are the payload; what was
+     * already served is not news. `latest` is stated separately because the
+     * highest of the new releases need not be the package's latest — a
+     * backported 1.9.1 landing after 2.0.0 is exactly this case.
+     *
+     * @return array<string, mixed>
+     */
+    public function toWebhook(): array
+    {
+        return [
+            'package' => $this->package->name,
+            'repository' => $this->package->composerRepository->path,
+            'source_url' => $this->package->repository,
+            'releases' => $this->outcome->releases,
+            'latest' => $this->package->latest_version,
+            'initial_import' => $this->outcome->initialImport,
+            'total_versions' => $this->outcome->total,
+        ];
     }
 
     /**

@@ -3,11 +3,13 @@
 namespace App\Models;
 
 use App\Enums\SourceProvider;
+use App\Models\Concerns\LogsAuditableChanges;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubSourceClient;
 use App\Services\GitLab\GitLabSourceClient;
 use App\Sources\SourceClient;
 use App\Sources\StubClient;
+use App\Support\HttpTimeouts;
 use Database\Factories\SourceFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,7 +31,19 @@ use Throwable;
 class Source extends Model
 {
     /** @use HasFactory<SourceFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
+
+    /**
+     * Which account this source reaches, and whether it is currently
+     * authenticating — `connected_at` is what a connect and a disconnect both
+     * move. The credential itself is an encrypted cast and never logged.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['name', 'provider', 'base_url', 'account', 'account_type', 'installation_id', 'connected_at'];
+    }
 
     /**
      * @return array<string, string>
@@ -61,7 +75,7 @@ class Source extends Model
     {
         $owner = strtok($repositoryPath, '/');
 
-        if ($owner === false || $owner === '') {
+        if ($owner === false) {
             return null;
         }
 
@@ -123,7 +137,7 @@ class Source extends Model
             ->first();
 
         return $existing ?? new self([
-            'name' => static::availableName($login ?? "GitHub installation {$installationId}"),
+            'name' => self::availableName($login ?? "GitHub installation {$installationId}"),
             'provider' => SourceProvider::Github,
             'account' => $login,
         ]);
@@ -399,7 +413,12 @@ class Source extends Model
      */
     private function get(string $path, array $query = [], bool $allowMissing = false): ?array
     {
+        // Connection tests run from a panel action, with an admin watching the
+        // button spin; an unreachable API has to come back as an error rather
+        // than as a request that never ends.
         $response = Http::baseUrl($this->apiUrl())
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->when(
                 $this->provider === SourceProvider::Github,
                 fn ($request) => $request->withHeaders(['X-GitHub-Api-Version' => '2022-11-28']),

@@ -5,12 +5,17 @@ namespace Tests\Feature;
 use App\Filament\Resources\Repositories\Pages\CreateRepository;
 use App\Filament\Resources\Repositories\Pages\EditRepository;
 use App\Filament\Resources\Repositories\Pages\ListRepositories;
+use App\Filament\Resources\Repositories\RepositoryResource;
+use App\Models\MirroredArchive;
+use App\Models\MirroredPackage;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class RepositoryResourceTest extends TestCase
@@ -32,6 +37,27 @@ class RepositoryResourceTest extends TestCase
             ->assertCanSeeTableRecords($repositories);
     }
 
+    /**
+     * On purpose, and the one place in the panel where a grant does not narrow
+     * a list. Package grants say what somebody may read; this screen is what
+     * the registry is made of, and ViewAny:Repository is the permission that
+     * decides who configures that. An operator holding it and no grant at all
+     * would otherwise be shown an empty list of the mounts they administer.
+     *
+     * @see RepositoryResource
+     */
+    public function test_the_index_is_not_narrowed_by_the_operators_own_grants(): void
+    {
+        $role = Role::findOrCreate('operator', 'web');
+        $role->givePermissionTo(['ViewAny:Repository', 'View:Repository', 'Update:Repository']);
+
+        $this->actingAs(tap(User::factory()->create())->assignRole($role));
+
+        $private = Repository::factory()->create(['path' => 'internal', 'public' => false]);
+
+        Livewire::test(ListRepositories::class)->assertCanSeeTableRecords([$private]);
+    }
+
     public function test_the_default_repository_lists_the_registry_root_not_a_bare_mount(): void
     {
         Repository::default();
@@ -39,6 +65,64 @@ class RepositoryResourceTest extends TestCase
         Livewire::test(ListRepositories::class)
             ->assertSee('/ (registry root)')
             ->assertDontSee('/r/');
+    }
+
+    public function test_upstreams_are_configured_on_the_repository(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->fillForm(['upstreams' => [[
+                'name' => 'packagist.org',
+                'url' => 'https://repo.packagist.org/',
+                'token' => 'upstream-secret',
+                'enabled' => true,
+            ]]])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $upstream = $repository->upstreams()->sole();
+
+        // The trailing slash is normalised away on the model, so the same
+        // upstream typed two ways cannot get past the unique index twice.
+        $this->assertSame('https://repo.packagist.org', $upstream->url);
+        $this->assertSame('upstream-secret', $upstream->token);
+        $this->assertTrue($repository->refresh()->mirrors());
+    }
+
+    public function test_the_stored_upstream_token_is_never_echoed_back_to_the_browser(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+        $repository->upstreams()->create([
+            'name' => 'packagist.org',
+            'url' => 'https://repo.packagist.org',
+            'token' => 'upstream-secret',
+        ]);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->assertDontSee('upstream-secret')
+            // A blank input keeps what is stored rather than clearing it.
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('upstream-secret', $repository->upstreams()->sole()->token);
+    }
+
+    public function test_the_index_shows_what_the_mirror_is_holding(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+        $upstream = $repository->upstreams()->create(['name' => 'packagist.org', 'url' => 'https://repo.packagist.org']);
+
+        MirroredPackage::factory()->create(['upstream_id' => $upstream->getKey()]);
+
+        foreach ([str_repeat('a', 40), str_repeat('b', 40)] as $reference) {
+            MirroredArchive::factory()->create(['upstream_id' => $upstream->getKey(), 'reference' => $reference]);
+        }
+
+        // The Composer endpoints deliberately do not enumerate the cache, so
+        // this is the only place an operator can see what it costs.
+        Livewire::test(ListRepositories::class)
+            ->assertSee('1 docs / 2 zips');
     }
 
     public function test_a_repository_can_be_created(): void
@@ -130,5 +214,46 @@ class RepositoryResourceTest extends TestCase
             ->callAction(TestAction::make('delete')->table($repository));
 
         $this->assertDatabaseMissing('repositories', ['id' => $repository->id]);
+    }
+
+    /**
+     * Whether the delete action is available is a question about the same
+     * count the Packages column already shows, so it is answered off the
+     * record rather than asked again — twice — for every row.
+     */
+    public function test_listing_repositories_costs_the_same_however_many_there_are(): void
+    {
+        Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
+
+        // Rendered once before anything is measured: the panel resolves
+        // permissions and settings on first render and caches them, which
+        // would otherwise show up as the difference this is looking for.
+        $this->renderRepositoryList();
+
+        $one = $this->renderRepositoryList();
+
+        foreach (range(1, 4) as $ignored) {
+            Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
+        }
+
+        $this->assertSame($one, $this->renderRepositoryList());
+    }
+
+    /**
+     * How many queries one render of the repository list runs.
+     */
+    private function renderRepositoryList(): int
+    {
+        $queries = 0;
+
+        DB::listen(function () use (&$queries): void {
+            $queries++;
+        });
+
+        Livewire::test(ListRepositories::class)->assertOk();
+
+        // The listener cannot be removed, so each call measures itself against
+        // its own counter and the earlier ones keep counting into theirs.
+        return $queries;
     }
 }

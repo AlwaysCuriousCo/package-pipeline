@@ -32,8 +32,11 @@ class PackageSyncBatch
 
         // Only the batch id is dirty, so this cannot clobber columns the
         // batch itself already rewrote (on the sync driver it has run and
-        // finished before this line).
-        $package->forceFill(['sync_batch_id' => $batch->id])->save();
+        // finished before this line). Which batch is rebuilding a package is
+        // bookkeeping — it says nothing about what the package publishes — and
+        // the hourly schedule dispatches one per package, so writing it loudly
+        // would move every metadata validator in the registry on the hour.
+        $package->recordBookkeeping(['sync_batch_id' => $batch->id]);
 
         return $batch;
     }

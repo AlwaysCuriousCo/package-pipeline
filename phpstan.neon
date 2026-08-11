@@ -1,0 +1,18 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/phpstan/phpstan-mockery/extension.neon
+
+parameters:
+    paths:
+        - app
+        - config
+        - database
+        - routes
+        - tests
+
+    # The highest level this codebase passes with nothing ignored and no
+    # baseline behind it. Level 7 asks for union narrowing at the Filament and
+    # Livewire boundaries, where the framework's own types are the vague ones.
+    level: 6
+
+    parseModelCastsMethod: true

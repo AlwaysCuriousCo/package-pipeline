@@ -278,7 +278,7 @@ class SyncPackageJobTest extends TestCase
         $this->assertSame(60, $payload['timeout']);
         $this->assertNull($package->refresh()->last_synced_at);
 
-        $this->artisan('queue:work', ['--stop-when-empty' => true])->assertSuccessful();
+        $this->workQueue(['--stop-when-empty' => true])->assertSuccessful();
 
         $this->assertDatabaseCount('jobs', 0);
         $this->assertDatabaseCount('failed_jobs', 0);
@@ -305,17 +305,64 @@ class SyncPackageJobTest extends TestCase
 
         // The dispatcher job never touches GitHub, so it succeeds and leaves
         // the discovery job on the queue.
-        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+        $this->workQueue(['--once' => true])->assertSuccessful();
 
         // The worker exits 0 whether or not the job it ran threw; the outcome
         // is recorded on the job, so that is where to look.
-        $this->artisan('queue:work', ['--once' => true])->assertSuccessful();
+        $this->workQueue(['--once' => true])->assertSuccessful();
 
         // One attempt of three: the discovery goes back to the queue, not to
         // the floor.
         $this->assertDatabaseCount('failed_jobs', 0);
         $this->assertSame(1, DB::table('jobs')->value('attempts'));
         $this->assertStringContainsString('Bad credentials', (string) $package->refresh()->sync_error);
+    }
+
+    /**
+     * The hourly schedule runs this over every package there is, and a package
+     * published by artifact upload has no VCS URL to read. Dispatched anyway it
+     * failed on the same constant message every hour, stored it as sync_error
+     * once and rewrote the identical value forever after — so the package read
+     * as permanently broken, and its `updated_at` never moved again either.
+     */
+    public function test_a_bulk_sync_leaves_artifact_upload_packages_alone(): void
+    {
+        Queue::fake();
+        Http::fake();
+
+        $syncable = $this->makePackage();
+        $uploaded = Package::factory()->create(['name' => 'acme/built', 'repository' => '']);
+
+        $this->artisan('packages:sync', ['--queue' => true])->assertSuccessful();
+
+        Queue::assertPushed(
+            SyncPackageJob::class,
+            fn (SyncPackageJob $job): bool => $job->package->is($syncable),
+        );
+        Queue::assertNotPushed(
+            SyncPackageJob::class,
+            fn (SyncPackageJob $job): bool => $job->package->is($uploaded),
+        );
+
+        $this->assertNull($uploaded->refresh()->sync_error);
+    }
+
+    /**
+     * Asked about one by name, though, the answer has to say why rather than
+     * pretend the package does not exist.
+     */
+    public function test_naming_an_artifact_upload_package_explains_the_refusal(): void
+    {
+        Queue::fake();
+        Http::fake();
+
+        Package::factory()->create(['name' => 'acme/built', 'repository' => '']);
+
+        $this->artisan('packages:sync', ['name' => 'acme/built'])
+            ->expectsOutputToContain('artifact upload')
+            ->assertFailed();
+
+        Queue::assertNothingPushed();
     }
 
     public function test_the_command_still_syncs_inline_without_the_queue_flag(): void

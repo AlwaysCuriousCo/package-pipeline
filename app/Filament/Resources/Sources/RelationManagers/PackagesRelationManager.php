@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Sources\RelationManagers;
 
+use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
 use Filament\Actions\Action;
@@ -53,6 +54,12 @@ class PackagesRelationManager extends RelationManager
                     ->placeholder('Never')
                     ->color(fn (Package $record): ?string => $record->sync_error ? 'danger' : null)
                     ->tooltip(fn (Package $record): ?string => $record->sync_error),
+            ])
+            // Reconnecting a source is exactly when its packages need
+            // re-syncing, and this page is where an admin already is. The same
+            // action the main table carries, so there is one queueing rule.
+            ->recordActions([
+                SyncPackageAction::make(),
             ]);
     }
 }

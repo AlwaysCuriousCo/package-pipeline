@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\SourceProvider;
 use App\Models\Package;
 use App\Models\Source;
 use Filament\Forms\Components\Hidden;
@@ -41,6 +42,12 @@ class PackageWizard
                         // the owner out of whatever has been typed so far.
                         ->live(onBlur: true)
                         ->helperText('The package name and description are read from this repository\'s composer.json.'),
+                    // On the first step rather than the second, because it is
+                    // part of naming what is being imported: the manifest read
+                    // on leaving this step is the one in this directory, and a
+                    // monorepo has no useful composer.json anywhere else.
+                    PackageForm::subdirectory()
+                        ->helperText('Leave empty unless the repository publishes several packages. For a monorepo, the directory holding this package\'s composer.json — e.g. packages/widgets.'),
                     // Remembers which URL was read and with what credentials,
                     // so returning to this step does not re-read the repository
                     // and overwrite the edits made since — while coming back to
@@ -89,14 +96,17 @@ class PackageWizard
         $failure = null;
 
         try {
-            $composerJson = $package->client()->composerJson();
+            $composerJson = $package->client()->composerJson(directory: $package->subdirectory);
         } catch (Throwable $exception) {
             $composerJson = null;
             $failure = $exception->getMessage();
         }
 
+        // Lowercased here as well as on save, so the field shows the name the
+        // registry will actually publish under rather than whatever case the
+        // manifest happened to use. suggestedName() already lowercases.
         if (filled($name = $composerJson['name'] ?? $package->suggestedName())) {
-            $set('name', $name);
+            $set('name', mb_strtolower((string) $name));
         }
 
         // Only what was actually read is written over; a repository nobody
@@ -126,6 +136,7 @@ class PackageWizard
     {
         return json_encode([
             trim((string) $get('repository')),
+            trim((string) $get('subdirectory')),
             $get('source_id'),
             $get('token') ?: null,
         ]);
@@ -143,6 +154,17 @@ class PackageWizard
             'source_id' => $get('source_id'),
             'token' => $get('token') ?: null,
         ]);
+
+        // Normalized here as the model would on save, so the manifest is read
+        // from the same place the sync will read it from — the field admits
+        // "/packages/widgets/", the provider APIs do not.
+        //
+        // Through the model, which answers with the root for a subdirectory it
+        // refuses — see Package::storableSubdirectory(). A traversal is caught
+        // by the field's own rule long before this runs, so reaching here
+        // means that rule was not applied, which is exactly when the value
+        // read below must not be the one that was refused.
+        $package->subdirectory = Package::storableSubdirectory($get('subdirectory'));
 
         $package->linkSource();
 
@@ -163,7 +185,8 @@ class PackageWizard
             return 'Authenticating with the token entered below.';
         }
 
-        $repositoryPath = (new Package(['repository' => trim((string) $get('repository'))]))->suggestedName();
+        $package = new Package(['repository' => trim((string) $get('repository'))]);
+        $repositoryPath = $package->suggestedName();
 
         if ($repositoryPath === null) {
             return 'Matched from the repository URL. Override it here for a repository no source covers.';
@@ -171,8 +194,14 @@ class PackageWizard
 
         $owner = strtok($repositoryPath, '/');
 
-        return Source::forRepositoryPath($repositoryPath) instanceof Source
-            ? "Matched to the source connected for \"{$owner}\"."
-            : "No connected source covers \"{$owner}\", so GITHUB_TOKEN is used. Choose a source or enter a token if the repository is private.";
+        if (Source::forRepositoryPath($repositoryPath) instanceof Source) {
+            return "Matched to the source connected for \"{$owner}\".";
+        }
+
+        // The environment fallback is GitHub's alone, so a GitLab URL with
+        // neither a source nor a token has nothing to authenticate with.
+        return $package->provider() === SourceProvider::Github
+            ? "No connected source covers \"{$owner}\", so GITHUB_TOKEN is used. Choose a source or enter a token if the repository is private."
+            : "No connected source covers \"{$owner}\", and there is no environment fallback for {$package->provider()->getLabel()}. Choose a source or enter a token unless the repository is public.";
     }
 }

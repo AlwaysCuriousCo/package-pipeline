@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Packages\Pages;
 
 use App\Filament\Resources\Packages\Actions\CreateWebhookAction;
+use App\Filament\Resources\Packages\Actions\ExportSbomAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Filament\Resources\Packages\PackageResource;
@@ -21,6 +22,7 @@ class ViewPackage extends ViewRecord
             SyncPackageAction::make(),
             RebuildPackageAction::make(),
             CreateWebhookAction::make(),
+            ExportSbomAction::make(),
             EditAction::make(),
         ];
     }

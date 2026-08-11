@@ -31,7 +31,7 @@ class StubClient implements RepositoryClient, SourceClient
         throw $this->unsupported();
     }
 
-    public function composerJson(?string $ref = null): ?array
+    public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
         throw $this->unsupported();
     }

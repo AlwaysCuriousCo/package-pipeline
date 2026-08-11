@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
+use App\Events\PackageDownloaded;
 use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
 use App\Filament\Widgets\DownloadsChart;
 use App\Filament\Widgets\RegistryTotals;
@@ -77,6 +78,24 @@ class DownloadStatsTest extends TestCase
         $this->assertSame($new->token->token_prefix, Download::query()->sole()->token_prefix);
     }
 
+    public function test_a_head_request_is_not_a_download(): void
+    {
+        // Laravel answers HEAD on every GET route, so `curl -I`, an uptime
+        // check and a proxy prefetch all reach the dist endpoint. None of them
+        // takes the archive, and counting them would inflate the number the
+        // dashboard and search present as installs.
+        $this->head('/dist/acme/widgets/'.str_repeat('a', 40).'.zip')->assertOk();
+
+        $this->assertSame(0, Download::query()->count());
+        $this->assertSame(0, $this->package->fresh()->total_downloads);
+
+        // The GET that a probing client eventually makes still counts, once.
+        $this->download();
+
+        $this->assertSame(1, Download::query()->count());
+        $this->assertSame(1, $this->package->fresh()->total_downloads);
+    }
+
     public function test_a_404_records_nothing(): void
     {
         $this->get('/dist/acme/widgets/'.str_repeat('f', 40).'.zip')->assertNotFound();
@@ -109,6 +128,65 @@ class DownloadStatsTest extends TestCase
         $this->assertSame(2, $this->package->versions()->sole()->total_downloads);
     }
 
+    /**
+     * The retention window bounds the largest table in the schema, and the
+     * whole design of it is that the counters do not notice: `total_downloads`
+     * is a lifetime figure and stays one.
+     */
+    public function test_pruning_old_downloads_keeps_their_totals(): void
+    {
+        $version = $this->package->versions()->sole();
+
+        foreach ([-500, -401, -399, -1] as $days) {
+            Download::create([
+                'package_id' => $this->package->id,
+                'package_version_id' => $version->id,
+                'version' => 'v1.0.0',
+                'created_at' => now()->addDays($days),
+            ]);
+        }
+
+        $this->package->forceFill(['total_downloads' => 4])->save();
+        $version->forceFill(['total_downloads' => 4])->save();
+
+        $this->artisan('downloads:prune')->assertSuccessful();
+
+        $this->assertSame(2, Download::query()->count());
+        $this->assertSame(4, $this->package->fresh()->total_downloads);
+        $this->assertSame(4, $version->fresh()->total_downloads);
+
+        // And the recovery tool still answers with the lifetime figure rather
+        // than with what is left of the window — which is the whole reason the
+        // pruner tallies before it deletes.
+        $this->package->forceFill(['total_downloads' => 99])->save();
+        $this->package->versions()->update(['total_downloads' => 99]);
+
+        $this->artisan('downloads:recalculate')->assertSuccessful();
+
+        $this->assertSame(4, $this->package->fresh()->total_downloads);
+        $this->assertSame(4, $version->fresh()->total_downloads);
+    }
+
+    public function test_pruning_downloads_can_be_turned_off_and_previewed(): void
+    {
+        Download::create([
+            'package_id' => $this->package->id,
+            'version' => 'v1.0.0',
+            'created_at' => now()->subDays(500),
+        ]);
+
+        $this->artisan('downloads:prune --dry-run')
+            ->expectsOutputToContain('Would prune 1 download row')
+            ->assertSuccessful();
+
+        config(['registry.downloads.retention_days' => 0]);
+
+        $this->artisan('downloads:prune')->assertSuccessful();
+
+        $this->assertSame(1, Download::query()->count());
+        $this->assertSame(0, (int) $this->package->fresh()->pruned_downloads);
+    }
+
     public function test_the_dashboard_widgets_render_with_scoped_data(): void
     {
         $this->download();
@@ -138,6 +216,46 @@ class DownloadStatsTest extends TestCase
         $this->assertSame(1, array_sum($data['datasets'][0]['data']));
     }
 
+    public function test_the_chart_buckets_downloads_by_the_day_they_landed(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+        $this->freezeTime();
+
+        // Bucketing moved from PHP into a SQL `GROUP BY`, so the boundaries
+        // are now the database's to get right: downloads either side of a
+        // midnight, one on the window's first day, and one that fell out of it.
+        foreach ([
+            '-0 days 00:15',
+            '-0 days 23:45',
+            '-1 days 12:00',
+            '-1 days 12:00',
+            '-1 days 18:30',
+            '-29 days 06:00',
+            '-30 days 23:59',
+        ] as $when) {
+            [$offset, $time] = explode(' days ', $when);
+
+            Download::create([
+                'package_id' => $this->package->id,
+                'version' => 'v1.0.0',
+                'created_at' => now()->addDays((int) $offset)->setTimeFromTimeString($time),
+            ]);
+        }
+
+        $data = (fn (): array => $this->getData())->call(new DownloadsChart);
+
+        $counts = array_combine($data['labels'], $data['datasets'][0]['data']);
+
+        $this->assertCount(30, $counts);
+        $this->assertSame(2, $counts[now()->format('M j')]);
+        $this->assertSame(3, $counts[now()->subDay()->format('M j')]);
+        $this->assertSame(1, $counts[now()->subDays(29)->format('M j')]);
+
+        // Seven rows were written; the one before the window opens has no
+        // label to land in and is dropped rather than folded into the first.
+        $this->assertSame(6, array_sum($counts));
+    }
+
     public function test_the_download_history_survives_pruning_the_version(): void
     {
         $this->download();
@@ -148,5 +266,65 @@ class DownloadStatsTest extends TestCase
 
         $this->assertNull($download->package_version_id);
         $this->assertSame('v1.0.0', $download->version);
+    }
+
+    /**
+     * The recording runs on the queue, so a sync that prunes a branch — or an
+     * admin who deletes a package — can get there first. The event carries
+     * ids captured when the archive went out, and writing a stale one back
+     * would violate the foreign key: the job fails, the download is lost, and
+     * every subsequent one leaves another failed_jobs row.
+     */
+    public function test_a_version_pruned_before_the_recording_runs_still_counts_for_the_package(): void
+    {
+        $version = $this->package->versions()->sole();
+
+        $staleId = $version->id;
+        $version->delete();
+
+        PackageDownloaded::dispatch($this->package->id, $staleId, 'v1.0.0', null);
+
+        $download = Download::query()->sole();
+
+        $this->assertNull($download->package_version_id);
+        $this->assertSame('v1.0.0', $download->version);
+        $this->assertSame(1, $this->package->fresh()->total_downloads);
+    }
+
+    public function test_a_download_of_a_package_that_has_since_been_deleted_is_dropped(): void
+    {
+        $packageId = $this->package->id;
+
+        $this->package->delete();
+
+        PackageDownloaded::dispatch($packageId, null, 'v1.0.0', null);
+
+        // Deleting the package cascaded its download rows away; there is
+        // nothing left for this one to belong to.
+        $this->assertSame(0, Download::query()->count());
+    }
+
+    /**
+     * /p2 derives its Last-Modified and ETag from these timestamps, so a
+     * counter bumped the ordinary way would have the busiest packages in the
+     * registry invalidating their own metadata on every archive served.
+     */
+    public function test_recording_a_download_leaves_the_metadata_timestamps_alone(): void
+    {
+        $version = $this->package->versions()->sole();
+
+        $modified = $this->get('/p2/acme/widgets.json')->assertOk()->headers->get('Last-Modified');
+
+        $this->travel(1)->hours();
+
+        $this->download();
+
+        $this->assertEquals($this->package->updated_at, $this->package->fresh()->updated_at);
+        $this->assertEquals($version->updated_at, $version->fresh()->updated_at);
+
+        $this->assertSame(
+            $modified,
+            $this->get('/p2/acme/widgets.json')->assertOk()->headers->get('Last-Modified'),
+        );
     }
 }

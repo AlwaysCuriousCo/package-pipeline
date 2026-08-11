@@ -3,8 +3,7 @@ name: Tests
 on:
   push:
     branches:
-      - master
-      - '*.x'
+      - main
   pull_request:
   schedule:
     - cron: '0 0 * * *'
@@ -45,5 +44,133 @@ jobs:
       - name: Generate app key
         run: php artisan key:generate
 
+      # Every test builds its own in-memory SQLite database, so the workers
+      # share nothing and the suite runs in about a third of the wall clock.
       - name: Execute tests
+        run: php artisan test --parallel
+
+  # The suite above runs on SQLite, which is nobody's production database. The
+  # app supports all three engines and the deployment docs assume a server, so
+  # one leg per engine runs the same tests against the real thing — the dialect
+  # differences that hide behind SQLite's permissiveness (JSON columns, ordering
+  # of nulls, date grouping, strict types on a key) surface here or nowhere.
+  #
+  # Both service containers start for both legs. Splitting them into separate
+  # jobs would avoid that, at the cost of duplicating every step below.
+  databases:
+    runs-on: ubuntu-latest
+
+    name: ${{ matrix.name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MySQL
+            connection: mysql
+            port: 3306
+            username: root
+          - name: PostgreSQL
+            connection: pgsql
+            port: 5432
+            username: postgres
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: package_pipeline
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: package_pipeline
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: 8.3
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Copy environment file
+        run: cp .env.example .env
+
+      - name: Generate app key
+        run: php artisan key:generate
+
+      # phpunit.xml pins the connection to SQLite, and PHPUnit's <env> yields
+      # to a variable that is already set — so these are what decide, without
+      # a second phpunit configuration to keep in step with the first.
+      #
+      # Serial, unlike the SQLite legs: parallel workers would each need their
+      # own database created on the server, which is a different thing to be
+      # confident about than the dialect this leg exists to check.
+      - name: Execute tests
+        env:
+          DB_CONNECTION: ${{ matrix.connection }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.port }}
+          DB_DATABASE: package_pipeline
+          DB_USERNAME: ${{ matrix.username }}
+          DB_PASSWORD: password
         run: php artisan test
+
+  # Style and static analysis read the source rather than run it, so their
+  # verdict is the same on every PHP the tests matrix covers. One job on the
+  # lowest supported version is enough, and it fails with its own name in the
+  # checks list instead of hiding inside "PHP 8.3".
+  quality:
+    runs-on: ubuntu-latest
+
+    name: Lint and static analysis
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: 8.3
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Check code style
+        run: composer run lint
+
+      # Larastan boots the framework to resolve container types; it reads no
+      # configuration of its own, so there is no .env to write here.
+      - name: Run static analysis
+        run: composer run analyse

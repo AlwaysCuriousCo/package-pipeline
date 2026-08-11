@@ -2,9 +2,11 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Auth\ResetPassword;
 use App\Filament\Pages\ApiTokens;
 use App\Filament\Pages\Dashboard;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
+use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -19,7 +21,9 @@ use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
+use Illuminate\Routing\Route;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route as RouteFacade;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Joaopaulolndev\FilamentEditProfile\FilamentEditProfilePlugin;
 use Joaopaulolndev\FilamentEditProfile\Pages\EditProfilePage;
@@ -43,9 +47,31 @@ class AdminPanelProvider extends PanelProvider
                 PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
                 fn (): ViewContract => view('filament.auth.sso-buttons'),
             )
-            // Also the target of the link `php artisan admin:create` prints,
-            // which is how the first account gets a password.
-            ->passwordReset()
+            // Every other permission on the Roles screen is narrowed by
+            // something else — grants, teams, Unscoped:Package. The audit
+            // log's is not, and there is no reading of that screen that would
+            // tell you so, so it is said on the screen itself rather than only
+            // in a docblock the person ticking the box will never open.
+            //
+            // @see \App\Filament\Resources\Activities\ActivityResource
+            ->renderHook(
+                PanelsRenderHook::PAGE_START,
+                fn (): ViewContract => view('filament.shield.audit-log-reach'),
+                scopes: RoleResource::class,
+            )
+            // The emailed "forgot password" flow, on Filament's own signed
+            // route. The subclass only adds a second way in — see below.
+            ->passwordReset(resetAction: ResetPassword::class)
+            // Where the link `php artisan admin:create` prints ends up, and
+            // how the first account gets a password. It is the same page, but
+            // reached by a URL with no query string at all: the address and
+            // token arrive in the session, put there by /password-setup.
+            // Filament's own reset route requires a signature, which would
+            // put `?expires=&signature=` back on the address bar of a page
+            // full of password inputs — see App\Auth\PasswordSetupLink for
+            // why that is worth avoiding.
+            ->routes(fn (): Route => RouteFacade::get('password-reset/set', ResetPassword::class)
+                ->name('auth.password-reset.set'))
             ->colors([
                 'primary' => Color::Amber,
             ])

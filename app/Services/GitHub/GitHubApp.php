@@ -3,6 +3,8 @@
 namespace App\Services\GitHub;
 
 use App\Enums\WebhookState;
+use App\Support\HttpTimeouts;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -264,7 +266,17 @@ class GitHubApp
         $key = "github-app.installation-token.{$installationId}";
 
         if (is_string($cached = Cache::get($key))) {
-            return Crypt::decryptString($cached);
+            try {
+                return Crypt::decryptString($cached);
+            } catch (DecryptException) {
+                // The key that encrypted this is not the key in use now — an
+                // APP_KEY rotation, or a cache shared with another instance.
+                // Left to throw, every app-authenticated sync fails with an
+                // opaque decrypt error until the entry expires the better
+                // part of an hour later, over a token that is cheap to mint
+                // again. Forgotten, the next line simply mints it.
+                Cache::forget($key);
+            }
         }
 
         $response = $this->request()
@@ -359,7 +371,12 @@ class GitHubApp
 
     private function request(): PendingRequest
     {
+        // Everything here is a small call on the app's own endpoints, and half
+        // of it runs while an admin waits on a panel page that reports webhook
+        // coverage; none of it may hang for GitHub's benefit.
         return Http::baseUrl(config('services.github.app.api_url'))
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->acceptJson();
     }

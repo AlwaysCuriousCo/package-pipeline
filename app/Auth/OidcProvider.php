@@ -2,6 +2,7 @@
 
 namespace App\Auth;
 
+use App\Support\HttpTimeouts;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Laravel\Socialite\Two\AbstractProvider;
@@ -31,7 +32,7 @@ class OidcProvider extends AbstractProvider
         string $redirectUrl,
         private readonly array $endpoints,
     ) {
-        parent::__construct($request, $clientId, $clientSecret, $redirectUrl);
+        parent::__construct($request, $clientId, $clientSecret, $redirectUrl, HttpTimeouts::guzzle());
     }
 
     protected function getAuthUrl($state): string
@@ -44,15 +45,27 @@ class OidcProvider extends AbstractProvider
         return $this->endpoints['token_endpoint'];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     protected function getUserByToken($token): array
     {
+        // Also inside the login round trip, and not retried: unlike the
+        // discovery document this is read on every login rather than once an
+        // hour, so a second attempt would be paid for far more often than it
+        // would help.
         return Http::withToken($token)
+            ->timeout(HttpTimeouts::LOGIN)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->acceptJson()
             ->get($this->endpoints['userinfo_endpoint'])
             ->throw()
             ->json();
     }
 
+    /**
+     * @param  array<string, mixed>  $user
+     */
     protected function mapUserToObject(array $user): User
     {
         return (new User)->setRaw($user)->map([

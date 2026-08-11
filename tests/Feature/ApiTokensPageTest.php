@@ -6,8 +6,10 @@ use App\Filament\Pages\ApiTokens;
 use App\Models\Token;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
+use Filament\Forms\Components\CheckboxList;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class ApiTokensPageTest extends TestCase
@@ -23,6 +25,17 @@ class ApiTokensPageTest extends TestCase
         $this->user = User::factory()->superAdmin()->create();
 
         $this->actingAs($this->user);
+    }
+
+    /**
+     * A panel user whose role can read packages and administer nothing.
+     */
+    private function scopedUser(): User
+    {
+        $role = Role::create(['name' => 'developer', 'guard_name' => 'web']);
+        $role->givePermissionTo(['ViewAny:Package', 'View:Package']);
+
+        return tap(User::factory()->create())->assignRole($role);
     }
 
     public function test_a_token_is_created_and_its_plain_text_shown_once(): void
@@ -60,6 +73,56 @@ class ApiTokensPageTest extends TestCase
         Livewire::test(ApiTokens::class)
             ->assertCanSeeTableRecords([$mine])
             ->assertCanNotSeeTableRecords([$theirs]);
+    }
+
+    /**
+     * The page is reachable by anybody who can sign in, so the abilities it
+     * offers have to stop where the role does — otherwise a checkbox issues a
+     * credential that does what the panel refuses.
+     */
+    public function test_a_role_that_cannot_delete_packages_is_not_offered_the_delete_ability(): void
+    {
+        $this->actingAs($this->scopedUser());
+
+        Livewire::test(ApiTokens::class)
+            ->mountAction('create')
+            ->assertSchemaComponentExists(
+                'abilities',
+                checkComponentUsing: fn (CheckboxList $field): bool => array_keys($field->getOptions())
+                    === ['repository:read', 'repository:write', 'api:read', 'api:write'],
+            );
+    }
+
+    /**
+     * And the checkbox list is not the enforcement: Livewire state comes from
+     * the client, which can post an option the page never rendered.
+     */
+    public function test_an_ability_the_role_may_not_hold_is_refused_on_submit(): void
+    {
+        $user = $this->scopedUser();
+
+        $this->actingAs($user);
+
+        Livewire::test(ApiTokens::class)
+            ->callAction('create', [
+                'name' => 'sneaky',
+                'abilities' => ['repository:read', 'api:delete'],
+            ])
+            ->assertHasActionErrors(['abilities']);
+
+        $this->assertSame(0, $user->tokens()->count());
+    }
+
+    public function test_a_role_that_may_delete_packages_is_offered_the_delete_ability(): void
+    {
+        Livewire::test(ApiTokens::class)
+            ->callAction('create', [
+                'name' => 'housekeeping',
+                'abilities' => ['api:delete'],
+            ])
+            ->assertHasNoActionErrors();
+
+        $this->assertSame(['api:delete'], $this->user->tokens()->sole()->abilities);
     }
 
     public function test_revoking_a_token_soft_deletes_it_and_stops_authentication(): void

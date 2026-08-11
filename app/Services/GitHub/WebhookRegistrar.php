@@ -159,7 +159,8 @@ class WebhookRegistrar
     {
         return match ($package->webhookCoverage()) {
             // Off on purpose is not something left undone.
-            WebhookCoverage::Application, WebhookCoverage::Repository, WebhookCoverage::Disabled => null,
+            WebhookCoverage::Application, WebhookCoverage::Repository,
+            WebhookCoverage::Sibling, WebhookCoverage::Disabled => null,
             WebhookCoverage::Failed => "The repository webhook could not be created: {$package->webhook_error} {$this->remedy($package)}",
             WebhookCoverage::None => "No webhook covers this repository, so pushes will not sync it. {$this->remedy($package)}",
         };

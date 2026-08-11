@@ -2,10 +2,10 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\RateLimited;
 use App\Models\Package;
-use App\Notifications\PackageSyncFailed;
-use App\Services\AdminNotifier;
 use App\Services\PackageSynchronizer;
+use App\Services\SyncFailureNotifier;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -60,10 +60,21 @@ class DiscoverVersions implements ShouldQueue
             $synchronizer->prune($this->package, array_map(strval(...), array_keys($refs)));
 
             $changed = $synchronizer->changed($this->package, $refs, $this->force);
+        } catch (RateLimited $limited) {
+            // Not a failure — the provider named the moment it will answer
+            // again, and the backoffs above (a minute, then five) would only
+            // retry into the same wall and spend the sync's attempts on it.
+            // The reason goes in the column an auth failure would use,
+            // saying which of the two this is.
+            $this->package->recordBookkeeping(['sync_error' => $limited->getMessage()]);
+
+            $this->release($limited->retryAt);
+
+            return;
         } catch (Throwable $exception) {
             // Every attempt leaves the reason where the panel reads it, not
             // just the one that exhausts the retries.
-            $this->package->forceFill(['sync_error' => $exception->getMessage()])->save();
+            $this->package->recordBookkeeping(['sync_error' => $exception->getMessage()]);
 
             throw $exception;
         }
@@ -84,15 +95,19 @@ class DiscoverVersions implements ShouldQueue
      * so nothing will import. Cancel the batch so FinalizePackageSync does not
      * stamp the package as freshly synced, and say so out loud — a package
      * that stops syncing stops receiving releases.
+     *
+     * Out loud once per failure, not once per hourly attempt at it; see
+     * SyncFailureNotifier for why that is not read back off the column written
+     * a line above.
      */
     public function failed(?Throwable $exception): void
     {
         $reason = $exception?->getMessage() ?: 'The sync failed without reporting a reason.';
 
-        $this->package->forceFill(['sync_error' => $reason])->save();
+        $this->package->recordBookkeeping(['sync_error' => $reason]);
 
         $this->batch()?->cancel();
 
-        app(AdminNotifier::class)->send(new PackageSyncFailed($this->package, $reason));
+        app(SyncFailureNotifier::class)->report($this->package, $reason);
     }
 }

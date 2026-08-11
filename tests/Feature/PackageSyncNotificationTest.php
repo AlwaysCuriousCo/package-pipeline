@@ -185,6 +185,60 @@ class PackageSyncNotificationTest extends TestCase
         );
     }
 
+    /**
+     * A package that cannot sync cannot sync hourly. One expired credential
+     * across a few hundred packages used to be tens of thousands of exhausted
+     * jobs a day, each writing a row per admin and posting to Slack — which
+     * throws when it rate-limits, so those deliveries retried and amplified the
+     * burst that caused them.
+     */
+    public function test_the_same_failure_is_announced_once_however_often_it_recurs(): void
+    {
+        User::factory()->superAdmin()->create();
+
+        $package = $this->package();
+
+        foreach (range(1, 5) as $ignored) {
+            (new SyncPackageJob($package))->failed(new RuntimeException('Bad credentials.'));
+        }
+
+        Notification::assertSentToTimes(User::query()->first(), PackageSyncFailed::class, 1);
+    }
+
+    /**
+     * "The credential expired" and "the repository was deleted" are not one
+     * incident, and the second must not be swallowed because the first is open.
+     */
+    public function test_a_failure_for_a_new_reason_is_announced_again(): void
+    {
+        User::factory()->superAdmin()->create();
+
+        $package = $this->package();
+
+        (new SyncPackageJob($package))->failed(new RuntimeException('Bad credentials.'));
+        (new SyncPackageJob($package))->failed(new RuntimeException('Repository not found.'));
+
+        Notification::assertSentToTimes(User::query()->first(), PackageSyncFailed::class, 2);
+    }
+
+    public function test_a_package_that_recovers_can_be_announced_again(): void
+    {
+        User::factory()->superAdmin()->create();
+
+        $package = $this->package();
+
+        (new SyncPackageJob($package))->failed(new RuntimeException('GitHub timed out.'));
+
+        // The sync that works again clears the state the announcement is
+        // suppressed by, so the next outage is news rather than a repeat.
+        $this->publishing();
+        $this->sync($package);
+
+        (new SyncPackageJob($package))->failed(new RuntimeException('GitHub timed out.'));
+
+        Notification::assertSentToTimes(User::query()->first(), PackageSyncFailed::class, 2);
+    }
+
     public function test_slack_is_notified_when_a_channel_is_configured(): void
     {
         config([

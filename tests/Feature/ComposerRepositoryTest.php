@@ -3,14 +3,65 @@
 namespace Tests\Feature;
 
 use App\Models\Package;
+use App\Models\Repository;
+use Composer\MetadataMinifier\MetadataMinifier;
+use DateTimeInterface;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use League\Flysystem\Filesystem as Flysystem;
+use League\Flysystem\Local\LocalFilesystemAdapter as FlysystemLocalAdapter;
 use Tests\TestCase;
 
 class ComposerRepositoryTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * Paths the dist disk was asked to sign a URL for.
+     *
+     * @var list<string>
+     */
+    private array $signed = [];
+
+    /**
+     * A dist disk that hands out URLs of its own, which is what `DIST_DISK=s3`
+     * gets in production.
+     *
+     * Storage::fake() cannot stand in for one: it builds a local disk whatever
+     * it is named, and a local disk is precisely the case the endpoint streams
+     * rather than redirects. So the disk is assembled here — real files
+     * underneath, a signer on top — and every minted URL recorded, because
+     * "none was minted" is half of what these tests assert.
+     */
+    private function fakeSigningDisk(): FilesystemAdapter
+    {
+        $root = storage_path('framework/testing/disks/signing');
+
+        File::cleanDirectory($root);
+
+        $adapter = new FlysystemLocalAdapter($root);
+
+        $disk = new FilesystemAdapter(new Flysystem($adapter), $adapter);
+
+        // By reference because Laravel rebinds the callback to the disk it
+        // belongs to, which leaves the test's own $this out of reach.
+        $signed = &$this->signed;
+
+        $disk->buildTemporaryUrlsUsing(function (string $path, DateTimeInterface $expiration) use (&$signed): string {
+            $signed[] = $path;
+
+            return "https://objects.test/{$path}?expires={$expiration->getTimestamp()}";
+        });
+
+        Storage::set('s3', $disk);
+        config(['filesystems.dists' => 's3']);
+
+        return $disk;
+    }
 
     private function makeServedPackage(): Package
     {
@@ -24,6 +75,7 @@ class ComposerRepositoryTest extends TestCase
 
         $package->versions()->create([
             'version' => 'v1.1.0',
+            'order' => '1.1.0.0',
             'reference' => str_repeat('b', 40),
             'is_dev' => false,
             'released_at' => '2026-02-01 12:00:00',
@@ -73,9 +125,67 @@ class ComposerRepositoryTest extends TestCase
                 'search' => url('/search.json').'?q=%query%&type=%type%',
                 'list' => url('/list.json'),
             ])
-            // Inlining every name would defeat Composer's lazy loading and
-            // publish the package list to anyone fetching the root.
-            ->assertJsonMissingPath('available-packages');
+            // Patterns bound what Composer will ask about without inlining
+            // every name, which would defeat lazy loading and hand the whole
+            // package list to anyone who fetches the root.
+            ->assertJsonMissingPath('available-packages')
+            ->assertJsonPath('available-package-patterns', ['acme/*']);
+    }
+
+    public function test_the_root_advertises_one_pattern_per_served_vendor(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('acme/gadgets');
+        $this->makeServedPackageNamed('other/widgets');
+
+        // A package with no versions resolves to nothing, so naming its vendor
+        // would only send Composer somewhere that answers 404.
+        Package::factory()->create(['name' => 'unsynced/thing']);
+
+        $this->get('/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*', 'other/*']);
+    }
+
+    public function test_an_abandoned_package_says_so_in_its_metadata(): void
+    {
+        $this->makeServedPackage()->update(['abandoned' => true]);
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.abandoned', true);
+    }
+
+    public function test_an_abandonment_can_name_its_replacement(): void
+    {
+        $this->makeServedPackage()->update([
+            'abandoned' => true,
+            'replacement_package' => 'acme/gadgets',
+        ]);
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.abandoned', 'acme/gadgets');
+    }
+
+    public function test_abandoning_a_package_supersedes_its_cached_metadata(): void
+    {
+        $package = $this->makeServedPackage();
+
+        // Warm the payload cache, whose key is cut from the same fingerprint
+        // the ETag is. An abandonment that fingerprint failed to notice would
+        // be served from this entry for as long as it lives.
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonMissingPath('packages.acme/widgets.0.abandoned');
+
+        // Deliberately no time travel: the two writes land in the same second,
+        // which is exactly the case a timestamp cannot tell apart.
+        $package->update(['abandoned' => true, 'replacement_package' => 'acme/gadgets']);
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            ->assertJsonPath('packages.acme/widgets.0.abandoned', 'acme/gadgets');
     }
 
     public function test_search_filters_by_name_prefix(): void
@@ -107,7 +217,7 @@ class ComposerRepositoryTest extends TestCase
         $response = $this->get('/search.json')->assertOk();
 
         $this->assertSame(2, $response->json('total'));
-        $this->assertSame(['acme/widgets', 'other/widgets'], collect($response->json('results'))->pluck('name')->all());
+        $this->assertSame(['acme/widgets', 'other/widgets'], $response->json('results.*.name'));
     }
 
     public function test_search_filters_by_package_type(): void
@@ -140,6 +250,50 @@ class ComposerRepositoryTest extends TestCase
         $this->get('/list.json')
             ->assertOk()
             ->assertExactJson(['packageNames' => ['aaa/first', 'acme/widgets']]);
+    }
+
+    /**
+     * What `composer search --only-name acme/*` sends. An unfiltered answer is
+     * not a fat answer, it is the wrong one: Composer prints this list as it
+     * arrives.
+     */
+    public function test_list_honours_composers_filter_and_vendor(): void
+    {
+        $this->makeServedPackage();
+        $this->makeServedPackageNamed('acme/gadgets');
+        $this->makeServedPackageNamed('other/widgets');
+
+        $this->get('/list.json?vendor=acme&filter='.urlencode('acme/*'))
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['acme/gadgets', 'acme/widgets']]);
+
+        // A wildcard anywhere, not only as a whole trailing segment.
+        $this->get('/list.json?filter='.urlencode('*/widgets'))
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['acme/widgets', 'other/widgets']]);
+
+        // And a filter with no wildcard at all names one package.
+        $this->get('/list.json?filter=acme/gadgets')
+            ->assertOk()
+            ->assertExactJson(['packageNames' => ['acme/gadgets']]);
+    }
+
+    /**
+     * The filter is Composer's pattern grammar, where `*` is the only
+     * metacharacter — so a regexp or a LIKE wildcard in it is a literal, and
+     * matches the nothing it names.
+     */
+    public function test_list_treats_everything_but_the_star_as_a_literal(): void
+    {
+        $this->makeServedPackage();
+
+        $this->get('/list.json?filter='.urlencode('acme/.*'))
+            ->assertOk()
+            ->assertExactJson(['packageNames' => []]);
+
+        $this->get('/list.json?vendor=%25')
+            ->assertOk()
+            ->assertExactJson(['packageNames' => []]);
     }
 
     public function test_stable_metadata_lists_tagged_versions_with_local_dists(): void
@@ -197,10 +351,116 @@ class ComposerRepositoryTest extends TestCase
         $this->get('/p2/acme/missing.json')->assertNotFound();
     }
 
+    public function test_metadata_is_served_in_the_minified_format(): void
+    {
+        $this->makeServedPackage();
+
+        $this->get('/p2/acme/widgets.json')
+            ->assertOk()
+            // Composer reads an absent key as "already expanded", so declaring
+            // the format is the whole of the opt-in.
+            ->assertJsonPath('minified', 'composer/2.0');
+    }
+
+    public function test_minification_omits_what_a_version_shares_with_the_one_before_it(): void
+    {
+        $package = $this->makeServedPackage();
+
+        // Identical to v1.1.0 in everything but the version itself, which is
+        // the ordinary case: a release line's requirements rarely move.
+        $package->versions()->create([
+            'version' => 'v1.0.0',
+            'order' => '1.0.0.0',
+            'reference' => str_repeat('c', 40),
+            'is_dev' => false,
+            'released_at' => '2026-01-01 12:00:00',
+            'metadata' => [
+                'name' => 'acme/widgets',
+                'version' => 'v1.0.0',
+                'type' => 'library',
+                'require' => ['php' => '^8.3'],
+            ],
+        ]);
+
+        $versions = $this->get('/p2/acme/widgets.json')->assertOk()->json('packages.acme/widgets');
+
+        // Newest first, and the first entry is the complete one.
+        $this->assertSame('v1.1.0', $versions[0]['version']);
+        $this->assertArrayHasKey('type', $versions[0]);
+
+        // The second carries only what actually changed.
+        $this->assertSame(
+            ['version', 'time', 'dist'],
+            array_keys($versions[1]),
+        );
+    }
+
+    public function test_expanding_the_minified_response_recovers_every_version_whole(): void
+    {
+        // The strongest statement available: what a Composer client ends up
+        // with after expansion, spelled out rather than derived from the code
+        // that produced it.
+        $package = $this->makeServedPackage();
+
+        $package->versions()->create([
+            'version' => 'v1.0.0',
+            'order' => '1.0.0.0',
+            'reference' => str_repeat('c', 40),
+            'is_dev' => false,
+            'released_at' => '2026-01-01 12:00:00',
+            'archive_path' => 'packages/acme/widgets/v100.zip',
+            'shasum' => sha1('older-zip-bytes'),
+            'metadata' => [
+                'name' => 'acme/widgets',
+                'version' => 'v1.0.0',
+                'type' => 'library',
+                // A key v1.1.0 does not carry, and — by its absence here —
+                // a `require` that v1.1.0 does. Expansion has to honour the
+                // format's "__unset" as well as its carrying-forward.
+                'description' => 'The first cut.',
+            ],
+        ]);
+
+        $expanded = MetadataMinifier::expand(
+            $this->get('/p2/acme/widgets.json')->assertOk()->json('packages.acme/widgets'),
+        );
+
+        $this->assertEquals([
+            [
+                'name' => 'acme/widgets',
+                'version' => 'v1.1.0',
+                'type' => 'library',
+                'require' => ['php' => '^8.3'],
+                'time' => '2026-02-01T12:00:00+00:00',
+                'dist' => [
+                    'type' => 'zip',
+                    'url' => url('/dist/acme/widgets/'.str_repeat('b', 40).'.zip'),
+                    'reference' => str_repeat('b', 40),
+                    'shasum' => sha1('zip-bytes'),
+                ],
+            ],
+            [
+                'name' => 'acme/widgets',
+                'version' => 'v1.0.0',
+                'type' => 'library',
+                'description' => 'The first cut.',
+                'time' => '2026-01-01T12:00:00+00:00',
+                'dist' => [
+                    'type' => 'zip',
+                    'url' => url('/dist/acme/widgets/'.str_repeat('c', 40).'.zip'),
+                    'reference' => str_repeat('c', 40),
+                    'shasum' => sha1('older-zip-bytes'),
+                ],
+            ],
+        ], $expanded);
+    }
+
     public function test_the_dist_endpoint_serves_the_stored_archive(): void
     {
-        // The dist disk is configurable so it can be pointed at object
-        // storage; the endpoint must not assume a local one.
+        // Storage::fake() builds a local disk under any name, so this is the
+        // streaming path: the bytes come out through PHP, as they do for a
+        // single-server install. The redirect a disk with its own URLs gets
+        // has its own coverage below.
         config(['filesystems.dists' => 's3']);
         Storage::fake('s3');
         Storage::disk('s3')->put('packages/acme/widgets/v110.zip', 'zip-bytes');
@@ -211,13 +471,87 @@ class ComposerRepositoryTest extends TestCase
 
         $response = $this->get("/dist/acme/widgets/{$reference}.zip")
             ->assertOk()
-            ->assertHeader('Content-Type', 'application/zip');
+            ->assertHeader('Content-Type', 'application/zip')
+            // The URL is keyed by commit, so the bytes behind it never change
+            // and a client may keep them for as long as it likes. Private:
+            // a shared cache is no party to who this app serves an archive to.
+            ->assertHeader('Cache-Control', 'immutable, max-age=31536000, private');
 
         $this->assertSame('zip-bytes', $response->streamedContent());
 
         // Serving is storage only. GitHub is never consulted, so consumers
         // need no GitHub credentials and an outage there changes nothing.
         Http::assertNothingSent();
+    }
+
+    public function test_a_dist_disk_with_its_own_urls_is_redirected_to(): void
+    {
+        // Streaming the zip from PHP holds a worker for the whole transfer,
+        // and a `composer install` fetches one archive per package. A disk
+        // that can sign its own URLs is handed the transfer instead.
+        $this->fakeSigningDisk()->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+
+        $package = $this->makeServedPackage();
+        $reference = str_repeat('b', 40);
+
+        $location = (string) $this->get("/dist/acme/widgets/{$reference}.zip")
+            ->assertStatus(302)
+            ->assertRedirectContains('https://objects.test/packages/acme/widgets/v110.zip')
+            // The archive may be immutable, but a URL that expires in minutes
+            // is not: a cache replaying this redirect would fail the install.
+            ->assertHeader('Cache-Control', 'no-store, private')
+            ->headers->get('Location');
+
+        // The signature is the only authorisation the storage service applies,
+        // so the grant it hands out is short-lived by construction.
+        $expires = (int) Str::after($location, 'expires=');
+
+        $this->assertGreaterThan(now()->timestamp, $expires);
+        $this->assertLessThanOrEqual(now()->addMinutes(15)->timestamp, $expires);
+
+        // Redirecting is still serving: the archive left the registry, and the
+        // request that sent it there is the only one that will count it.
+        $this->assertSame(1, $package->fresh()->total_downloads);
+        $this->assertSame(1, $package->versions()->where('reference', $reference)->sole()->total_downloads);
+    }
+
+    public function test_a_local_dist_disk_streams_rather_than_redirecting(): void
+    {
+        // A local disk can sign URLs too — `serve` mounts a route that answers
+        // them — but that route is this same application, so redirecting to it
+        // would buy a round trip and hand the bytes back to PHP anyway.
+        config(['filesystems.dists' => 'local']);
+        Storage::fake('local');
+        Storage::disk('local')->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+
+        $this->makeServedPackage();
+
+        $response = $this->get('/dist/acme/widgets/'.str_repeat('b', 40).'.zip')->assertOk();
+
+        $this->assertSame('zip-bytes', $response->streamedContent());
+    }
+
+    public function test_no_url_is_minted_for_a_client_that_may_not_have_the_archive(): void
+    {
+        $this->fakeSigningDisk()->put('packages/acme/widgets/v110.zip', 'zip-bytes');
+
+        $package = $this->makeServedPackage();
+        $package->composerRepository()->associate(
+            Repository::factory()->create(['path' => 'internal', 'public' => false]),
+        )->save();
+
+        $reference = str_repeat('b', 40);
+
+        // Unauthenticated against the repository that serves it...
+        $this->getJson("/r/internal/dist/acme/widgets/{$reference}.zip")->assertUnauthorized();
+
+        // ...and asking a repository that does not serve it at all.
+        $this->get("/dist/acme/widgets/{$reference}.zip")->assertNotFound();
+
+        // A signed URL is a grant this app cannot take back for as long as it
+        // lives, so none exists until the caller has been cleared for exactly
+        // the archive it names.
+        $this->assertCount(0, $this->signed);
     }
 
     public function test_a_version_without_a_stored_archive_is_a_404(): void

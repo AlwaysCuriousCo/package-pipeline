@@ -76,6 +76,51 @@ class CreatePackageWizardTest extends TestCase
         ]);
     }
 
+    /**
+     * A monorepo's manifest is not at the repository root, so the wizard's
+     * read has to follow the subdirectory the first step names.
+     */
+    public function test_the_wizard_reads_the_manifest_from_the_subdirectory(): void
+    {
+        Queue::fake([SyncPackageJob::class]);
+
+        Http::fake([
+            'api.github.com/repos/acme/Mono/contents/packages/widgets/composer.json*' => Http::response([
+                'name' => 'acme/widgets',
+                'description' => 'Widgets, from the monorepo.',
+            ]),
+        ]);
+
+        Livewire::test(CreatePackage::class)
+            ->fillForm([
+                'repository' => 'https://github.com/acme/Mono',
+                'subdirectory' => '/packages/widgets/',
+            ])
+            ->goToNextWizardStep()
+            ->assertHasNoFormErrors()
+            ->assertSchemaStateSet(['name' => 'acme/widgets'])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertDatabaseHas('packages', [
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/Mono',
+            // Folded on the way in, whatever the field admitted.
+            'subdirectory' => 'packages/widgets',
+        ]);
+    }
+
+    public function test_the_wizard_refuses_a_subdirectory_that_climbs_out_of_the_repository(): void
+    {
+        Livewire::test(CreatePackage::class)
+            ->fillForm([
+                'repository' => 'https://github.com/acme/Mono',
+                'subdirectory' => '../secrets',
+            ])
+            ->goToNextWizardStep()
+            ->assertHasFormErrors(['subdirectory']);
+    }
+
     public function test_a_repository_that_cannot_be_read_falls_back_to_the_url(): void
     {
         // GitHub answers 404 for a private repository as readily as for a

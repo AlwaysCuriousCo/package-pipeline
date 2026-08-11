@@ -151,6 +151,137 @@ class PackageSyncTest extends TestCase
         $this->assertSame('acme/widgets-placeholder', $package->name);
     }
 
+    /**
+     * The name is read out of a file the repository's owner writes, and
+     * nothing puts it through Composer on the way here — so "Composer
+     * validated it already" was never true. Adopted unchecked it went straight
+     * into the archive path, and a name beginning `../` put the zip outside
+     * the prefix archives:clean sweeps and inside the one mirror:prune does.
+     */
+    public function test_a_declared_name_that_is_not_a_composer_name_fails_the_sync(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => Http::response([
+                'name' => '../mirror/9/evil/pkg',
+                'type' => 'library',
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+
+        try {
+            app(PackageSynchronizer::class)->sync($package);
+            $this->fail('A name outside the Composer grammar should have failed the sync.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('not a Composer package name', $exception->getMessage());
+        }
+
+        $package->refresh();
+
+        $this->assertStringContainsString('not a Composer package name', (string) $package->sync_error);
+        $this->assertSame('acme/widgets-placeholder', $package->name);
+
+        // Nothing was written anywhere on the disk, least of all beside the
+        // mirror cache.
+        $this->assertSame([], Storage::disk(config('filesystems.dists'))->allFiles());
+    }
+
+    /**
+     * A first sync whose default branch carries no composer.json still learns
+     * the package's real name — from the refs, at finalize. This is the one
+     * case where the name arrives after the imports rather than before them,
+     * and the guard below must not close it.
+     */
+    public function test_a_first_sync_takes_its_name_from_a_ref_when_the_default_branch_has_none(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => fn ($request) => str_contains($request->url(), 'ref=')
+                ? Http::response(['name' => 'acme/widgets', 'type' => 'library'])
+                : Http::response([], 404),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $package->refresh();
+
+        $this->assertSame('acme/widgets', $package->name);
+        $this->assertNull($package->sync_error);
+    }
+
+    /**
+     * A composer.json that starts declaring another name is not a metadata
+     * update: applied silently it would move the package's identity — and
+     * every future dist URL — onto whatever the newest ref claims.
+     */
+    public function test_a_composer_name_changed_upstream_is_reported_rather_than_applied(): void
+    {
+        $name = 'acme/widgets';
+
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => function () use (&$name) {
+                return Http::response(['name' => $name, 'description' => 'Widgets for Acme.', 'type' => 'library']);
+            },
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame('acme/widgets', $package->refresh()->name);
+
+        // A tag pointing at a fork looks exactly like a deliberate rename.
+        $name = 'evil/widgets';
+
+        app(PackageSynchronizer::class)->sync($package, force: true);
+
+        $package->refresh();
+
+        $this->assertSame('acme/widgets', $package->name);
+        $this->assertStringContainsString('evil/widgets', (string) $package->sync_error);
+        $this->assertStringContainsString('left alone', (string) $package->sync_error);
+
+        // Reported, not failed: the versions themselves synced fine.
+        $this->assertNotNull($package->last_synced_at);
+        $this->assertSame('1.1.0', $package->latest_version);
+    }
+
+    /**
+     * The same refusal is what keeps a rename off the (repository_id, name)
+     * unique index, which finalize() used to walk straight into — storing the
+     * resulting SQL error as the package's sync_error.
+     */
+    public function test_a_rename_onto_a_name_the_repository_already_publishes_never_reaches_the_index(): void
+    {
+        $name = 'acme/widgets';
+
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/composer.json*' => function () use (&$name) {
+                return Http::response(['name' => $name, 'type' => 'library']);
+            },
+        ]);
+
+        Package::factory()->create([
+            'name' => 'acme/rival',
+            'repository' => 'https://github.com/acme/rival',
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $name = 'acme/rival';
+
+        app(PackageSynchronizer::class)->sync($package, force: true);
+
+        $package->refresh();
+
+        $this->assertSame('acme/widgets', $package->name);
+        $this->assertStringContainsString('acme/rival', (string) $package->sync_error);
+        $this->assertStringNotContainsString('SQLSTATE', (string) $package->sync_error);
+    }
+
     public function test_an_unchanged_version_missing_its_archive_is_backfilled(): void
     {
         $this->fakeGitHub();
@@ -172,7 +303,15 @@ class PackageSyncTest extends TestCase
         Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
     }
 
-    public function test_an_unchanged_version_whose_archive_file_is_gone_is_rebuilt(): void
+    /**
+     * A row can outlive its file — object storage loss, or a deploy that wiped
+     * archives while the database survived. The sync no longer asks the disk
+     * about every stored version to find that out (one HEAD per version per
+     * sync, hourly, to learn nothing); archives:audit answers it for the whole
+     * registry at once and clears the columns, which is what puts the version
+     * back on the ordinary re-import path.
+     */
+    public function test_an_unchanged_version_whose_archive_file_is_gone_is_rebuilt_after_the_audit(): void
     {
         $this->fakeGitHub();
 
@@ -180,17 +319,53 @@ class PackageSyncTest extends TestCase
 
         app(PackageSynchronizer::class)->sync($package);
 
-        // The columns say stored, but the disk lost the file — object storage
-        // loss, or a deploy that wiped archives while the database survived.
         $version = $package->versions()->where('version', '1.1.0')->sole();
         Storage::disk(config('filesystems.dists'))->delete($version->archive_path);
+
+        // A sync on its own no longer notices, and must not: that is the whole
+        // point of not asking the disk per version.
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame($version->archive_path, $version->fresh()->archive_path);
+
+        // The audit only judges rows settled past its grace window.
+        $this->travelTo(now()->addHours(2));
+
+        $this->artisan('archives:audit')->assertSuccessful();
+
+        $this->assertNull($version->fresh()->archive_path);
 
         app(PackageSynchronizer::class)->sync($package);
 
         $version->refresh();
 
         $this->assertNotNull($version->archive_path);
+        $this->assertSame(sha1('zip-bytes'), $version->shasum);
         Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+    }
+
+    /**
+     * A provider with no date for a commit has answered; the row is complete
+     * without one. Treated as unfinished it was re-imported — composer.json,
+     * commit and full zipball — on every sync for the rest of its life.
+     */
+    public function test_a_version_the_provider_has_no_date_for_is_not_reimported_forever(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/commits/*' => Http::response([], 404),
+        ]);
+
+        $package = $this->makePackage();
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $requestsAfterFirstSync = count(Http::recorded());
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        // Two ref listings and nothing else, exactly as for a dated version.
+        $this->assertSame($requestsAfterFirstSync + 2, count(Http::recorded()));
+        $this->assertSame(4, $package->versions()->count());
     }
 
     public function test_a_zipball_that_is_not_a_zip_fails_the_sync(): void

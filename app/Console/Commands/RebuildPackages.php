@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Exceptions\SyncInProgress;
+use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Services\RebuildPackage;
 use Illuminate\Console\Command;
@@ -39,10 +41,16 @@ class RebuildPackages extends Command
         }
 
         $failures = [];
+        $skipped = [];
 
-        $this->withProgressBar($packages, function (Package $package) use ($rebuild, &$failures): void {
+        $this->withProgressBar($packages, function (Package $package) use ($rebuild, &$failures, &$skipped): void {
             try {
-                $rebuild->rebuild($package);
+                // A rebuild prunes and re-imports every version, so running it
+                // over a sync already in flight is the one thing the queued
+                // path goes out of its way to prevent.
+                SyncPackageJob::runExclusively($package, fn () => $rebuild->rebuild($package));
+            } catch (SyncInProgress $exception) {
+                $skipped[$package->name] = $exception->getMessage();
             } catch (Throwable $exception) {
                 $failures[$package->name] = $exception->getMessage();
             }
@@ -54,13 +62,26 @@ class RebuildPackages extends Command
             $this->components->twoColumnDetail($name, "failed: {$reason}");
         }
 
+        // Named apart from the failures because the remedy is different: the
+        // package is fine, and running the command again once the sync lands
+        // rebuilds it.
+        foreach ($skipped as $name => $reason) {
+            $this->components->twoColumnDetail($name, "not rebuilt: {$reason}");
+        }
+
+        $rebuilt = $packages->count() - count($failures) - count($skipped);
+
         $this->components->info(sprintf(
-            'Rebuilt %d package%s%s.',
-            $packages->count() - count($failures),
-            $packages->count() - count($failures) === 1 ? '' : 's',
+            'Rebuilt %d package%s%s%s.',
+            $rebuilt,
+            $rebuilt === 1 ? '' : 's',
             $failures === [] ? '' : sprintf(', %d failed', count($failures)),
+            $skipped === [] ? '' : sprintf(', %d skipped', count($skipped)),
         ));
 
-        return $failures === [] ? self::SUCCESS : self::FAILURE;
+        // A rebuild that stood aside is not a rebuild: the sync it stood aside
+        // for re-imports only what moved, which is exactly what a rebuild is
+        // for not trusting.
+        return $failures === [] && $skipped === [] ? self::SUCCESS : self::FAILURE;
     }
 }

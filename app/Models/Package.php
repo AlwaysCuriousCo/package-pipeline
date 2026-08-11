@@ -4,10 +4,15 @@ namespace App\Models;
 
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
+use App\Exceptions\VendorReserved;
+use App\Models\Concerns\LogsAuditableChanges;
+use App\Notifications\PackageAbandoned;
+use App\Services\AdminNotifier;
 use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubClient;
 use App\Services\GitHub\WebhookRegistrar;
 use App\Services\GitLab\GitLabClient;
+use App\Services\PackageSynchronizer;
 use App\Sources\RepositoryClient;
 use App\Sources\StubClient;
 use Database\Factories\PackageFactory;
@@ -23,22 +28,48 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges;
 
     /**
      * The column default alone would leave a freshly created package holding
      * null in memory until it is read back, and the webhook is set up in that
      * window — so the default is stated here as well.
      *
+     * `abandoned` is here for the same reason with a different symptom: the
+     * table's badge reads it off the record it just created, and the audit
+     * log filed a spurious "abandoned: null → false" on the package's next
+     * save, when the null in memory finally met the column's default.
+     *
      * @var array<string, mixed>
      */
     protected $attributes = [
         'webhook_enabled' => true,
+        'abandoned' => false,
+        // The column's default, restated for the same reason: a package built
+        // in memory is asked where in its repository it lives — by the wizard
+        // reading a composer.json, by the client factories — before it has
+        // ever been read back from the database.
+        'subdirectory' => '',
     ];
+
+    /**
+     * Publishing decisions, and who the package authenticates as. Sync
+     * bookkeeping is left out on purpose: it changes hourly, is written by a
+     * worker rather than a person, and would bury these.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return [
+            'name', 'repository', 'subdirectory', 'repository_id', 'source_id', 'type',
+            'abandoned', 'replacement_package', 'webhook_enabled',
+        ];
+    }
 
     /**
      * @return array<string, string>
@@ -49,9 +80,27 @@ class Package extends Model
             'token' => 'encrypted',
             'webhook_secret' => 'encrypted',
             'webhook_enabled' => 'boolean',
+            'abandoned' => 'boolean',
             'last_synced_at' => 'datetime',
             'webhook_received_at' => 'datetime',
         ];
+    }
+
+    /**
+     * How Composer wants this package's abandonment stated: a replacement name
+     * when there is one, a bare `true` when there is not, and nothing at all
+     * while the package is still supported.
+     *
+     * Composer reads this per version rather than per package, so it is
+     * rendered into every version object /p2 serves.
+     */
+    public function abandonment(): string|bool|null
+    {
+        if (! $this->abandoned) {
+            return null;
+        }
+
+        return filled($this->replacement_package) ? (string) $this->replacement_package : true;
     }
 
     protected static function booted(): void
@@ -62,7 +111,49 @@ class Package extends Model
             // registry root.
             $package->repository_id ??= Repository::default()->id;
 
+            // Before every check below, so all of them see the one spelling
+            // this package will actually be served under.
+            $package->normalizeName();
+
+            // Likewise the one spelling of the subdirectory, since it is half
+            // of the (repository_id, repository, subdirectory) unique index:
+            // "packages/foo", "/packages/foo/" and "packages//foo" are the
+            // same place, and stored as written they would be three packages
+            // publishing the same tree from the same repository.
+            $package->normalizeSubdirectory();
+
+            // After the repository is settled, because which repository the
+            // package lands in is half of the question this asks.
+            $package->guardReservedVendor();
+
             $package->linkSource();
+
+            // Derived after the source is linked, not before: the parse is
+            // provider-dependent, and the source decides the provider. Written
+            // on every save rather than only when the URL is dirty, so a
+            // package that gains (or loses) a source later has its path
+            // re-derived under the provider that now applies.
+            $package->repository_path = $package->normalizedRepositoryPath();
+        });
+
+        // Announced from `saved` rather than from the panel action that usually
+        // raises the flag, because it is not the only one: the API, a console
+        // edit and a future importer all set the same column, and an
+        // abandonment consumers are being told about is worth saying once
+        // wherever it came from.
+        //
+        // `wasChanged` and not `isDirty`, and only in the false → true
+        // direction: the flag is re-saved unchanged on every hourly sync, and
+        // un-abandoning a package is good news nobody needs paging for.
+        //
+        // An insert leaves `wasChanged` empty, so a package created already
+        // abandoned announces nothing — which is right twice over. It told
+        // consumers nothing different to begin with, and a bulk import of dead
+        // packages would otherwise page everyone once per row.
+        static::saved(function (self $package): void {
+            if ($package->wasChanged('abandoned') && $package->abandoned) {
+                app(AdminNotifier::class)->send(new PackageAbandoned($package));
+            }
         });
 
         // A repository hook left behind on GitHub would keep posting to a URL
@@ -72,11 +163,49 @@ class Package extends Model
     }
 
     /**
+     * Write columns that record what happened *to* this package rather than
+     * what it publishes, leaving its timestamp where it was.
+     *
+     * `packages.updated_at` has two jobs and they pull against each other. It
+     * is this row's history, and it is the fingerprint every `/p2` response's
+     * Last-Modified and ETag — and so the rendered payload cache's key — is cut
+     * from. The resolution is that only what this registry *publishes* moves
+     * it: content changes are loud, bookkeeping is quiet.
+     *
+     * Bookkeeping is otherwise the loudest writer in the app. The hourly sync
+     * stamps `last_synced_at` on every package whether or not a single ref
+     * moved, so left alone it moves every ETag in the registry on the hour —
+     * capping every 304 and every cached payload at one hour, and stranding a
+     * superseded cache entry per package per hour in a store that only evicts
+     * on read.
+     *
+     * Whatever moves the version rows already moves this timestamp on its own
+     * (see PackageVersion::touchPackage), so nothing that a consumer could
+     * observe is lost by keeping these quiet.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    public function recordBookkeeping(array $attributes): void
+    {
+        self::withoutTimestamps(fn () => $this->forceFill($attributes)->save());
+    }
+
+    /**
      * @return HasMany<PackageVersion, $this>
      */
     public function versions(): HasMany
     {
         return $this->hasMany(PackageVersion::class);
+    }
+
+    /**
+     * Known vulnerabilities in this package, served to `composer audit`.
+     *
+     * @return HasMany<PackageAdvisory, $this>
+     */
+    public function advisories(): HasMany
+    {
+        return $this->hasMany(PackageAdvisory::class);
     }
 
     /**
@@ -136,11 +265,22 @@ class Package extends Model
 
     /**
      * Narrow to the packages a panel user may see: everything for a user
-     * holding Unscoped:Package, otherwise public repositories plus their
-     * explicit package and repository grants.
+     * holding Unscoped:Package, otherwise public repositories plus every
+     * package and repository grant they hold — their own, and their teams'.
      *
-     * Applied by the package table, the dashboard widgets, and — through
-     * visibleTo() — the user's own personal access tokens.
+     * Applied by the package table, the dashboard widgets, the licence report
+     * and the SBOM export, and — through visibleTo() — the user's own personal
+     * access tokens. It is the single place all of that is decided, which is
+     * what makes it the one method here where a mistake widens access
+     * everywhere at once and shows up nowhere.
+     *
+     * Three branches, exactly as before teams existed. Team grants did not
+     * become two more `orWhereIn` clauses on this query: they were folded into
+     * the two grant subqueries themselves, because this runs once per Composer
+     * metadata request and once per dist download, and the shape of it is a
+     * property of every install's hot path.
+     *
+     * @see User::packageGrants()
      *
      * @param  Builder<self>  $query
      * @return Builder<self>
@@ -153,8 +293,8 @@ class Package extends Model
 
         return $query->where(function (Builder $query) use ($user): void {
             $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true))
-                ->orWhereIn('packages.id', $user->packages()->select('packages.id'))
-                ->orWhereIn('packages.repository_id', $user->repositories()->select('repositories.id'));
+                ->orWhereIn('packages.id', $user->packageGrants())
+                ->orWhereIn('packages.repository_id', $user->repositoryGrants());
         });
     }
 
@@ -187,6 +327,192 @@ class Package extends Model
             && ! $batch->finished()
             && ! $batch->cancelled()
             && $batch->pendingJobs > $batch->failedJobs;
+    }
+
+    /**
+     * Fold the name down to the one spelling Composer will ever ask for.
+     *
+     * A Composer package name is lowercase — the grammar in composer.json's own
+     * schema admits no other case, and every client lowercases a name before
+     * requiring it. So a name stored as `Acme/Internal` is not a stylistic
+     * choice this registry should preserve; it is a name that cannot be
+     * fetched. `/p2` and `/dist` look a package up by an equality on the
+     * column, and on SQLite or PostgreSQL — where that equality is
+     * case-sensitive — such a package is unserveable through its own metadata
+     * endpoint while looking perfectly healthy in the panel. MySQL's default
+     * collation hides the whole thing, which is worse: the bug then only exists
+     * on the two engines an operator is most likely to deploy on.
+     *
+     * The rest of the app already assumed this. The API lowercases what it is
+     * given, the upload endpoint lowercases the URL it was addressed to, and
+     * the mirror's dependency-confusion guard has to compare on `lower(name)`
+     * precisely because the sync path did not. This is where that assumption is
+     * made true, once, for every path that decides a name.
+     *
+     * Only when the name is actually moving, which is the same condition the
+     * reservation guard below applies and for a related reason. A registry
+     * migrated from before this existed may still hold two rows whose names
+     * differ only in case — the unique index is `(repository_id, name)`, so on
+     * a case-sensitive engine both fit. Normalizing on *every* save would have
+     * an unrelated write (a sync stamping `last_synced_at`, a webhook delivery
+     * stamping `webhook_received_at`) collide with the sibling row and fail,
+     * turning a dormant data problem into an hourly one. Left alone, such a row
+     * is exactly as broken as it was, and hasUnserveableName() below is what
+     * keeps a human looking at it.
+     */
+    public function normalizeName(): void
+    {
+        if ($this->isDirty('name')) {
+            $this->name = mb_strtolower((string) $this->name);
+        }
+    }
+
+    /**
+     * Whether this package's own name is one Composer will never ask for.
+     *
+     * True only for a row the normalization above could not reach: the
+     * migration that folded every stored name to lowercase leaves behind
+     * exactly those whose lowercase spelling another package in the same
+     * Composer repository already publishes, because renaming one would collide
+     * on the unique index and deleting either would unpublish somebody's
+     * versions. Such a row goes on looking healthy in the panel while `/p2` and
+     * `/dist` answer 404 for it, and it stays that way until a person picks
+     * which of the pair to keep.
+     *
+     * A property of the row rather than of any sync, which is the point of
+     * asking it here: PackageSynchronizer re-asserts the notice on every run
+     * off this, so nothing clears the flag except fixing the name.
+     *
+     * @see PackageSynchronizer::syncError()
+     */
+    public function hasUnserveableName(): bool
+    {
+        return $this->name !== mb_strtolower((string) $this->name);
+    }
+
+    /**
+     * What to tell an admin about such a name.
+     *
+     * Shared with the migration that first finds these, so the panel shows one
+     * explanation of the row rather than the migration's until the next sync and
+     * a different one after it. Deliberately does not assert the collision it
+     * almost certainly is: a plain rename is the fix whenever there is no
+     * sibling, and being told to go looking for one that is not there is worse
+     * than being told to try.
+     */
+    public static function unserveableNameNotice(string $name): string
+    {
+        $normalized = mb_strtolower($name);
+
+        return "This package is named \"{$name}\", but Composer only ever asks for \"{$normalized}\" — so it "
+            .'cannot be fetched from /p2 or /dist. Rename it here to fix that, unless another package in the '
+            .'same Composer repository already publishes the lowercase name, in which case delete whichever '
+            .'of the two is obsolete.';
+    }
+
+    /**
+     * Fold the subdirectory down to a bare relative path — no leading or
+     * trailing slashes, no empty segments — and refuse one that climbs out of
+     * the repository.
+     *
+     * The value is interpolated into provider API paths and matched against
+     * archive entry names, so a `..` segment is the one input here that could
+     * make this registry publish a tree the package was never given. The panel
+     * and the API both validate the field with a pattern that admits no such
+     * thing and report it as a field error; this is the backstop for the path
+     * that forgot, and it throws for the same reason guardReservedVendor()
+     * does — quietly rewriting a traversal into something innocuous would hide
+     * the attempt rather than stop it.
+     *
+     * @throws InvalidArgumentException
+     */
+    public function normalizeSubdirectory(): void
+    {
+        $segments = array_values(array_filter(
+            preg_split('#[\\\\/]+#', trim((string) $this->subdirectory)) ?: [],
+            fn (string $segment): bool => $segment !== '' && $segment !== '.',
+        ));
+
+        throw_if(in_array('..', $segments, true), new InvalidArgumentException(
+            "The subdirectory [{$this->subdirectory}] climbs out of the repository."
+        ));
+
+        $this->subdirectory = implode('/', $segments);
+    }
+
+    /**
+     * A typed subdirectory folded to what would be stored, and to the
+     * repository root when it is something normalizeSubdirectory() refuses.
+     *
+     * The panel builds a package it has not saved and reads a repository's
+     * manifest through it, so the value has to be folded before the save as
+     * well as during it. Answering with the root rather than with what was
+     * typed is the whole point: normalizeSubdirectory() throws *before* it
+     * assigns, so a caller that swallowed the exception would be left holding
+     * the very traversal it refused — and would go on to interpolate it into a
+     * provider API path, with the source's credential attached.
+     *
+     * The refusal proper belongs to the form and the API, which report it on
+     * the field that has to change. This is what the paths downstream of that
+     * refusal are handed, and it is deliberately not the input.
+     */
+    public static function storableSubdirectory(?string $typed): string
+    {
+        $package = new self(['subdirectory' => (string) $typed]);
+
+        try {
+            $package->normalizeSubdirectory();
+        } catch (InvalidArgumentException) {
+            return '';
+        }
+
+        return (string) $package->subdirectory;
+    }
+
+    /**
+     * Whether this package is published from somewhere inside its repository
+     * rather than from the repository root — the monorepo case, which every
+     * path that reads a composer.json or stores an archive has to handle
+     * differently.
+     */
+    public function hasSubdirectory(): bool
+    {
+        return (string) $this->subdirectory !== '';
+    }
+
+    /**
+     * Refuse to introduce a name under a vendor another repository has
+     * reserved — the backstop behind every path that creates or renames a
+     * package: the panel, the API, an artifact upload, `package:add`, and a
+     * sync adopting the name a repository's composer.json declares.
+     *
+     * Each of those checks first and reports the refusal in its own idiom, so
+     * this throwing is the case somebody forgot. It is deliberately a throw
+     * rather than a silent correction: a registry that quietly reassigns which
+     * repository publishes a vendor is the shape of the attack the reservation
+     * exists to stop.
+     *
+     * Only when the name or the repository is actually moving. Reserving a
+     * vendor must not retroactively wedge packages already published under it
+     * elsewhere: their next sync writes `last_synced_at` and nothing else, and
+     * failing that would take a registry down rather than protect one.
+     *
+     * @see ReservedVendor
+     * @see PackageSynchronizer::nameAfterSync() the rename guard this composes with
+     *
+     * @throws VendorReserved
+     */
+    public function guardReservedVendor(): void
+    {
+        if (! $this->isDirty('name') && ! $this->isDirty('repository_id')) {
+            return;
+        }
+
+        $conflict = ReservedVendor::conflictFor((string) $this->name, (int) $this->repository_id);
+
+        if ($conflict instanceof ReservedVendor) {
+            throw new VendorReserved($conflict, (string) $this->name);
+        }
     }
 
     /**
@@ -302,6 +628,24 @@ class Package extends Model
     }
 
     /**
+     * The stored repository reduced to the one spelling every form of it
+     * agrees on — lowercased "owner/repo", or the full namespace path on
+     * GitLab — and null when the column names no repository at all.
+     *
+     * This is what the `repository_path` column holds, maintained by the
+     * saving hook above; the method exists so the column is never derived
+     * anywhere but here.
+     */
+    public function normalizedRepositoryPath(): ?string
+    {
+        try {
+            return mb_strtolower($this->repositoryPath());
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+    }
+
+    /**
      * The host and repository path the stored URL names, each null when the
      * URL does not yield one.
      *
@@ -330,12 +674,19 @@ class Package extends Model
     /**
      * Every package published from a given "owner/repo" path.
      *
-     * The column holds whatever URL was typed — a browser URL, an SSH remote,
-     * a bare path — so candidates are narrowed in SQL and then confirmed
-     * against the parsed path, which is the only form the two agree on.
-     * "acme/widgets" must not answer for "acme/widgets-pro".
+     * Answered from the derived `repository_path` column, which holds exactly
+     * the form this is asked in. The `repository` column holds whatever URL
+     * was typed — a browser URL, an SSH remote, a bare path — so this used to
+     * narrow with a leading-wildcard LIKE and confirm each candidate by
+     * re-parsing it in PHP. A leading wildcard cannot use an index, and this
+     * runs for every push, create and delete an installed GitHub App delivers
+     * — for every repository in the installation, most of which publish
+     * nothing here.
      *
-     * The column is unique as typed, not as parsed, so the same repository
+     * "acme/widgets" must still not answer for "acme/widgets-pro", which the
+     * equality does on its own where the LIKE could not.
+     *
+     * The URL column is unique as typed, not as parsed, so the same repository
      * stored two ways is two packages. A caller resolving a delivery has to
      * reach them all — picking one would sync an arbitrary package and
      * silently starve the rest.
@@ -350,17 +701,30 @@ class Package extends Model
             return new Collection;
         }
 
-        return static::query()
-            ->whereLike('repository', "%{$path}%", caseSensitive: false)
-            ->get()
-            ->filter(function (self $package) use ($path): bool {
-                try {
-                    return mb_strtolower($package->repositoryPath()) === $path;
-                } catch (InvalidArgumentException) {
-                    return false;
-                }
-            })
-            ->values();
+        return self::query()->where('repository_path', $path)->get();
+    }
+
+    /**
+     * The other packages published from this package's repository — the rest
+     * of the monorepo, wherever in the registry they are served from.
+     *
+     * Deliveries are dispatched by repository path rather than by Composer
+     * repository (see allForRepositoryPath), so these are exactly the packages
+     * a push to this one's repository also syncs.
+     *
+     * @return Builder<self>
+     */
+    public function siblings(): Builder
+    {
+        // An unsaved package, or one whose URL names no repository, has no
+        // siblings rather than "every package with a null path".
+        if ($this->repository_path === null || ! $this->exists) {
+            return self::query()->whereRaw('1 = 0');
+        }
+
+        return self::query()
+            ->where('repository_path', $this->repository_path)
+            ->whereKeyNot($this->getKey());
     }
 
     /**
@@ -387,6 +751,16 @@ class Package extends Model
             return WebhookCoverage::Repository;
         }
 
+        // A hook another package already carries on the same repository is
+        // just as concrete, and delivers here just as surely: the controllers
+        // sync every package published from the repository a delivery names,
+        // not only the one the hook was created for. So a monorepo needs one
+        // hook rather than one per package — which matters beyond tidiness,
+        // since GitHub caps a repository at 20 of them.
+        if ($this->coveringSibling() instanceof self) {
+            return WebhookCoverage::Sibling;
+        }
+
         // Confirmed with GitHub rather than assumed from a secret sitting in
         // this app's environment: an app whose webhook was never switched on
         // delivers nothing, and a package told it is covered by one would
@@ -396,6 +770,29 @@ class Package extends Model
         }
 
         return filled($this->webhook_error) ? WebhookCoverage::Failed : WebhookCoverage::None;
+    }
+
+    /**
+     * The sibling package whose repository hook also delivers for this one, or
+     * null when none does.
+     *
+     * The provider is compared rather than trusted from the path alone:
+     * `repository_path` is "owner/repo" with the host discarded, so a package
+     * on github.com/acme/mono and one on gitlab.com/acme/mono share it while
+     * sharing nothing else — and a hook on one delivers nothing for the other.
+     *
+     * Filtered in PHP because the provider is not a column: it comes from the
+     * linked source, falling back to the URL's host. The set being filtered is
+     * the packages on one repository path that carry a hook, which is at most
+     * a handful and usually none.
+     */
+    private function coveringSibling(): ?self
+    {
+        return $this->siblings()
+            ->whereNotNull('webhook_id')
+            ->with('source')
+            ->get()
+            ->first(fn (self $sibling): bool => $sibling->provider() === $this->provider());
     }
 
     /**
@@ -416,15 +813,30 @@ class Package extends Model
      * A guess for the create wizard, used only when the repository's own
      * composer.json cannot be read; the first sync replaces it with the real
      * name. Null when the repository URL names no GitHub repository at all.
+     *
+     * A package in a subdirectory takes its name from that directory rather
+     * than from the repository: "owner/repo" is the monorepo, and every
+     * package in it would otherwise be guessed the same name — which is not
+     * merely unhelpful but unusable, since names are unique per Composer
+     * repository and the second package would be refused.
      */
     public function suggestedName(): ?string
     {
         try {
             // Composer names are lowercase, GitHub paths need not be.
-            return mb_strtolower($this->repositoryPath());
+            $path = mb_strtolower($this->repositoryPath());
         } catch (InvalidArgumentException) {
             return null;
         }
+
+        if (! $this->hasSubdirectory()) {
+            return $path;
+        }
+
+        $vendor = strtok($path, '/');
+        $directory = mb_strtolower(basename((string) $this->subdirectory));
+
+        return $vendor === false ? $path : "{$vendor}/{$directory}";
     }
 
     /**

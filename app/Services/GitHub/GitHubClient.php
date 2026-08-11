@@ -2,8 +2,11 @@
 
 namespace App\Services\GitHub;
 
+use App\Exceptions\RateLimited;
 use App\Models\Package;
 use App\Sources\RepositoryClient;
+use App\Support\HttpTimeouts;
+use App\Support\RefListingCache;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -27,11 +30,15 @@ class GitHubClient implements RepositoryClient
      */
     public const WEBHOOK_EVENTS = ['push', 'create', 'delete'];
 
+    private readonly RefListingCache $listings;
+
     public function __construct(
         private readonly string $repositoryPath,
         private readonly ?string $token,
         private readonly string $apiUrl = 'https://api.github.com',
-    ) {}
+    ) {
+        $this->listings = new RefListingCache("github|{$apiUrl}|{$repositoryPath}");
+    }
 
     /**
      * A client for one package, authenticated with whatever credential the
@@ -72,19 +79,27 @@ class GitHubClient implements RepositoryClient
      * it has ever been synced. Null when the file is missing, the repository
      * is out of reach, or the contents are not valid JSON.
      *
+     * @param  string  $directory  the package's subdirectory, empty for the root
      * @return array<string, mixed>|null
      */
-    public function composerJson(?string $ref = null): ?array
+    public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
+        // The contents endpoint takes the file path in the URL, so the
+        // segments are encoded individually — a path is not one component.
+        $path = implode('/', array_map(rawurlencode(...), array_filter([
+            ...explode('/', $directory),
+            'composer.json',
+        ], fn (string $segment): bool => $segment !== '')));
+
         $response = $this->request()
             ->withHeaders(['Accept' => 'application/vnd.github.raw+json'])
-            ->get("/repos/{$this->repositoryPath}/contents/composer.json", filled($ref) ? ['ref' => $ref] : []);
+            ->get("/repos/{$this->repositoryPath}/contents/{$path}", filled($ref) ? ['ref' => $ref] : []);
 
         if ($response->status() === 404) {
             return null;
         }
 
-        $decoded = json_decode($response->throw()->body(), true);
+        $decoded = json_decode($this->ok($response)->body(), true);
 
         return is_array($decoded) ? $decoded : null;
     }
@@ -104,7 +119,7 @@ class GitHubClient implements RepositoryClient
             return null;
         }
 
-        $date = $response->throw()->json('commit.committer.date');
+        $date = $this->ok($response)->json('commit.committer.date');
 
         return is_string($date) && $date !== '' ? CarbonImmutable::parse($date) : null;
     }
@@ -115,10 +130,13 @@ class GitHubClient implements RepositoryClient
      */
     public function downloadZipball(string $ref, string $destination): void
     {
-        $response = $this->request()
+        $response = $this->ok($this->request()
+            // Unlike every other call here, how long this takes is a property
+            // of the repository, not of GitHub's health; the API budget would
+            // cut a large archive off mid-stream.
+            ->timeout(HttpTimeouts::ARCHIVE)
             ->sink($destination)
-            ->get("/repos/{$this->repositoryPath}/zipball/{$ref}")
-            ->throw();
+            ->get("/repos/{$this->repositoryPath}/zipball/{$ref}"));
 
         // A 200 that is not a zip — a proxy's HTML error page, say — must not
         // be stored and served to Composer as an archive.
@@ -139,7 +157,7 @@ class GitHubClient implements RepositoryClient
      */
     public function createWebhook(string $url, string $secret): int
     {
-        $id = $this->request()
+        $id = $this->ok($this->request()
             ->post("/repos/{$this->repositoryPath}/hooks", [
                 'name' => 'web',
                 'active' => true,
@@ -150,8 +168,7 @@ class GitHubClient implements RepositoryClient
                     'secret' => $secret,
                     'insecure_ssl' => '0',
                 ],
-            ])
-            ->throw()
+            ]))
             ->json('id');
 
         throw_unless(is_int($id), new RuntimeException(
@@ -173,7 +190,7 @@ class GitHubClient implements RepositoryClient
             return;
         }
 
-        $response->throw();
+        $this->ok($response);
     }
 
     /**
@@ -192,23 +209,61 @@ class GitHubClient implements RepositoryClient
                 );
             }
 
-            $response = $this->request()
-                ->get("/repos/{$this->repositoryPath}/{$endpoint}", [
-                    'per_page' => self::PER_PAGE,
-                    'page' => $page,
-                ])
-                ->throw();
+            [$items, $hasNext] = $this->refPage($endpoint, $page);
 
-            $items = $response->json();
-
-            foreach ($items as $item) {
-                $refs[$item['name']] = $item['commit']['sha'];
+            // Merged a key at a time rather than spread: a tag named "2" is
+            // an integer key, and unpacking would renumber it.
+            foreach ($items as $name => $sha) {
+                $refs[$name] = $sha;
             }
 
             $page++;
-        } while ($this->hasNextPage($response, count($items)));
+        } while ($hasNext);
 
         return $refs;
+    }
+
+    /**
+     * One page of refs and whether another follows, asked conditionally: a
+     * repository nobody has pushed to answers 304 with no body, which GitHub
+     * does not count against the primary rate limit at all. That is the usual
+     * answer here — every push and every scheduled sync re-lists refs that
+     * have not moved since the last one.
+     *
+     * @return array{array<string, string>, bool}
+     */
+    private function refPage(string $endpoint, int $page): array
+    {
+        $cached = $this->listings->get($endpoint, $page);
+
+        $response = $this->request()
+            ->when($cached !== null, fn (PendingRequest $request): PendingRequest => $request->withHeaders([
+                'If-None-Match' => $cached['etag'],
+            ]))
+            ->get("/repos/{$this->repositoryPath}/{$endpoint}", [
+                'per_page' => self::PER_PAGE,
+                'page' => $page,
+            ]);
+
+        if ($response->status() === 304 && $cached !== null) {
+            return [$cached['refs'], $cached['next']];
+        }
+
+        $items = $this->ok($response)->json();
+
+        $refs = [];
+
+        foreach ($items as $item) {
+            $refs[$item['name']] = $item['commit']['sha'];
+        }
+
+        $next = $this->hasNextPage($response, count($items));
+
+        if (filled($etag = $response->header('ETag'))) {
+            $this->listings->put($endpoint, $page, $etag, $refs, $next);
+        }
+
+        return [$refs, $next];
     }
 
     /**
@@ -226,9 +281,30 @@ class GitHubClient implements RepositoryClient
         return $itemsOnPage === self::PER_PAGE;
     }
 
+    /**
+     * The response, once it is known not to be GitHub throttling us.
+     *
+     * throw() turns a rate limit and an expired token into the same
+     * RequestException, and the sync then treats them the same way: retry in
+     * a minute, retry in five, fail. A rate limit has to be recognised before
+     * that, because it is the one failure that says when to come back — and
+     * because a secondary limit arrives as a 403, indistinguishable in a
+     * sync_error from bad credentials.
+     */
+    private function ok(Response $response): Response
+    {
+        if ($limited = RateLimited::from($response, 'GitHub')) {
+            throw $limited;
+        }
+
+        return $response->throw();
+    }
+
     private function request(): PendingRequest
     {
         return Http::baseUrl($this->apiUrl)
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28'])
             ->when($this->token, fn (PendingRequest $request) => $request->withToken($this->token))
             ->acceptJson();

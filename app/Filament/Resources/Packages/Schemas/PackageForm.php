@@ -5,7 +5,9 @@ namespace App\Filament\Resources\Packages\Schemas;
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\ReservedVendor;
 use App\Models\Source;
+use Closure;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -30,14 +32,50 @@ class PackageForm
             ->components([
                 self::name(),
                 self::repository(),
+                self::subdirectory(),
                 self::composerRepository(),
                 self::source(),
                 self::token(),
                 self::latestVersion(),
                 self::type(),
                 self::webhookEnabled(),
+                self::abandoned(),
+                self::replacementPackage(),
                 self::description(),
             ]);
+    }
+
+    /**
+     * Marks the package as one nobody should be depending on any more.
+     *
+     * Composer carries this through to the consumer: `composer audit` reports
+     * abandoned packages, and since 2.9 a project can configure that to fail
+     * the build outright. It is the only way this registry can tell a
+     * developer to stop reaching for something without deleting it out from
+     * under the projects already using it.
+     */
+    public static function abandoned(): Toggle
+    {
+        return Toggle::make('abandoned')
+            ->label('Abandoned')
+            ->live()
+            ->helperText('Warns anyone who installs or audits this package that it is no longer maintained. Existing versions keep resolving.');
+    }
+
+    /**
+     * What to use instead, which Composer names in the warning it prints.
+     */
+    public static function replacementPackage(): TextInput
+    {
+        return TextInput::make('replacement_package')
+            ->label('Use instead')
+            ->maxLength(255)
+            ->visible(fn (Get $get): bool => (bool) $get('abandoned'))
+            ->placeholder('vendor/package')
+            // Deliberately unvalidated against the registry's own packages: the
+            // replacement is often somewhere else entirely — a public package
+            // on packagist.org, or one not imported here yet.
+            ->helperText('Optional. Any package name, including one this registry does not serve. Left empty, consumers are told only that the package is abandoned.');
     }
 
     /**
@@ -94,12 +132,36 @@ class PackageForm
         return TextInput::make('name')
             ->required()
             ->maxLength(255)
+            // Folded as the field is left rather than on save, so the uniqueness
+            // and reservation rules below are decided on the name that will
+            // actually be stored — Package's saving hook lowercases it either
+            // way, and a rule that judged the typed spelling would clear a
+            // collision the insert then hits as a bare unique-index error.
+            // Visible for the same reason a normalization should be: the admin
+            // sees the name the registry will publish, not the one they typed.
+            ->live(onBlur: true)
+            ->afterStateUpdated(fn (TextInput $component, ?string $state) => $component->state(mb_strtolower((string) $state)))
             ->unique(
                 ignoreRecord: true,
                 modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
             )
+            // Package's own saving hook refuses this too, but by throwing —
+            // which from a form is a 500 where the admin wanted a field error
+            // naming the repository that owns the vendor.
+            ->rules([
+                fn (Get $get): Closure => function (string $attribute, mixed $value, Closure $fail) use ($get): void {
+                    $conflict = ReservedVendor::conflictFor(
+                        (string) $value,
+                        (int) ($get('repository_id') ?? Repository::default()->id),
+                    );
+
+                    if ($conflict instanceof ReservedVendor) {
+                        $fail($conflict->refusal((string) $value));
+                    }
+                },
+            ])
             ->placeholder('vendor/package')
-            ->helperText('Overwritten by the composer.json name on sync.');
+            ->helperText('Taken from the composer.json on the first sync. A name the repository changes later is reported, never applied — accept it by editing it here.');
     }
 
     public static function repository(): TextInput
@@ -112,14 +174,71 @@ class PackageForm
             ->required(fn (?Package $record): bool => $record === null || filled($record->repository))
             ->url()
             ->maxLength(255)
+            // One URL may now be claimed several times over — once per
+            // subdirectory — so the rule matches the widened unique index
+            // rather than the repository alone. Normalized the same way the
+            // model will normalize it, or "packages/foo" and "/packages/foo/"
+            // would clear this rule and collide in the index.
             ->unique(
                 ignoreRecord: true,
-                modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
+                modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get)
+                    ->where('subdirectory', self::normalizedSubdirectory($get)),
             )
+            ->validationMessages([
+                'unique' => 'This Composer repository already serves that subdirectory of that repository URL.',
+            ])
             ->placeholder('https://github.com/vendor/package')
             ->helperText(fn (?Package $record): ?string => $record !== null && blank($record->repository)
                 ? 'This package is published by artifact upload; setting a repository URL turns syncing on.'
                 : null);
+    }
+
+    /**
+     * Where in the repository this package lives — the monorepo field.
+     *
+     * Empty is the repository root, which is what every package was before
+     * subdirectories existed and what almost all of them still are, so the
+     * field is optional and unobtrusive rather than a decision to be made.
+     */
+    public static function subdirectory(): TextInput
+    {
+        return TextInput::make('subdirectory')
+            ->label('Subdirectory')
+            // Drives the URL rule above, which is unique per subdirectory.
+            ->live(onBlur: true)
+            ->maxLength(255)
+            // A bare relative path. Package::normalizeSubdirectory() refuses a
+            // `..` segment by throwing, which from a form would be a 500 where
+            // the admin wanted to be told what is wrong with the field.
+            // Wrapped in a closure Filament evaluates, exactly as the reserved
+            // vendor rule on name() is: an unwrapped one is taken for something
+            // to inject the schema's own arguments into, not for the rule.
+            ->rules([
+                fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                    $segments = preg_split('#[\\\\/]+#', trim((string) $value)) ?: [];
+
+                    if (in_array('..', $segments, true)) {
+                        $fail('A subdirectory cannot climb out of the repository with "..".');
+                    }
+                },
+            ])
+            // Never null: the column is part of a unique index, and no engine
+            // considers two nulls equal — an emptied field has to arrive as
+            // the empty string the "repository root" case is stored as.
+            ->dehydrateStateUsing(fn (?string $state): string => (string) $state)
+            ->placeholder('Empty — the repository root')
+            ->helperText('For a repository that publishes several packages: the directory holding this one\'s composer.json. Its dist archives carry that directory alone, re-rooted, so consumers install it exactly as they would a repository of its own.');
+    }
+
+    /**
+     * The subdirectory as Package will store it, so the URL's unique rule asks
+     * about the value that will actually meet the index.
+     */
+    private static function normalizedSubdirectory(Get $get): string
+    {
+        // A traversal is refused by the field's own rule; here it only has to
+        // not blow up while another field is being validated.
+        return Package::storableSubdirectory($get('subdirectory'));
     }
 
     public static function source(): Select
@@ -135,7 +254,7 @@ class PackageForm
     public static function token(): TextInput
     {
         return TextInput::make('token')
-            ->label('GitHub token')
+            ->label('Access token')
             ->password()
             ->revealable()
             ->maxLength(255)
@@ -143,8 +262,11 @@ class PackageForm
             // a blank input keeps it, a new value replaces it.
             ->afterStateHydrated(fn (TextInput $component) => $component->state(null))
             ->dehydrated(fn (?string $state): bool => filled($state))
-            ->placeholder(fn (?Package $record): string => $record?->token ? 'Token saved — enter a new one to replace it' : 'ghp_...')
-            ->helperText('Only used for repositories no source covers — a connected source takes precedence over this. Falls back to GITHUB_TOKEN when both are empty.');
+            ->placeholder(fn (?Package $record): string => $record?->token ? 'Token saved — enter a new one to replace it' : 'ghp_… or glpat-…')
+            // Not GitHub-only: the token is handed to whichever provider the
+            // repository URL resolves to. Only the environment fallback is
+            // GitHub's, which is why it is named as the narrower case.
+            ->helperText('A credential for whichever provider hosts the repository. Only used for repositories no source covers — a connected source takes precedence over this. GitHub repositories fall back to GITHUB_TOKEN when both are empty.');
     }
 
     public static function latestVersion(): TextInput

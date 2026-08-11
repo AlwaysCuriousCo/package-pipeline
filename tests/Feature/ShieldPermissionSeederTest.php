@@ -7,6 +7,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
@@ -52,9 +53,9 @@ class ShieldPermissionSeederTest extends TestCase
 
         $user = User::where('email', 'admin@example.com')->sole();
 
-        $this->assertSame(
-            Permission::count(),
-            $user->roles()->sole()->permissions()->count(),
-        );
+        /** @var Role $role */
+        $role = $user->roles()->sole();
+
+        $this->assertSame(Permission::count(), $role->permissions()->count());
     }
 }

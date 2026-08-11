@@ -2,7 +2,9 @@
 
 namespace App\Filament\Widgets;
 
+use App\Models\Package;
 use App\Models\PackageVersion;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Filament\Widgets\Widget;
@@ -42,6 +44,15 @@ class VersionReleaseHeatmap extends Widget
     protected const MONTH_LABEL_GAP = 3;
 
     /**
+     * How long one computed year of releases stands for, matching the two
+     * widgets beside it. This one does not poll, so the window is not covering
+     * a refresh loop — it is covering the dashboard being opened at all: a
+     * reload, a second tab and every other operator looking at the same moment
+     * otherwise each read a year of release rows back out of the database.
+     */
+    private const CACHE_SECONDS = 60;
+
+    /**
      * @return array<string, mixed>
      */
     protected function getViewData(): array
@@ -49,8 +60,9 @@ class VersionReleaseHeatmap extends Widget
         $end = CarbonImmutable::now()->endOfDay();
         $start = $end->subYear()->addDay()->startOfDay();
 
-        $versions = $this->releasedDuring($start, $end);
-        $days = $this->groupByDay($versions);
+        $released = $this->releases($start, $end);
+
+        $days = collect($released['days']);
 
         // The ramp is scaled against the busiest day so it always spans its full
         // range, however quiet or noisy the year turns out to be.
@@ -64,12 +76,44 @@ class VersionReleaseHeatmap extends Widget
             'weekdays' => [1 => 'Mon', 3 => 'Wed', 5 => 'Fri'],
             'levels' => range(0, self::LEVELS),
             'summary' => $this->summary(
-                total: $versions->count(),
-                packages: $versions->pluck('package_id')->unique()->count(),
+                total: $released['total'],
+                packages: $released['packages'],
                 activeDays: $days->count(),
                 busiest: $busiest,
             ),
         ];
+    }
+
+    /**
+     * Everything the grid and its summary are drawn from, for one window and
+     * one viewer.
+     *
+     * Cached as one entry rather than three, because the three are tallies of
+     * a single read and caching only the query would leave the summary asking
+     * for the rows again. Keyed by the viewer, since the window below is cut
+     * by that viewer's grants and two operators' years are not interchangeable
+     * — and by the window's last day, so tomorrow's dashboard cannot be served
+     * yesterday's twelve months.
+     *
+     * @return array{days: array<string, array{count: int, releases: array<int, string>}>, total: int, packages: int}
+     */
+    protected function releases(CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $key = implode(':', [
+            'widget:version-release-heatmap',
+            $end->toDateString(),
+            'user:'.(auth()->user()?->getAuthIdentifier() ?? 'guest'),
+        ]);
+
+        return cache()->remember($key, self::CACHE_SECONDS, function () use ($start, $end): array {
+            $versions = $this->releasedDuring($start, $end);
+
+            return [
+                'days' => $this->groupByDay($versions)->all(),
+                'total' => $versions->count(),
+                'packages' => $versions->pluck('package_id')->unique()->count(),
+            ];
+        });
     }
 
     /**
@@ -85,18 +129,24 @@ class VersionReleaseHeatmap extends Widget
      */
     protected function releasedDuring(CarbonImmutable $start, CarbonImmutable $end): Collection
     {
-        return PackageVersion::query()
+        $versions = PackageVersion::query()
             ->where('is_dev', false)
-            ->whereBetween('released_at', [$start, $end])
-            // A user with row-level scoping sees their packages' history, not
-            // the whole registry's.
-            ->when(
-                auth()->user(),
-                fn ($query, $user) => $query->whereHas(
-                    'package',
-                    fn ($packages) => $packages->visibleToUser($user),
-                ),
-            )
+            ->whereBetween('released_at', [$start, $end]);
+
+        $user = auth()->user();
+
+        // A user with row-level scoping sees their packages' history, not the
+        // whole registry's. visibleToUser() is a Package scope, so it runs as
+        // a subquery over packages rather than inside whereHas(), which would
+        // hand it an untyped relation builder instead.
+        if ($user instanceof User) {
+            $versions->whereIn(
+                'package_id',
+                Package::query()->visibleToUser($user)->select('packages.id'),
+            );
+        }
+
+        return $versions
             ->with('package:id,name')
             ->get(['id', 'package_id', 'version', 'released_at']);
     }
@@ -104,9 +154,13 @@ class VersionReleaseHeatmap extends Widget
     /**
      * Bucket the releases by calendar day, keyed by `Y-m-d`.
      *
-     * Grouped in PHP rather than SQL because date truncation has no portable
-     * spelling across SQLite, MySQL and Postgres, and a single year of releases
-     * is a small enough set to sort in memory.
+     * Grouped in PHP rather than SQL, unlike the downloads chart next to it,
+     * because a `GROUP BY` would return counts and every cell here also needs
+     * the releases themselves: the tooltip names them. The rows have to be
+     * read either way, and the set is bounded by how often the tracked
+     * packages tag a release rather than by how often anyone downloads one.
+     *
+     * The widget also does not poll, so this runs once per page view.
      *
      * @param  Collection<int, PackageVersion>  $versions
      * @return Collection<string, array{count: int, releases: array<int, string>}>
@@ -119,7 +173,7 @@ class VersionReleaseHeatmap extends Widget
                 'count' => $released->count(),
                 'releases' => $released
                     ->map(fn (PackageVersion $version): string => trim(
-                        ($version->package?->name ?? 'Unknown package').' '.$version->version
+                        ($version->package->name ?? 'Unknown package').' '.$version->version
                     ))
                     ->sort()
                     ->values()

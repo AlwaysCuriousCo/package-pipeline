@@ -85,6 +85,29 @@ class SourceTest extends TestCase
         $this->assertStringNotContainsString('ghs_installation', $cached);
     }
 
+    /**
+     * The cache outlives an APP_KEY rotation, and a token encrypted under the
+     * old key cannot be read under the new one. Left to throw, every
+     * app-authenticated sync failed with an opaque decrypt error for the best
+     * part of an hour — over a credential that costs one request to replace.
+     */
+    public function test_a_cached_token_that_cannot_be_decrypted_is_reminted(): void
+    {
+        $this->fakeInstallationToken();
+
+        Cache::put('github-app.installation-token.42', 'not-a-payload-this-key-can-read', now()->addHour());
+
+        $source = Source::factory()->create(['installation_id' => 42]);
+
+        $this->assertSame('ghs_installation', $source->accessToken());
+
+        // And the replacement is cached, so the failure costs one mint rather
+        // than one per call for the rest of the entry's life.
+        Http::assertSentCount(1);
+        $this->assertSame('ghs_installation', $source->accessToken());
+        Http::assertSentCount(1);
+    }
+
     public function test_the_app_jwt_is_signed_with_the_configured_key(): void
     {
         $this->fakeInstallationToken();

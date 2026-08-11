@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Auth\SsoProviderFactory;
+use App\Enums\AuthProvider;
 use App\Models\AuthenticationSource;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -36,10 +37,14 @@ class SsoTest extends TestCase
     /**
      * Swap the provider factory for one that returns this identity, skipping
      * the real OAuth round trip.
+     *
+     * @param  array<string, mixed>  $claims  Raw provider claims, as an OIDC userinfo response carries them.
      */
-    private function returningIdentity(string $id, ?string $email, ?string $name = null): void
+    private function returningIdentity(string $id, ?string $email, ?string $name = null, array $claims = []): void
     {
-        $identity = (new SocialiteUser)->map(['id' => $id, 'email' => $email, 'name' => $name]);
+        $identity = (new SocialiteUser)
+            ->setRaw($claims)
+            ->map(['id' => $id, 'email' => $email, 'name' => $name]);
 
         $this->mock(SsoProviderFactory::class)
             ->shouldReceive('provider')
@@ -119,6 +124,100 @@ class SsoTest extends TestCase
         $this->assertSame('ext-7', $user->external_id);
     }
 
+    public function test_a_verified_oidc_identity_adopts_an_existing_account(): void
+    {
+        $this->source->update(['provider' => AuthProvider::Oidc]);
+
+        $user = User::factory()->create(['email' => 'dev@example.com']);
+        $user->assignRole('developer');
+
+        $this->returningIdentity('ext-7', 'dev@example.com', claims: ['email_verified' => true]);
+
+        $this->get(route('sso.callback', $this->source))->assertRedirect('/admin');
+
+        $this->assertAuthenticatedAs($user);
+        $this->assertSame('ext-7', $user->refresh()->external_id);
+    }
+
+    public function test_the_email_verified_claim_is_honoured_as_a_string(): void
+    {
+        // Not every issuer sends the claim as a JSON boolean.
+        $this->source->update(['provider' => AuthProvider::Oidc]);
+
+        $user = User::factory()->create(['email' => 'dev@example.com']);
+        $user->assignRole('developer');
+
+        $this->returningIdentity('ext-7', 'dev@example.com', claims: ['email_verified' => 'true']);
+
+        $this->get(route('sso.callback', $this->source))->assertRedirect('/admin');
+
+        $this->assertAuthenticatedAs($user);
+        $this->assertSame('ext-7', $user->refresh()->external_id);
+    }
+
+    public function test_an_unverified_oidc_identity_cannot_adopt_an_existing_account(): void
+    {
+        $this->source->update(['provider' => AuthProvider::Oidc]);
+
+        $admin = User::factory()->create(['email' => 'admin@example.com']);
+        $admin->assignRole('developer');
+
+        // An issuer an admin pointed the source at can assert any address it
+        // likes; without the claim it has vouched for nothing.
+        foreach ([[], ['email_verified' => false], ['email_verified' => 'false']] as $claims) {
+            $this->returningIdentity('ext-7', 'admin@example.com', claims: $claims);
+
+            $this->get(route('sso.callback', $this->source))
+                ->assertRedirect(route('filament.admin.auth.login'))
+                ->assertSessionHas('sso_error');
+
+            $this->assertGuest();
+            $this->assertNull($admin->refresh()->external_id);
+        }
+    }
+
+    public function test_an_address_outside_the_allowlist_cannot_adopt_an_existing_account(): void
+    {
+        $this->source->update(['allowed_domains' => ['example.com']]);
+
+        $admin = User::factory()->create(['email' => 'admin@elsewhere.io']);
+        $admin->assignRole('developer');
+
+        $this->returningIdentity('ext-7', 'admin@elsewhere.io');
+
+        $this->get(route('sso.callback', $this->source))
+            ->assertRedirect(route('filament.admin.auth.login'))
+            ->assertSessionHas('sso_error');
+
+        $this->assertGuest();
+        $this->assertNull($admin->refresh()->external_id);
+    }
+
+    public function test_an_account_bound_to_another_source_is_refused_rather_than_rebound(): void
+    {
+        $other = AuthenticationSource::factory()->create();
+
+        $user = User::factory()->create(['email' => 'dev@example.com']);
+        $user->assignRole('developer');
+        $user->forceFill([
+            'authentication_source_id' => $other->id,
+            'external_id' => 'other-1',
+        ])->save();
+
+        $this->returningIdentity('ext-7', 'dev@example.com');
+
+        $this->get(route('sso.callback', $this->source))
+            ->assertRedirect(route('filament.admin.auth.login'))
+            ->assertSessionHas('sso_error');
+
+        $this->assertGuest();
+
+        $user->refresh();
+
+        $this->assertSame($other->id, $user->authentication_source_id);
+        $this->assertSame('other-1', $user->external_id);
+    }
+
     public function test_an_unknown_identity_registers_just_in_time_with_the_default_role(): void
     {
         $this->returningIdentity('ext-9', 'new@example.com', 'New Dev');
@@ -146,6 +245,38 @@ class SsoTest extends TestCase
 
         $this->assertGuest();
         $this->assertDatabaseMissing('users', ['email' => 'stranger@elsewhere.io']);
+    }
+
+    public function test_an_unverified_oidc_identity_cannot_register_an_account(): void
+    {
+        $this->source->update(['provider' => AuthProvider::Oidc, 'allowed_domains' => ['example.com']]);
+
+        // The allowlist says which addresses may become accounts here, which
+        // is only an answer if the issuer is the one asserting the address.
+        foreach ([[], ['email_verified' => false], ['email_verified' => 'false']] as $claims) {
+            $this->returningIdentity('ext-9', 'new@example.com', claims: $claims);
+
+            $this->get(route('sso.callback', $this->source))
+                ->assertRedirect(route('filament.admin.auth.login'))
+                ->assertSessionHas('sso_error');
+
+            $this->assertGuest();
+            $this->assertDatabaseMissing('users', ['email' => 'new@example.com']);
+        }
+    }
+
+    public function test_a_verified_oidc_identity_registers_just_in_time(): void
+    {
+        $this->source->update(['provider' => AuthProvider::Oidc]);
+
+        $this->returningIdentity('ext-9', 'new@example.com', 'New Dev', claims: ['email_verified' => true]);
+
+        $this->get(route('sso.callback', $this->source))->assertRedirect('/admin');
+
+        $user = User::query()->where('email', 'new@example.com')->sole();
+
+        $this->assertAuthenticatedAs($user);
+        $this->assertNotNull($user->email_verified_at);
     }
 
     public function test_registration_can_be_switched_off(): void

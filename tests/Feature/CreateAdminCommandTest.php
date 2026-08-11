@@ -2,10 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Auth\ResetPassword;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Testing\TestResponse;
+use Livewire\Livewire;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -17,6 +22,8 @@ class CreateAdminCommandTest extends TestCase
     /**
      * Run the command the way a deploy hook or a hosting provider's command
      * runner would, and hand back everything it printed.
+     *
+     * @param  array<string, mixed>  $arguments
      */
     private function runNonInteractively(array $arguments = []): string
     {
@@ -34,6 +41,19 @@ class CreateAdminCommandTest extends TestCase
         return $matches[0];
     }
 
+    /**
+     * Follow a printed link the way a browser would: it hands its claim to
+     * the session and redirects to the panel's reset form.
+     *
+     * @return TestResponse<Response>
+     */
+    private function openLink(string $link): TestResponse
+    {
+        $this->get($link)->assertRedirect(route('filament.admin.auth.password-reset.set'));
+
+        return $this->get(route('filament.admin.auth.password-reset.set'));
+    }
+
     public function test_it_creates_an_account_and_prints_a_working_reset_link(): void
     {
         $output = $this->runNonInteractively(['--email' => 'admin@example.com']);
@@ -41,9 +61,40 @@ class CreateAdminCommandTest extends TestCase
         $this->assertDatabaseHas('users', ['email' => 'admin@example.com', 'name' => 'Super Admin']);
         $this->assertDatabaseHas('password_reset_tokens', ['email' => 'admin@example.com']);
 
-        // The link has to actually resolve: it is signed, so a wrong route
-        // name or a panel without password reset enabled would 403 or 404.
-        $this->get($this->linkFrom($output))->assertOk();
+        // The link has to actually resolve, and arrive carrying the claim: a
+        // wrong route name or a panel without password reset enabled would
+        // 404, and a claim that failed to survive the redirect would leave
+        // the form with nothing to reset.
+        $this->openLink($this->linkFrom($output))
+            ->assertOk()
+            ->assertSee('admin@example.com');
+    }
+
+    public function test_the_printed_link_carries_no_address_or_token_in_its_url(): void
+    {
+        // Chrome's Safe Browsing reads `?email=…&token=…` on a page of
+        // password inputs as a credential-harvesting kit and puts a
+        // "Dangerous site" interstitial in front of it, which is fatal for
+        // the one link that gets the first admin in.
+        $link = $this->linkFrom($this->runNonInteractively(['--email' => 'admin@example.com']));
+
+        $this->assertNull(parse_url($link, PHP_URL_QUERY), "The link has a query string: {$link}");
+        $this->assertStringNotContainsStringIgnoringCase('admin@example.com', urldecode($link));
+        $this->assertStringNotContainsString(
+            (string) DB::table('password_reset_tokens')->value('token'),
+            $link,
+        );
+    }
+
+    public function test_a_tampered_link_is_refused(): void
+    {
+        $link = $this->linkFrom($this->runNonInteractively(['--email' => 'admin@example.com']));
+
+        $this->get($link.'A')->assertRedirect(route('filament.admin.auth.login'));
+
+        $this->get(route('filament.admin.auth.password-reset.set'))
+            ->assertOk()
+            ->assertDontSee('admin@example.com');
     }
 
     public function test_it_grants_the_super_admin_role(): void
@@ -54,12 +105,12 @@ class CreateAdminCommandTest extends TestCase
 
         $this->assertTrue($user->hasRole('super_admin'));
 
+        /** @var Role $role */
+        $role = $user->roles()->sole();
+
         // The role is exactly its permissions — nothing is granted by a gate
         // bypass — so the seeded permission set has to be on it.
-        $this->assertSame(
-            Permission::count(),
-            $user->roles()->sole()->permissions()->count(),
-        );
+        $this->assertSame(Permission::count(), $role->permissions()->count());
         $this->assertTrue($user->can('View:Package'));
     }
 
@@ -196,11 +247,11 @@ class CreateAdminCommandTest extends TestCase
 
         $this->assertStringContainsString('expires in 5 minutes', $output);
 
-        // The URL ends up in deploy logs, so its signature must expire well
-        // before the underlying token would.
+        // The URL ends up in deploy logs, so the expiry sealed into it must
+        // bite well before the underlying token would.
         $this->travel(6)->minutes();
 
-        $this->get($link)->assertForbidden();
+        $this->get($link)->assertRedirect(route('filament.admin.auth.login'));
     }
 
     public function test_the_link_flag_skips_the_password_prompt(): void
@@ -208,6 +259,24 @@ class CreateAdminCommandTest extends TestCase
         $output = $this->runNonInteractively(['--email' => 'admin@example.com', '--link' => true]);
 
         $this->assertDatabaseHas('password_reset_tokens', ['email' => 'admin@example.com']);
-        $this->get($this->linkFrom($output))->assertOk();
+        $this->openLink($this->linkFrom($output))->assertOk();
+    }
+
+    public function test_a_followed_link_actually_sets_the_password(): void
+    {
+        $output = $this->runNonInteractively(['--email' => 'admin@example.com']);
+
+        $this->openLink($this->linkFrom($output));
+
+        Livewire::test(ResetPassword::class)
+            ->set('password', 'a-strong-enough-password')
+            ->set('passwordConfirmation', 'a-strong-enough-password')
+            ->call('resetPassword')
+            ->assertHasNoErrors();
+
+        $user = User::where('email', 'admin@example.com')->sole();
+
+        $this->assertTrue(Hash::check('a-strong-enough-password', $user->password));
+        $this->assertDatabaseCount('password_reset_tokens', 0);
     }
 }

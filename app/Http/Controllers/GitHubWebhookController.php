@@ -108,13 +108,19 @@ class GitHubWebhookController extends Controller
             );
         }
 
-        // The repository column is unique as the URL was typed, not as it
-        // parses, so one repository stored two ways is two packages. An app
-        // delivery names only the path, and every package on that path is
-        // owed the sync — not whichever happened to come back first.
-        $packages = $package instanceof Package
-            ? $package->newCollection([$package])
-            : Package::allForRepositoryPath($repository);
+        // Resolved from the path even when the hook named a package, and that
+        // is deliberate. One repository is routinely several packages here:
+        // the URL column is unique as typed rather than as parsed, so the same
+        // repository stored two ways is two rows — and a monorepo is several
+        // rows by design, one per subdirectory. A push changes whatever it
+        // changes, and this app cannot tell which packages that was without
+        // reading every manifest in the repository, so every package on the
+        // path is owed the sync. Syncing only the package whose hook happened
+        // to deliver would leave the rest of a monorepo silently stale, and
+        // which one that is would come down to which package was created
+        // first. It also means one hook is enough for a whole monorepo — see
+        // Package::webhookCoverage().
+        $packages = Package::allForRepositoryPath($repository);
 
         // An app-level webhook hears from every repository shared with the
         // installation, most of which are not packages here. That is the
@@ -134,7 +140,11 @@ class GitHubWebhookController extends Controller
         }
 
         foreach ($packages as $target) {
-            $target->forceFill(['webhook_received_at' => now()])->save();
+            // When a delivery last landed is bookkeeping the panel reads, not
+            // something a consumer can observe — and most deliveries move no
+            // ref this registry publishes. Written loudly it would invalidate
+            // every client's copy of the metadata on a push to a README.
+            $target->recordBookkeeping(['webhook_received_at' => now()]);
 
             SyncPackageJob::debounced($target);
         }

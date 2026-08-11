@@ -37,4 +37,14 @@ class PackageDownloadsChart extends DownloadsChart
     {
         return Download::query()->where('package_id', $this->record?->id);
     }
+
+    /**
+     * The record, not the viewer: this chart shows the same bars to everyone
+     * who can open the page, so caching it per user would only fragment the
+     * entry along a line that changes nothing.
+     */
+    protected function scopeKey(): string
+    {
+        return 'package:'.($this->record->id ?? 'none');
+    }
 }

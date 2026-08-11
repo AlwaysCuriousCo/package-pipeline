@@ -135,8 +135,13 @@ return [
      * \Spatie\Permission\Events\PermissionDetachedEvent
      *
      * To enable, set to true, and then create listeners to watch these events.
+     *
+     * On, because a role grant is a pivot write: the attribute diff that
+     * audits every other change in this app cannot see one, and a role is the
+     * largest change anybody can make to an account. App\Listeners\LogRoleChange
+     * is the listener.
      */
-    'events_enabled' => false,
+    'events_enabled' => true,
 
     /*
      * Teams Feature.

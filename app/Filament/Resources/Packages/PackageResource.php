@@ -17,6 +17,12 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
+/**
+ * Spelled out rather than imported: Pint's phpdoc_types fixer reads a bare
+ * `Resource` as PHP's `resource` pseudo-type and lowercases it.
+ *
+ * @extends \Filament\Resources\Resource<Package>
+ */
 class PackageResource extends Resource
 {
     protected static ?string $model = Package::class;
@@ -54,7 +60,27 @@ class PackageResource extends Resource
     {
         return [
             RelationManagers\VersionsRelationManager::class,
+            RelationManagers\AdvisoriesRelationManager::class,
         ];
+    }
+
+    /**
+     * Surfaces a package that has stopped syncing, which otherwise shows only
+     * as one red timestamp somewhere down the list.
+     *
+     * Counted through the resource's own query, so a scoped user is told
+     * about the packages they can actually open rather than the registry's.
+     */
+    public static function getNavigationBadge(): ?string
+    {
+        $failing = static::getEloquentQuery()->whereNotNull('sync_error')->count();
+
+        return $failing === 0 ? null : (string) $failing;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'danger';
     }
 
     public static function getPages(): array

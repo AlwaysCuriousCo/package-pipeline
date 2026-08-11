@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
 use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Packages\Pages\ListPackages;
@@ -79,15 +80,17 @@ class PackageResourceTest extends TestCase
     {
         $source = Source::factory()->create();
 
-        Livewire::withQueryParams(['source' => $source->getKey()])
-            ->test(CreatePackage::class)
+        Livewire::withQueryParams(['source' => $source->getKey()]);
+
+        Livewire::test(CreatePackage::class)
             ->assertSchemaStateSet(['source_id' => $source->getKey()]);
     }
 
     public function test_an_unknown_source_in_the_url_is_ignored(): void
     {
-        Livewire::withQueryParams(['source' => 999])
-            ->test(CreatePackage::class)
+        Livewire::withQueryParams(['source' => 999]);
+
+        Livewire::test(CreatePackage::class)
             ->assertSchemaStateSet(['source_id' => null]);
     }
 
@@ -156,6 +159,103 @@ class PackageResourceTest extends TestCase
             ->filterTable('unreleased')
             ->assertCanSeeTableRecords([$unreleased])
             ->assertCanNotSeeTableRecords([$released]);
+    }
+
+    public function test_the_table_can_be_filtered_to_failing_syncs(): void
+    {
+        $healthy = Package::factory()->create();
+        $failing = Package::factory()->create(['sync_error' => 'Repository not found.']);
+
+        Livewire::test(ListPackages::class)
+            ->filterTable('sync_failing')
+            ->assertCanSeeTableRecords([$failing])
+            ->assertCanNotSeeTableRecords([$healthy]);
+    }
+
+    public function test_the_table_can_be_filtered_to_packages_that_stopped_syncing(): void
+    {
+        $fresh = Package::factory()->create(['last_synced_at' => now()->subHour()]);
+        $stale = Package::factory()->create(['last_synced_at' => now()->subDays(3)]);
+        $never = Package::factory()->create(['last_synced_at' => null]);
+        // Nothing pulls this one, so it is not overdue for a sync.
+        $uploaded = Package::factory()->create(['repository' => null, 'last_synced_at' => null]);
+
+        Livewire::test(ListPackages::class)
+            ->filterTable('stale')
+            ->assertCanSeeTableRecords([$stale, $never])
+            ->assertCanNotSeeTableRecords([$fresh, $uploaded]);
+    }
+
+    public function test_the_navigation_badge_counts_failing_syncs(): void
+    {
+        Package::factory()->create();
+
+        $this->assertNull(PackageResource::getNavigationBadge());
+
+        Package::factory()->count(2)->create(['sync_error' => 'Repository not found.']);
+
+        $this->assertSame('2', PackageResource::getNavigationBadge());
+    }
+
+    public function test_selected_packages_can_be_synced_in_bulk(): void
+    {
+        Queue::fake([SyncPackageJob::class]);
+
+        $packages = Package::factory()->count(3)->create();
+
+        Livewire::test(ListPackages::class)
+            ->callTableBulkAction('syncSelected', $packages)
+            ->assertHasNoTableBulkActionErrors();
+
+        Queue::assertPushed(SyncPackageJob::class, 3);
+        Queue::assertPushed(SyncPackageJob::class, fn (SyncPackageJob $job): bool => $job->force === false);
+    }
+
+    public function test_a_bulk_sync_skips_packages_that_already_have_one_queued(): void
+    {
+        Queue::fake([SyncPackageJob::class]);
+
+        $queued = Package::factory()->create();
+        $idle = Package::factory()->create();
+
+        // Takes the uniqueness lock the bulk action would take, exactly as a
+        // webhook-triggered sync waiting on the queue holds it.
+        $this->assertTrue(SyncPackageJob::dispatchUnlessPending($queued));
+
+        Livewire::test(ListPackages::class)
+            ->callTableBulkAction('syncSelected', [$queued, $idle]);
+
+        // One from the setup above, one for the package that was free.
+        Queue::assertPushed(SyncPackageJob::class, 2);
+        Queue::assertPushed(SyncPackageJob::class, fn (SyncPackageJob $job): bool => $job->package->is($idle));
+    }
+
+    public function test_a_bulk_sync_skips_packages_with_nothing_to_sync_from(): void
+    {
+        Queue::fake([SyncPackageJob::class]);
+
+        $uploaded = Package::factory()->create(['repository' => null]);
+
+        Livewire::test(ListPackages::class)
+            ->callTableBulkAction('syncSelected', [$uploaded]);
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_selected_packages_can_be_rebuilt_in_bulk(): void
+    {
+        Queue::fake([SyncPackageJob::class]);
+
+        $packages = Package::factory()->count(2)->create();
+
+        Livewire::test(ListPackages::class)
+            ->callTableBulkAction('rebuildSelected', $packages)
+            ->assertHasNoTableBulkActionErrors();
+
+        Queue::assertPushed(SyncPackageJob::class, 2);
+        // A rebuild is a forced sync; without the flag it would skip every
+        // version that still points at the same ref.
+        Queue::assertPushed(SyncPackageJob::class, fn (SyncPackageJob $job): bool => $job->force === true);
     }
 
     public function test_the_package_pages_render_over_http(): void

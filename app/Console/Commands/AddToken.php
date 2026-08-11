@@ -19,10 +19,10 @@ class AddToken extends Command
         {name : What the token is for; shown in listings}
         {--user= : Issue a personal token for the user with this email}
         {--deploy= : Issue for the deploy token with this name, creating it if missing}
-        {--ability=* : read and/or write; read when omitted}
+        {--ability=* : read, write, or any ability name (api:read, api:write, api:delete); read when omitted}
         {--expires-days= : Expire after this many days; never when omitted}';
 
-    protected $description = 'Issue a Composer access token for a user or a deploy token';
+    protected $description = 'Issue an access token for a user or a deploy token';
 
     public function handle(): int
     {
@@ -101,6 +101,10 @@ class AddToken extends Command
         $abilities = [];
 
         foreach ($options as $option) {
+            // `read` and `write` are the Composer abilities' shorthands, from
+            // when they were the only two. The management API's are named in
+            // full, because there is no shorthand that would not read as one
+            // of those.
             $ability = match ($option) {
                 'read' => TokenAbility::RepositoryRead,
                 'write' => TokenAbility::RepositoryWrite,
@@ -108,7 +112,11 @@ class AddToken extends Command
             };
 
             if ($ability === null) {
-                $this->components->error("Unknown ability \"{$option}\". Use read and/or write.");
+                $this->components->error(sprintf(
+                    'Unknown ability "%s". Use read, write, or one of: %s.',
+                    $option,
+                    implode(', ', array_column(TokenAbility::cases(), 'value')),
+                ));
 
                 return null;
             }

@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsAuditableChanges;
+use App\Models\Concerns\LogsGrantChanges;
 use Database\Factories\DeployTokenFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -22,14 +24,30 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
 class DeployToken extends Model
 {
     /** @use HasFactory<DeployTokenFactory> */
-    use HasFactory;
+    use HasFactory, LogsAuditableChanges, LogsGrantChanges;
 
     protected static function booted(): void
     {
         // Deleting the principal revokes its credentials; the soft-deleted
         // token rows keep the audit trail of what it was and when it was
         // last used. The grant pivots cascade away in the database.
-        static::deleted(fn (self $deployToken) => $deployToken->tokens()->delete());
+        // Deleted one at a time rather than in a single relation delete:
+        // a mass delete fires no model events, and revocation is exactly the
+        // sort of change the audit log exists to attribute.
+        static::deleted(fn (self $deployToken) => $deployToken->tokens->each->delete());
+    }
+
+    /**
+     * The principal itself. What it reaches lives in pivots rather than
+     * columns, and is recorded by LogsGrantChanges — which matters more here
+     * than anywhere: a deploy token holding no grant at all sees every package
+     * in the registry, so removing its last one *widens* it.
+     *
+     * @return list<string>
+     */
+    protected function auditedAttributes(): array
+    {
+        return ['name'];
     }
 
     /**

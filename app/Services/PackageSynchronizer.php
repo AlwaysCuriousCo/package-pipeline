@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Sources\RepositoryClient;
+use App\Support\ComposerName;
 use App\Support\VersionNormalizer;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Throwable;
@@ -21,8 +23,21 @@ use Throwable;
  */
 class PackageSynchronizer
 {
+    /**
+     * The columns finalize() writes that describe what the package publishes,
+     * as against the bookkeeping it writes beside them.
+     *
+     * `name` and `description` are rendered into what /p2 serves; `type` is
+     * what search filters on; `latest_version` is the constraint the panel
+     * tells a consumer to require. A move in any of them is news.
+     *
+     * @var list<string>
+     */
+    private const PUBLISHED_COLUMNS = ['name', 'description', 'type', 'latest_version'];
+
     public function __construct(
         private readonly ArchiveStore $archives,
+        private readonly ArchiveSubtree $subtrees = new ArchiveSubtree,
         private readonly VersionNormalizer $normalizer = new VersionNormalizer,
     ) {}
 
@@ -67,7 +82,7 @@ class PackageSynchronizer
 
             return $this->finalize($package, $known, count($changed), $failed);
         } catch (Throwable $exception) {
-            $package->forceFill(['sync_error' => $exception->getMessage()])->save();
+            $package->recordBookkeeping(['sync_error' => $exception->getMessage()]);
 
             throw $exception;
         }
@@ -106,7 +121,8 @@ class PackageSynchronizer
      * Give a never-synced package its composer name before any archive is
      * stored, so archive paths carry the real name rather than the placeholder
      * the create form started from. Read from the default branch because no
-     * ref has been imported yet; finalize() keeps the name current afterwards.
+     * ref has been imported yet; after this, a name the repository changes is
+     * reported rather than applied — see nameAfterSync().
      */
     public function resolveComposerName(Package $package): void
     {
@@ -114,26 +130,20 @@ class PackageSynchronizer
             return;
         }
 
-        $name = $package->client()->composerJson()['name'] ?? null;
+        $name = $package->client()->composerJson(directory: $package->subdirectory)['name'] ?? null;
 
-        if (! is_string($name) || $name === '' || $name === $package->name) {
+        // Compared against the stored name in the case it will be stored in.
+        // The model normalizes on the way in either way, but a raw comparison
+        // here would treat `Acme/Widgets` as different from the `acme/widgets`
+        // already held and go on to ask whether the name is taken — by the very
+        // package being synced.
+        $name = is_string($name) ? mb_strtolower($name) : null;
+
+        if ($name === null || $name === '' || $name === $package->name) {
             return;
         }
 
-        // The (repository_id, name) unique index would reject the rename with
-        // a bare query error; asked first, the conflict reads as what it is —
-        // one Composer repository cannot serve two packages under one name.
-        $taken = Package::query()
-            ->where('repository_id', $package->repository_id)
-            ->whereKeyNot($package->getKey())
-            ->where('name', $name)
-            ->exists();
-
-        throw_if($taken, new \RuntimeException(
-            "The repository's composer.json is named \"{$name}\", which another package"
-            .' in this Composer repository already publishes. Move one of them to a'
-            .' different repository, or fix the composer.json name.',
-        ));
+        $this->guardAdoption($package, $name);
 
         $package->forceFill(['name' => $name])->save();
     }
@@ -149,7 +159,30 @@ class PackageSynchronizer
      */
     public function prune(Package $package, array $versions): void
     {
-        $package->versions()->whereNotIn('version', $versions)->delete();
+        $this->drop($package, $package->versions()->whereNotIn('version', $versions));
+    }
+
+    /**
+     * Delete whatever the given query matches, and move the package's own
+     * timestamp when anything actually went.
+     *
+     * A mass delete fires no model events, so PackageVersion's `deleted` hook
+     * — which is what normally keeps the package's timestamp ahead of its
+     * contents — never runs for one. Doing it here rather than deleting the
+     * rows one at a time keeps a prune of a hundred stale refs at one
+     * statement.
+     *
+     * Only when rows actually went. A sync that prunes nothing has changed
+     * nothing, and a bump here would put the hourly schedule right back in
+     * charge of every validator in the registry.
+     *
+     * @param  HasMany<PackageVersion, Package>  $versions
+     */
+    private function drop(Package $package, HasMany $versions): void
+    {
+        if ((int) $versions->delete() > 0) {
+            $package->touch();
+        }
     }
 
     /**
@@ -167,7 +200,7 @@ class PackageSynchronizer
             return $refs;
         }
 
-        $known = $package->versions()->get()->keyBy('version');
+        $known = $this->imported($package)->get()->keyBy('version');
 
         return array_filter(
             $refs,
@@ -190,30 +223,35 @@ class PackageSynchronizer
      */
     public function import(Package $package, string $version, array $ref, bool $force = false): bool
     {
-        $existing = $package->versions()->where('version', $version)->first();
-
-        if (! $force && $this->unchanged($existing, $ref)) {
+        if (! $force && $this->unchanged($this->imported($package)->where('version', $version)->first(), $ref)) {
             return true;
         }
 
         $client = $package->client();
 
-        $composerJson = $client->composerJson($ref['reference']);
+        $composerJson = $client->composerJson($ref['reference'], $package->subdirectory);
 
         if (! isset($composerJson['name'])) {
-            $existing?->delete();
+            $this->drop($package, $package->versions()->where('version', $version));
 
             return false;
         }
 
+        $releasedAt = $client->commitDate($ref['reference']);
+
         $data = [
             ...$ref,
             'order' => $this->normalizer->order($version),
-            'released_at' => $client->commitDate($ref['reference']),
+            'released_at' => $releasedAt,
+            // A provider with no date for a commit has answered, and no later
+            // sync will get a different answer. Recorded, the row is complete
+            // without one; left to the null alone it reads as unfinished and
+            // is re-imported — zipball and all — on every sync forever.
+            'released_at_unknown' => $releasedAt === null,
             'metadata' => [...$composerJson, 'version' => $version],
         ];
 
-        $zip = $this->downloadArchive($client, $ref['reference']);
+        $zip = $this->downloadArchive($package, $client, $ref['reference'], $version);
 
         try {
             // Row and archive columns land together, so a version is never
@@ -240,7 +278,10 @@ class PackageSynchronizer
      */
     public function finalize(Package $package, array $known, int $attempted = 0, int $failed = 0): SyncOutcome
     {
-        $versions = $package->versions()->orderBy('id')->get();
+        // Three columns rather than the whole row: what follows counts these
+        // versions and sorts their names, and every one of them carries a
+        // composer.json in `metadata` that would be decoded to be ignored.
+        $versions = $package->versions()->orderBy('id')->get(['id', 'version', 'is_dev']);
 
         if ($versions->isEmpty()) {
             throw new \RuntimeException($failed > 0
@@ -253,23 +294,191 @@ class PackageSynchronizer
         );
 
         // The latest release describes the package; a repository without one
-        // is described by whatever version arrived last.
-        $newest = ($latest !== null ? $versions->firstWhere('version', $latest) : $versions->last())->metadata;
+        // is described by whatever version arrived last. Only that one row's
+        // metadata is read, so only that one is fetched.
+        $describes = $latest ?? (string) $versions->last()->version;
+
+        $newest = $package->versions()->where('version', $describes)->value('metadata');
+        $newest = is_array($newest) ? $newest : [];
+
+        $declared = $newest['name'] ?? null;
+
+        [$name, $refused] = $this->nameAfterSync($package, is_string($declared) ? $declared : null);
 
         $package->forceFill([
-            'name' => $newest['name'] ?? $package->name,
+            'name' => $name,
             'description' => $newest['description'] ?? $package->description,
             'type' => $newest['type'] ?? $package->type,
             'latest_version' => $latest,
+        ]);
+
+        // Split so that a sync which resolved nothing new stays quiet. The two
+        // columns below are bookkeeping — when the sync ran and what it had to
+        // say for itself — and the hourly schedule writes them for every
+        // package in the registry whether or not a ref moved. Loud, they alone
+        // would move every metadata validator on the hour; see
+        // Package::recordBookkeeping. The four above are what this registry
+        // publishes, so a change to any of them is a change clients must see.
+        $bookkeeping = [
             'last_synced_at' => now(),
-            // A partial sync is not a silent one: the versions that failed are
-            // simply still missing, and this is the only place that says so.
-            'sync_error' => $failed > 0
-                ? "{$failed} of {$attempted} version imports failed; the next sync will retry them."
-                : null,
-        ])->save();
+            'sync_error' => $this->syncError($package, $attempted, $failed, $refused),
+        ];
+
+        $package->isClean(self::PUBLISHED_COLUMNS)
+            ? $package->recordBookkeeping($bookkeeping)
+            : $package->forceFill($bookkeeping)->save();
 
         return $this->outcome($known, $versions->pluck('is_dev', 'version')->all());
+    }
+
+    /**
+     * The name to store after a sync, and the reason a rename was refused.
+     *
+     * A package's name is its identity here: it is what a consumer requires,
+     * what every dist URL and archive path is built from, and what a lockfile
+     * pins. So a composer.json that starts declaring a different one is not a
+     * metadata update to be applied like `description` beside it. A tag
+     * pointing at a fork, or one mistaken manifest, would otherwise move this
+     * package's identity onto whatever the newest ref happens to claim — and a
+     * registry silently reassigning who publishes a name is exactly the shape
+     * of a dependency-confusion attack. The upload path already refuses the
+     * same mismatch outright (CreateVersionFromZip::create), and a sync has
+     * less reason to trust its input than an authenticated upload, not more.
+     *
+     * A rename is therefore only adopted before the package has ever been
+     * synced, where it is not a rename at all but the first name this registry
+     * has had for it. resolveComposerName() has usually settled that from the
+     * default branch already, so reaching it here means the default branch
+     * carried no readable composer.json and a ref did.
+     *
+     * Afterwards the stored name stands and the discrepancy is reported.
+     * Upstream packages do genuinely get renamed, but only a human can tell
+     * that from a hijack, and accepting it is then one edit in the panel —
+     * after which the two agree and the notice stops. Refusing also keeps the
+     * rename off the (repository_id, name) unique index, which finalize() used
+     * to walk straight into: colliding with a name another package in the same
+     * Composer repository publishes stored a raw SQL error as `sync_error`.
+     *
+     * @return array{string, ?string}
+     */
+    private function nameAfterSync(Package $package, ?string $declared): array
+    {
+        $current = (string) $package->name;
+
+        // Both sides lowercased before anything is compared or refused, so a
+        // manifest that spells the stored name in another case is the same name
+        // rather than a rename this registry declines — which would otherwise
+        // re-report the same non-difference in `sync_error` on every hourly sync
+        // forever. The stored side needs it too: a registry migrated from before
+        // names were normalized can still hold a mixed-case one, and that row's
+        // manifest matches it in every way except the case nothing here cares
+        // about. What is wrong with such a package is that it is unserveable,
+        // which syncError() says plainly; telling its owner to accept a rename
+        // that would collide on the unique index is not a second problem.
+        $declared = $declared === null ? null : mb_strtolower($declared);
+
+        if ($declared === null || $declared === '' || $declared === mb_strtolower($current)) {
+            return [$current, null];
+        }
+
+        if ($package->last_synced_at === null) {
+            $this->guardAdoption($package, $declared);
+
+            return [$declared, null];
+        }
+
+        return [$current, "The repository's composer.json now names \"{$declared}\", but this package"
+            ." publishes as \"{$current}\". The name was left alone: rename the package here to"
+            .' accept it, or fix the composer.json.'];
+    }
+
+    /**
+     * What the sync has to say for itself, or null when it has nothing.
+     *
+     * A partial sync is not a silent one — the versions that failed are simply
+     * still missing — and neither is a rename this registry declined to make.
+     *
+     * The unserveable name is the odd one out: it is not something this run did
+     * or found, it is a standing fact about the row, and it is here precisely
+     * because this column is written unconditionally. The migration that
+     * discovers such a package writes the same notice, and a clean sync would
+     * otherwise erase it within the hour — leaving a package that answers 404
+     * on both of its endpoints with nothing anywhere to say so. Re-asserted
+     * instead, it holds until somebody fixes the name, and every reader of
+     * `sync_error` — the red timestamp, the "Sync failing" filter, the
+     * navigation badge — points at it for free.
+     */
+    private function syncError(Package $package, int $attempted, int $failed, ?string $refusedRename): ?string
+    {
+        $notes = array_filter([
+            $package->hasUnserveableName() ? Package::unserveableNameNotice((string) $package->name) : null,
+            $failed > 0
+                ? "{$failed} of {$attempted} version imports failed; the next sync will retry them."
+                : null,
+            $refusedRename,
+        ]);
+
+        return $notes === [] ? null : implode(' ', $notes);
+    }
+
+    /**
+     * Refuse a declared name this registry must not take as its own.
+     *
+     * Both places a composer.json's name is ever adopted come through here,
+     * because adoption is the moment the string stops being data read from a
+     * repository and becomes this package's identity: what a consumer
+     * requires, what every dist URL is built from, and — the reason the
+     * grammar check is not cosmetic — a path segment on the dist disk.
+     *
+     * The grammar was previously nobody's job on this path, on the reasoning
+     * that a name out of a composer.json is a name Composer had already
+     * validated. It is not: nothing makes a repository's composer.json pass
+     * through Composer before this registry reads it, and the file is written
+     * by whoever controls the repository. A package declaring
+     * `../mirror/9/evil/pkg` stored its archive outside the published prefix,
+     * where archives:clean cannot see it, mirror:prune reads it as an orphan
+     * and deletes it, and archives:audit then clears the row — a nightly loop
+     * that needed no more privilege than pushing a tag.
+     *
+     * ArchiveStore refuses to write outside its prefix as well, and both are
+     * wanted: this one keeps the bad name out of the registry, and that one
+     * holds whether or not every future caller remembers to ask.
+     *
+     * @throws \RuntimeException
+     */
+    private function guardAdoption(Package $package, string $name): void
+    {
+        throw_unless(ComposerName::valid($name), new \RuntimeException(
+            "The repository's composer.json is named \"{$name}\", which is not a Composer package name"
+            .' — a vendor and a package, lowercase, separated by one slash. Nothing can require it, so'
+            .' this registry will not publish under it. Fix the composer.json name.'
+        ));
+
+        throw_if($this->nameTaken($package, $name), new \RuntimeException($this->nameConflict($name)));
+    }
+
+    /**
+     * Whether another package in the same Composer repository already
+     * publishes the given name.
+     *
+     * The (repository_id, name) unique index would reject the rename with a
+     * bare query error; asked first, the conflict reads as what it is — one
+     * Composer repository cannot serve two packages under one name.
+     */
+    private function nameTaken(Package $package, string $name): bool
+    {
+        return Package::query()
+            ->where('repository_id', $package->repository_id)
+            ->whereKeyNot($package->getKey())
+            ->where('name', $name)
+            ->exists();
+    }
+
+    private function nameConflict(string $name): string
+    {
+        return "The repository's composer.json is named \"{$name}\", which another package"
+            .' in this Composer repository already publishes. Move one of them to a'
+            .' different repository, or fix the composer.json name.';
     }
 
     /**
@@ -316,10 +525,19 @@ class PackageSynchronizer
      * whole sync. A row missing any piece — date, metadata, or archive — is
      * treated as changed so it is backfilled.
      *
-     * The archive check asks the dist disk, not just the columns: a row can
-     * outlive its file (storage loss, a deploy that wiped archives while the
-     * database survived), and trusting the columns alone would skip the
-     * re-download and leave dist serving 404s that no sync ever repairs.
+     * Every test here is a column already in hand, which is the point: this
+     * runs for every stored version of every package on every sync, and the
+     * schedule now makes that hourly whether or not anything was pushed. The
+     * archive check used to ask the dist disk instead of the column, which on
+     * S3 is one HEAD request per stored version per sync — 200 round trips to
+     * learn that nothing moved. That check is now `archives:audit`, which
+     * answers the same question for the whole registry with one listing and
+     * clears the column when a file is gone, putting the repair back on the
+     * path below rather than in front of it.
+     *
+     * A missing `metadata.name` is not tested here either: imported() asks it
+     * as a query condition, so such a row never appears among the known ones
+     * and reads as changed by its absence.
      *
      * @param  array{reference: string, is_dev: bool}  $ref
      */
@@ -328,20 +546,49 @@ class PackageSynchronizer
         return $known instanceof PackageVersion
             && $known->reference === $ref['reference']
             && $known->is_dev === $ref['is_dev']
-            && $known->released_at !== null
+            && ($known->released_at !== null || $known->released_at_unknown)
             && $known->archive_path !== null
-            && $known->shasum !== null
-            && isset($known->metadata['name'])
-            && $this->archives->disk()->exists($known->archive_path);
+            && $known->shasum !== null;
     }
 
     /**
-     * Download the zipball for a ref to a temporary file, returning its path.
+     * The stored versions unchanged() judges a ref against, carrying the
+     * columns it reads and nothing else.
+     *
+     * `metadata` is the ref's whole composer.json — requirements, autoload
+     * maps, scripts — and hydrating one per stored version was the bulk of
+     * the work a sync did to discover it had nothing to do. It is asked about
+     * rather than selected: a row whose metadata never got a name has to be
+     * re-imported, and dropping it from this result says exactly that.
+     *
+     * @return HasMany<PackageVersion, Package>
+     */
+    private function imported(Package $package): HasMany
+    {
+        return $package->versions()
+            ->whereNotNull('metadata->name')
+            ->select([
+                'id', 'package_id', 'version', 'reference', 'is_dev',
+                'released_at', 'released_at_unknown', 'archive_path', 'shasum',
+            ]);
+    }
+
+    /**
+     * Download the zipball for a ref to a temporary file, as the dist this
+     * package should serve, returning its path.
+     *
+     * A provider archives whole repositories, which is exactly the dist for a
+     * package published from the repository root and is not the dist for one
+     * published from a subdirectory — so a monorepo package's download is cut
+     * down to its own tree before it goes any further. That happens here, on
+     * the temporary file, rather than in ArchiveStore: what is stored is what
+     * Composer downloads, and the shasum recorded beside it has to be the
+     * hash of the bytes actually served.
      *
      * The caller owns the file's lifetime; import() deletes the download once
      * the archive is stored or abandoned.
      */
-    private function downloadArchive(RepositoryClient $client, string $reference): string
+    private function downloadArchive(Package $package, RepositoryClient $client, string $reference, string $version): string
     {
         $temporary = tempnam(sys_get_temp_dir(), 'package-archive-');
 
@@ -349,6 +596,10 @@ class PackageSynchronizer
 
         try {
             $client->downloadZipball($reference, $temporary);
+
+            if ($package->hasSubdirectory()) {
+                $this->subtrees->reroot($temporary, $package->subdirectory, $this->archiveRoot($package, $version));
+            }
         } catch (Throwable $exception) {
             File::delete($temporary);
 
@@ -356,6 +607,21 @@ class PackageSynchronizer
         }
 
         return $temporary;
+    }
+
+    /**
+     * What to call the single directory a re-rooted archive is wrapped in.
+     *
+     * Composer discards this name, so it only has to be legible to whoever
+     * opens the zip and distinct from the provider's own wrapper — which the
+     * package name makes it, since that is not derived from the repository
+     * path a provider names its wrapper after.
+     */
+    private function archiveRoot(Package $package, string $version): string
+    {
+        $root = preg_replace('#[^A-Za-z0-9._-]+#', '-', "{$package->name}-{$version}");
+
+        return trim((string) $root, '-.') ?: 'package';
     }
 
     /**

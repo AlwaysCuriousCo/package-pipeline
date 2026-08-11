@@ -35,6 +35,39 @@ class RepositoriesTable
                     ->label('Packages')
                     ->counts('packages')
                     ->sortable(),
+                TextColumn::make('reserved_vendors_count')
+                    ->label('Reserved vendors')
+                    ->counts('reservedVendors')
+                    ->badge()
+                    ->color('gray')
+                    ->tooltip('Vendor prefixes only this repository may introduce package names under.')
+                    // Nothing reserved is the ordinary case and reads better as
+                    // a blank cell than as a column of zeroes.
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (int $state): ?string => $state === 0 ? null : (string) $state)
+                    ->sortable(),
+                TextColumn::make('upstreams_count')
+                    ->label('Upstreams')
+                    ->counts('upstreams')
+                    ->badge()
+                    ->color('gray')
+                    ->tooltip('Repositories this one mirrors packages from on demand.')
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (int $state): ?string => $state === 0 ? null : (string) $state)
+                    ->sortable(),
+                TextColumn::make('mirrored_packages_count')
+                    ->label('Cached')
+                    ->counts(['mirroredPackages', 'mirroredArchives'])
+                    // The only place an operator can see what the mirror is
+                    // actually holding: the Composer endpoints deliberately do
+                    // not enumerate it, because a cache warmed by whoever built
+                    // last is not a catalogue of anything.
+                    ->tooltip('Upstream documents and archives cached for this repository. Archives are the disk cost; mirror:prune removes what nothing has asked for.')
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (int $state, Repository $record): ?string => $state === 0 && $record->mirrored_archives_count === 0
+                        ? null
+                        : "{$state} docs / {$record->mirrored_archives_count} zips")
+                    ->toggleable(),
                 TextColumn::make('description')
                     ->limit(60)
                     ->toggleable(isToggledHiddenByDefault: true),
@@ -50,10 +83,13 @@ class RepositoriesTable
                     // here says why instead of failing with a query error. The
                     // default repository is simply not deletable — the root
                     // mount has to resolve to something.
-                    ->disabled(fn (Repository $record): bool => $record->isDefault() || $record->packages()->exists())
+                    // Asked of `packages_count`, which the Packages column
+                    // above already counts in the list query: two EXISTS per
+                    // row for a number that is sitting on the record.
+                    ->disabled(fn (Repository $record): bool => $record->isDefault() || $record->packages_count > 0)
                     ->tooltip(fn (Repository $record): ?string => match (true) {
                         $record->isDefault() => 'The default repository cannot be deleted.',
-                        $record->packages()->exists() => 'Move or delete its packages first.',
+                        $record->packages_count > 0 => 'Move or delete its packages first.',
                         default => null,
                     }),
             ]);

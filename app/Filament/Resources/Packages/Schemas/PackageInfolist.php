@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
@@ -25,6 +26,16 @@ class PackageInfolist
                     ->openUrlInNewTab()
                     ->color('primary')
                     ->placeholder('None — published by artifact upload'),
+                TextEntry::make('subdirectory')
+                    ->label('Subdirectory')
+                    ->badge()
+                    ->color('gray')
+                    ->fontFamily(FontFamily::Mono)
+                    // Shown only when there is one to show: the root is where
+                    // almost every package lives, and a row saying so on every
+                    // package would be a row nobody reads.
+                    ->visible(fn (Package $record): bool => $record->hasSubdirectory())
+                    ->helperText('This package is one of several published from the repository. Its dist archives carry this directory alone, re-rooted.'),
                 TextEntry::make('latest_version')
                     ->label('Latest version')
                     ->badge()
@@ -48,14 +59,20 @@ class PackageInfolist
                         : null)
                     ->placeholder('No source — using this package\'s own credentials'),
                 TextEntry::make('token')
-                    ->label('GitHub token')
+                    ->label('Access token')
                     // Never render the secret itself.
                     ->formatStateUsing(fn (): string => 'Saved')
                     ->badge()
                     ->color('success')
-                    ->placeholder(fn (Package $record): string => $record->source
-                        ? 'Not needed — authenticating through the source'
-                        : 'Using GITHUB_TOKEN fallback'),
+                    // Only the environment fallback is GitHub's; the stored
+                    // token itself serves whichever provider the repository
+                    // URL resolves to.
+                    ->placeholder(fn (Package $record): string => match (true) {
+                        $record->source !== null => 'Not needed — authenticating through the source',
+                        blank($record->repository) => 'Not needed — published by artifact upload',
+                        $record->provider() === SourceProvider::Github => 'Using GITHUB_TOKEN fallback',
+                        default => 'None — only a public repository can be read',
+                    }),
                 TextEntry::make('last_synced_at')
                     ->label('Last synced')
                     ->since()

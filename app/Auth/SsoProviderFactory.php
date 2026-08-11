@@ -4,6 +4,8 @@ namespace App\Auth;
 
 use App\Enums\AuthProvider;
 use App\Models\AuthenticationSource;
+use App\Support\HttpTimeouts;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Laravel\Socialite\Contracts\Provider;
 use Laravel\Socialite\Facades\Socialite;
@@ -11,6 +13,7 @@ use Laravel\Socialite\Two\GithubProvider;
 use Laravel\Socialite\Two\GitlabProvider;
 use Laravel\Socialite\Two\GoogleProvider;
 use RuntimeException;
+use Throwable;
 
 /**
  * Builds a Socialite provider from an authentication source row — the
@@ -25,6 +28,7 @@ class SsoProviderFactory
             'client_id' => $source->client_id,
             'client_secret' => $source->client_secret,
             'redirect' => $source->callbackUrl(),
+            'guzzle' => HttpTimeouts::guzzle(),
         ];
 
         return match ($source->provider) {
@@ -72,7 +76,20 @@ class SsoProviderFactory
             self::discoveryCacheKey($source),
             now()->addHour(),
             function () use ($source): array {
-                $document = Http::acceptJson()->get($source->discovery_url)->throw()->json();
+                // This runs inside the login redirect, with the user's browser
+                // waiting on it, so the budget is half the usual and covers
+                // both attempts. The retry is for connection-level failures
+                // only — a reset on the issuer's edge should cost a quarter of
+                // a second, not a failed login — while an issuer that answers
+                // with an error is answering: asking again buys the same reply
+                // at twice the wait.
+                $document = Http::acceptJson()
+                    ->timeout(HttpTimeouts::LOGIN)
+                    ->connectTimeout(HttpTimeouts::CONNECT)
+                    ->retry(2, 250, fn (Throwable $exception): bool => $exception instanceof ConnectionException)
+                    ->get($source->discovery_url)
+                    ->throw()
+                    ->json();
 
                 foreach (['authorization_endpoint', 'token_endpoint', 'userinfo_endpoint'] as $key) {
                     throw_unless(

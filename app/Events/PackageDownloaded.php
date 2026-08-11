@@ -19,7 +19,6 @@ class PackageDownloaded
         public int $packageId,
         public ?int $packageVersionId,
         public string $version,
-        public ?string $ip,
         public ?string $tokenPrefix,
     ) {}
 }

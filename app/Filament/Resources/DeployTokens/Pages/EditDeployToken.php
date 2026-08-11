@@ -31,12 +31,14 @@ class EditDeployToken extends EditRecord
                 ->schema([
                     CheckboxList::make('abilities')
                         ->options(TokenAbility::class)
-                        ->default(fn (DeployToken $record): array => $record->token?->abilities
+                        ->default(fn (DeployToken $record): array => $record->token->abilities
                             ?? [TokenAbility::RepositoryRead->value])
                         ->required(),
                 ])
                 ->action(function (DeployToken $record, array $data): void {
-                    $record->tokens()->delete();
+                    // One at a time, so each revocation fires the model
+                    // events the audit log is written from.
+                    $record->tokens->each->delete();
 
                     $new = Token::issue($record, $record->name, $data['abilities']);
 

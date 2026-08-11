@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * One served dist download. Append-only: rows are written by the download
  * listener and only ever read after that, so there is no updated_at.
  */
-#[Fillable(['package_id', 'package_version_id', 'version', 'ip', 'token_prefix', 'created_at'])]
+#[Fillable(['package_id', 'package_version_id', 'version', 'token_prefix', 'created_at'])]
 class Download extends Model
 {
     public const ?string UPDATED_AT = null;

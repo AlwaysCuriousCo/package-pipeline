@@ -2,8 +2,11 @@
 
 namespace App\Services\GitLab;
 
+use App\Exceptions\RateLimited;
 use App\Models\Package;
 use App\Sources\RepositoryClient;
+use App\Support\HttpTimeouts;
+use App\Support\RefListingCache;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -26,11 +29,15 @@ class GitLabClient implements RepositoryClient
      */
     private const MAX_PAGES = 100;
 
+    private readonly RefListingCache $listings;
+
     public function __construct(
         private readonly string $projectPath,
         private readonly ?string $token,
         private readonly string $apiUrl = 'https://gitlab.com/api/v4',
-    ) {}
+    ) {
+        $this->listings = new RefListingCache("gitlab|{$apiUrl}|{$projectPath}");
+    }
 
     /**
      * A client for one package, authenticated with whatever credential the
@@ -62,9 +69,10 @@ class GitLabClient implements RepositoryClient
     }
 
     /**
+     * @param  string  $directory  the package's subdirectory, empty for the root
      * @return array<string, mixed>|null
      */
-    public function composerJson(?string $ref = null): ?array
+    public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
         // GitLab's raw-file endpoint requires a ref; "the default branch" has
         // to be asked for by name first.
@@ -74,8 +82,13 @@ class GitLabClient implements RepositoryClient
             return null;
         }
 
+        // Unlike GitHub's, this endpoint takes the whole file path as a single
+        // URL segment, so the separators are encoded along with everything
+        // else — "packages/foo/composer.json" travels as one component.
+        $path = rawurlencode(ltrim("{$directory}/composer.json", '/'));
+
         $response = $this->request()->get(
-            "/projects/{$this->projectId()}/repository/files/composer.json/raw",
+            "/projects/{$this->projectId()}/repository/files/{$path}/raw",
             ['ref' => $ref],
         );
 
@@ -83,7 +96,7 @@ class GitLabClient implements RepositoryClient
             return null;
         }
 
-        $decoded = json_decode($response->throw()->body(), true);
+        $decoded = json_decode($this->ok($response)->body(), true);
 
         return is_array($decoded) ? $decoded : null;
     }
@@ -96,17 +109,20 @@ class GitLabClient implements RepositoryClient
             return null;
         }
 
-        $date = $response->throw()->json('committed_date');
+        $date = $this->ok($response)->json('committed_date');
 
         return is_string($date) && $date !== '' ? CarbonImmutable::parse($date) : null;
     }
 
     public function downloadZipball(string $ref, string $destination): void
     {
-        $response = $this->request()
+        $response = $this->ok($this->request()
+            // Unlike every other call here, how long this takes is a property
+            // of the repository, not of GitLab's health; the API budget would
+            // cut a large archive off mid-stream.
+            ->timeout(HttpTimeouts::ARCHIVE)
             ->sink($destination)
-            ->get("/projects/{$this->projectId()}/repository/archive.zip", ['sha' => $ref])
-            ->throw();
+            ->get("/projects/{$this->projectId()}/repository/archive.zip", ['sha' => $ref]));
 
         // A 200 that is not a zip — a proxy's HTML error page, say — must not
         // be stored and served to Composer as an archive.
@@ -123,15 +139,14 @@ class GitLabClient implements RepositoryClient
      */
     public function createWebhook(string $url, string $secret): int
     {
-        $id = $this->request()
+        $id = $this->ok($this->request()
             ->post("/projects/{$this->projectId()}/hooks", [
                 'url' => $url,
                 'token' => $secret,
                 'push_events' => true,
                 'tag_push_events' => true,
                 'enable_ssl_verification' => true,
-            ])
-            ->throw()
+            ]))
             ->json('id');
 
         throw_unless(is_int($id), new RuntimeException(
@@ -149,7 +164,7 @@ class GitLabClient implements RepositoryClient
             return;
         }
 
-        $response->throw();
+        $this->ok($response);
     }
 
     /**
@@ -163,7 +178,7 @@ class GitLabClient implements RepositoryClient
             return null;
         }
 
-        $branch = $response->throw()->json('default_branch');
+        $branch = $this->ok($response)->json('default_branch');
 
         return is_string($branch) && $branch !== '' ? $branch : null;
     }
@@ -184,26 +199,81 @@ class GitLabClient implements RepositoryClient
                 );
             }
 
-            $response = $this->request()
-                ->get("/projects/{$this->projectId()}/repository/{$endpoint}", [
-                    'per_page' => self::PER_PAGE,
-                    'page' => $page,
-                ])
-                ->throw();
+            [$items, $hasNext] = $this->refPage($endpoint, $page);
 
-            foreach ($response->json() as $item) {
-                $refs[$item['name']] = $item['commit']['id'];
+            // Merged a key at a time rather than spread: a tag named "2" is
+            // an integer key, and unpacking would renumber it.
+            foreach ($items as $name => $sha) {
+                $refs[$name] = $sha;
             }
 
             $page++;
-        } while ($this->hasNextPage($response));
+        } while ($hasNext);
 
         return $refs;
+    }
+
+    /**
+     * One page of refs and whether another follows, asked conditionally so
+     * that a repository nobody has pushed to answers 304 with no body. Every
+     * push and every scheduled sync re-lists refs that have not moved since
+     * the last one, which is the case this exists for.
+     *
+     * @return array{array<string, string>, bool}
+     */
+    private function refPage(string $endpoint, int $page): array
+    {
+        $cached = $this->listings->get($endpoint, $page);
+
+        $response = $this->request()
+            ->when($cached !== null, fn (PendingRequest $request): PendingRequest => $request->withHeaders([
+                'If-None-Match' => $cached['etag'],
+            ]))
+            ->get("/projects/{$this->projectId()}/repository/{$endpoint}", [
+                'per_page' => self::PER_PAGE,
+                'page' => $page,
+            ]);
+
+        if ($response->status() === 304 && $cached !== null) {
+            return [$cached['refs'], $cached['next']];
+        }
+
+        $refs = [];
+
+        foreach ($this->ok($response)->json() as $item) {
+            $refs[$item['name']] = $item['commit']['id'];
+        }
+
+        $next = $this->hasNextPage($response);
+
+        if (filled($etag = $response->header('ETag'))) {
+            $this->listings->put($endpoint, $page, $etag, $refs, $next);
+        }
+
+        return [$refs, $next];
     }
 
     private function hasNextPage(Response $response): bool
     {
         return filled($response->header('X-Next-Page'));
+    }
+
+    /**
+     * The response, once it is known not to be GitLab throttling us.
+     *
+     * throw() would turn a rate limit and an expired token into the same
+     * RequestException, and the sync would treat them the same way: retry in
+     * a minute, retry in five, fail. A rate limit is the one failure that
+     * says when to come back, and it is worth waiting for rather than
+     * spending the attempts on.
+     */
+    private function ok(Response $response): Response
+    {
+        if ($limited = RateLimited::from($response, 'GitLab')) {
+            throw $limited;
+        }
+
+        return $response->throw();
     }
 
     private function projectId(): string
@@ -214,6 +284,8 @@ class GitLabClient implements RepositoryClient
     private function request(): PendingRequest
     {
         return Http::baseUrl($this->apiUrl)
+            ->timeout(HttpTimeouts::API)
+            ->connectTimeout(HttpTimeouts::CONNECT)
             ->when($this->token, fn (PendingRequest $request) => $request->withHeaders([
                 'PRIVATE-TOKEN' => $this->token,
             ]))
