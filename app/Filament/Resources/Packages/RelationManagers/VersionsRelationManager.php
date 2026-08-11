@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\RelationManagers;
 
+use App\Filament\Resources\Packages\Actions\DownloadArchiveAction;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use Filament\Actions\DeleteAction;
@@ -146,7 +147,15 @@ class VersionsRelationManager extends RelationManager
             ])
             ->recordActions([
                 ViewAction::make()
-                    ->modalHeading(fn (PackageVersion $record): string => "Version {$record->version}"),
+                    ->modalHeading(fn (PackageVersion $record): string => "Version {$record->version}")
+                    // The same download offered again from inside the detail
+                    // modal, so an operator who opened a version to check what
+                    // it declares does not have to close it again to take the
+                    // artifact that declaration describes.
+                    ->extraModalFooterActions([
+                        DownloadArchiveAction::make('downloadArchiveFromDetail'),
+                    ]),
+                DownloadArchiveAction::make(),
                 DeleteAction::make()
                     // PackageVersion has no policy of its own — the rows are
                     // the package's contents, so deleting one is an edit to

@@ -53,6 +53,13 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   packages and versions carry each license, and — the number worth watching —
   how many versions declare none at all. Each version's declaration is kept in
   a column of its own, derived from its manifest.
+- **Download a version's archive from the panel**, from the versions list on a
+  package's page or from the version's own detail modal — the stored zip a
+  Composer client would install, without configuring one. Scoped to the
+  admin's own grants, and served straight off the dist disk — or as a redirect
+  to it, on a disk that pre-signs its own URLs. It counts as a download like
+  any other, in the counters and in the download history, carrying no token
+  prefix because none was presented.
 - **CycloneDX 1.6 SBOM export**, registry-wide or per package, from the panel
   and from `sbom:export`. One component per package version, streamed, and cut
   to the caller's own grants. See [docs/licensing.md](docs/licensing.md).
