@@ -1,6 +1,6 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "always-curious/package-pipeline",
+    "name": "alwayscurious/package-pipeline",
     "type": "project",
     "description": "Package Pipeline — a self-hosted private Composer registry with a Filament admin panel.",
     "keywords": ["composer", "registry", "packages", "laravel", "filament"],
