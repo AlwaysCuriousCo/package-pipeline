@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\Users\Schemas;
 
+use App\Filament\Resources\Users\Actions\SendWelcomeEmailAction;
 use App\Models\Package;
 use App\Models\User;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -67,8 +69,35 @@ class UserForm
                     ->searchable()
                     ->preload()
                     ->helperText('Individual packages, wherever they are served. Ignored for accounts that can already see everything.'),
+                self::sendWelcomeEmail(),
                 self::effectiveAccess(),
             ]);
+    }
+
+    /**
+     * Whether the new account's owner is told it exists.
+     *
+     * Off by default when no mailer is configured, which is the state a
+     * self-hosted registry is routinely stood up in: `log` and `array` accept
+     * everything and deliver nothing, so a toggle left on would report success
+     * for a message that went to a file. Create-only — resending is an action
+     * on the account itself, where the confirmation belongs.
+     *
+     * @see SendWelcomeEmailAction
+     */
+    private static function sendWelcomeEmail(): Toggle
+    {
+        $mailer = (string) config('mail.default');
+        $deliverable = ! in_array($mailer, ['log', 'array'], strict: true);
+
+        return Toggle::make('send_welcome_email')
+            ->label('Send welcome email')
+            ->columnSpanFull()
+            ->visible(fn (string $operation): bool => $operation === 'create')
+            ->default($deliverable)
+            ->helperText($deliverable
+                ? 'A short note to the address above saying the account exists and where to sign in. It carries no password — you deliver that yourself.'
+                : "Mail is set to the `{$mailer}` driver, which delivers nothing. Configure a mailer before turning this on.");
     }
 
     /**

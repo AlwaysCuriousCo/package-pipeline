@@ -23,6 +23,30 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Composer Repository Key
+    |--------------------------------------------------------------------------
+    |
+    | The name of the entry the install instructions tell a consuming project to
+    | add under `repositories` in its composer.json, used exactly as it is
+    | written here: set to "alwayscurious" the panel offers
+    | `composer config repositories.alwayscurious composer ...` for every
+    | repository, whatever each one's path is.
+    |
+    | Empty, it is derived from the application name instead, with a named
+    | repository's path appended — which is the right default, because it is
+    | what keeps two mounts on one registry from claiming the same entry in a
+    | consumer's composer.json. Setting this takes that guarantee on: an
+    | installation serving several repositories under one fixed key is telling
+    | consumers to overwrite one entry with another. Set it for the single-
+    | repository installation whose registry is known by a different name than
+    | its panel is, and leave it alone otherwise.
+    |
+    */
+
+    'composer_repository_key' => env('COMPOSER_REPOSITORY_KEY'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Rendered Metadata Cache
     |--------------------------------------------------------------------------
     |
@@ -170,6 +194,37 @@ return [
                 explode(',', (string) env('WEBHOOK_PRIVATE_HOSTS', '')),
             ))),
         ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Notifications By Email
+    |--------------------------------------------------------------------------
+    |
+    | Releases, failed syncs and abandonments already reach the panel's bell,
+    | the Slack channel and every subscribed outgoing webhook. This adds email
+    | to that fan-out, addressed to each panel user who holds a role.
+    |
+    | Off by default, and for a plainer reason than the metrics endpoint below:
+    | mail is the one channel here that needs a working provider behind it.
+    | While `MAIL_MAILER=log` is set — the shipped default — turning this on
+    | writes every announcement to the log file and delivers nothing, so the
+    | switch would be a trap on a fresh install rather than a feature. Turn it
+    | on in the same change that configures a mailer, not before.
+    |
+    | It is also the noisiest channel by some distance. A bell notification is
+    | read when somebody opens the panel; an email interrupts. An installation
+    | syncing thirty packages can publish a dozen releases in an afternoon,
+    | which is a fine Slack channel and a poor inbox — which is why each user
+    | has their own switch on the profile page, and why this one only decides
+    | whether that switch exists at all. Enabled here, users are opted in and
+    | may opt out; disabled, no mail is sent whatever a user's row says and the
+    | profile section is not rendered.
+    |
+    */
+
+    'notifications' => [
+        'mail' => (bool) env('MAIL_ADMIN_NOTIFICATIONS', false),
     ],
 
     /*

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Package;
+use App\Models\Repository;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -67,6 +68,26 @@ class PackageInstallCommandsTest extends TestCase
         $package = Package::factory()->unreleased()->create(['name' => 'acme/widgets']);
 
         $this->assertSame('composer require acme/widgets', $package->installCommands()['require']);
+    }
+
+    public function test_a_configured_key_is_used_verbatim(): void
+    {
+        config(['registry.composer_repository_key' => 'alwayscurious']);
+
+        $repository = Repository::create(['name' => 'Composer', 'path' => 'composer']);
+
+        $package = Package::factory()->create([
+            'name' => 'acme/widgets',
+            'latest_version' => 'v1.1.0',
+            'repository_id' => $repository->id,
+        ]);
+
+        // No slugifying, and no "-composer" for the path: whoever set the key
+        // decided what the entry in composer.json is called.
+        $this->assertSame(
+            'composer config repositories.alwayscurious composer '.url('/r/composer'),
+            $package->installCommands()['repository'],
+        );
     }
 
     public function test_the_details_page_shows_the_install_commands(): void

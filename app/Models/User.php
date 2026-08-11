@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\LogsAuditableChanges;
 use App\Models\Concerns\LogsGrantChanges;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Notifications\Concerns\RoutedByAdminNotifier;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
@@ -20,7 +21,7 @@ use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
 use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'password'])]
+#[Fillable(['name', 'email', 'password', 'email_notifications'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements FilamentUser
 {
@@ -197,6 +198,28 @@ class User extends Authenticatable implements FilamentUser
     }
 
     /**
+     * Whether this user should be emailed the registry's announcements.
+     *
+     * Two gates, and they answer different questions. The installation's
+     * setting decides whether email is a channel here at all — it is false on
+     * a fresh install, where `MAIL_MAILER=log` means an enabled fan-out would
+     * write to a file and reach nobody. The column is then this person's own
+     * answer, which only ever narrows: nothing a user does on their profile
+     * page can make the registry email an installation that has not turned
+     * mail on.
+     *
+     * Asked once here rather than at each of the four notifications, because a
+     * notification that forgot to ask is one that emails a user who opted out.
+     *
+     * @see RoutedByAdminNotifier
+     */
+    public function wantsMailAnnouncements(): bool
+    {
+        return (bool) config('registry.notifications.mail')
+            && $this->email_notifications;
+    }
+
+    /**
      * Whether row-level package scoping applies to this user at all.
      *
      * Packistry's `unscoped`: a permission any role can carry (the super
@@ -230,6 +253,7 @@ class User extends Authenticatable implements FilamentUser
     {
         return [
             'email_verified_at' => 'datetime',
+            'email_notifications' => 'boolean',
             'password' => 'hashed',
         ];
     }

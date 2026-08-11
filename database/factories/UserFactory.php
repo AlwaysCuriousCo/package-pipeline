@@ -29,6 +29,9 @@ class UserFactory extends Factory
             'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),
+            // Stated rather than left to the column default, so a freshly made
+            // model answers the same as one read back from the database.
+            'email_notifications' => true,
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
         ];

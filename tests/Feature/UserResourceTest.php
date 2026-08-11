@@ -7,10 +7,12 @@ use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
 use App\Filament\Resources\Users\Pages\ListUsers;
 use App\Models\User;
+use App\Notifications\WelcomeUser;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Livewire\Livewire;
 use Spatie\Permission\Contracts\Role as RoleContract;
 use Spatie\Permission\Models\Role;
@@ -193,6 +195,86 @@ class UserResourceTest extends TestCase
 
         Livewire::test(ListUsers::class)
             ->assertActionHidden(TestAction::make('invite'));
+    }
+
+    public function test_creating_a_user_with_the_toggle_on_sends_a_welcome_email(): void
+    {
+        NotificationFacade::fake();
+
+        Livewire::test(CreateUser::class)
+            ->fillForm([
+                'name' => 'Jo Packager',
+                'email' => 'jo@example.com',
+                'password' => 'a-long-password',
+                'send_welcome_email' => true,
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $user = User::query()->where('email', 'jo@example.com')->firstOrFail();
+
+        NotificationFacade::assertSentTo($user, WelcomeUser::class);
+    }
+
+    public function test_creating_a_user_with_the_toggle_off_sends_nothing(): void
+    {
+        NotificationFacade::fake();
+
+        Livewire::test(CreateUser::class)
+            ->fillForm([
+                'name' => 'Jo Packager',
+                'email' => 'jo@example.com',
+                'password' => 'a-long-password',
+                'send_welcome_email' => false,
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        NotificationFacade::assertNothingSent();
+        // The toggle is a form field, not a column, so it must not survive
+        // into the insert.
+        $this->assertTrue(User::query()->where('email', 'jo@example.com')->exists());
+    }
+
+    public function test_the_welcome_email_is_off_by_default_when_mail_goes_nowhere(): void
+    {
+        config()->set('mail.default', 'log');
+
+        Livewire::test(CreateUser::class)
+            ->assertFormSet(['send_welcome_email' => false]);
+
+        config()->set('mail.default', 'smtp');
+
+        Livewire::test(CreateUser::class)
+            ->assertFormSet(['send_welcome_email' => true]);
+    }
+
+    public function test_the_welcome_email_can_be_resent_from_an_account(): void
+    {
+        NotificationFacade::fake();
+
+        $user = User::factory()->create();
+
+        Livewire::test(EditUser::class, ['record' => $user->getKey()])
+            ->callAction(TestAction::make('sendWelcomeEmail'))
+            ->assertHasNoActionErrors();
+
+        NotificationFacade::assertSentTo($user, WelcomeUser::class);
+    }
+
+    public function test_the_welcome_email_names_the_account_and_where_to_sign_in(): void
+    {
+        $user = User::factory()->create(['name' => 'Jo Packager', 'email' => 'jo@example.com']);
+
+        $mail = (new WelcomeUser)->toMail($user);
+
+        $rendered = (string) $mail->render();
+
+        $this->assertStringContainsString('Jo Packager', $rendered);
+        $this->assertStringContainsString('jo@example.com', $rendered);
+        $this->assertStringContainsString(route('filament.admin.auth.login'), $rendered);
+        // Nothing resembling a credential travels in this message.
+        $this->assertStringNotContainsString($user->password, $rendered);
     }
 
     public function test_an_admin_cannot_delete_their_own_account(): void

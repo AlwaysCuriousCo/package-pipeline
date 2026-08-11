@@ -54,6 +54,38 @@ large archive. Below it, the queue decides a still-running import was abandoned
 and hands it to a second worker, which downloads and stores the same archive
 again. The default of 330 already accounts for this; it is only ever raised.
 
+### Mail is off by default, and Resend is the driver to reach for
+
+`MAIL_MAILER=log` is the shipped default and a deployment can stay on it
+indefinitely. Nothing here emails anybody: release and failed-sync announcements
+go to the panel's bell, Slack and outgoing webhooks, and account setup links are
+printed by `admin:create` and `user:add` for you to deliver yourself. Mail is a
+convenience you turn on, never a dependency of the registry working.
+
+When you do want it, [Resend](https://resend.com) is installed and takes two
+variables:
+
+```dotenv
+MAIL_MAILER=resend
+RESEND_API_KEY=re_...
+MAIL_FROM_ADDRESS="registry@example.com"
+```
+
+`MAIL_FROM_ADDRESS` has to sit on a domain verified in that Resend account —
+adding the SPF and DKIM records it gives you is the whole of the setup, and
+until they resolve every send is rejected rather than merely spam-filed. The
+free tier is measured in thousands of messages a month, which a registry's
+notification traffic will not come close to.
+
+Every other Laravel transport still works unchanged — `ses` and `postmark` are
+already configured in [config/mail.php](../config/mail.php) and need only their
+key in `services.php`'s environment variables. SES is the one worth switching to
+if volume ever becomes a real number.
+
+One thing not to do: route failure alerts *only* through mail. A provider outage
+and the alert about it travel the same wire, so the message that matters most is
+the one least likely to arrive. Keep Slack or a webhook configured alongside it.
+
 ### The cache store is not just a cache
 
 This one deserves its own heading because the failure is silent.

@@ -6,6 +6,7 @@ use App\Enums\WebhookEvent;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
 use App\Notifications\Concerns\AboutOnePackage;
+use App\Notifications\Concerns\AnnouncedByMail;
 use App\Notifications\Concerns\RoutedByAdminNotifier;
 use App\Notifications\Contracts\SendsWebhook;
 use Filament\Actions\Action;
@@ -28,7 +29,7 @@ use Illuminate\Support\Str;
  */
 class PackageSyncFailed extends Notification implements SendsWebhook, ShouldQueue
 {
-    use AboutOnePackage, Queueable, RoutedByAdminNotifier;
+    use AboutOnePackage, AnnouncedByMail, Queueable, RoutedByAdminNotifier;
 
     /**
      * How much of a provider's error a receiver is sent.
@@ -104,12 +105,17 @@ class PackageSyncFailed extends Notification implements SendsWebhook, ShouldQueu
             ->contextBlock(fn (ContextBlock $block) => $block->text($this->package->repository));
     }
 
-    private function title(): string
+    protected function mailTone(): string
+    {
+        return 'danger';
+    }
+
+    protected function title(): string
     {
         return "Could not sync {$this->package->name}";
     }
 
-    private function body(): string
+    protected function body(): string
     {
         // Provider errors carry whole JSON bodies; the panel and Slack both
         // want the first line of it, not the payload.

@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Filament\Resources\Packages\PackageResource;
+use App\Notifications\Concerns\AnnouncedByMail;
 use App\Notifications\Concerns\RoutedByAdminNotifier;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification as FilamentNotification;
@@ -33,7 +34,7 @@ use Illuminate\Notifications\Slack\SlackMessage;
  */
 class UnserveablePackageNames extends Notification implements ShouldQueue
 {
-    use Queueable, RoutedByAdminNotifier;
+    use AnnouncedByMail, Queueable, RoutedByAdminNotifier;
 
     /**
      * @param  list<string>  $names  as stored, which is the spelling that has to
@@ -68,14 +69,34 @@ class UnserveablePackageNames extends Notification implements ShouldQueue
             ->sectionBlock(fn (SectionBlock $block) => $block->text($this->body())->markdown());
     }
 
-    private function title(): string
+    /**
+     * The listing rather than one package, because the finding is about a set
+     * of them and the rows have to be found by searching for a spelling the
+     * panel does not link to.
+     *
+     * @return array{label: string, url: string}
+     */
+    protected function mailAction(): array
+    {
+        return [
+            'label' => 'View packages',
+            'url' => PackageResource::getUrl('index'),
+        ];
+    }
+
+    protected function mailTone(): string
+    {
+        return 'danger';
+    }
+
+    protected function title(): string
     {
         $count = count($this->names);
 
         return $count.' '.str('package')->plural($count).' cannot be served under the stored name';
     }
 
-    private function body(): string
+    protected function body(): string
     {
         return 'Composer only ever asks for a lowercase name, and these are not stored in one — they answer '
             .'404 from /p2 and /dist. Each shares its lowercase spelling with another package in the same '

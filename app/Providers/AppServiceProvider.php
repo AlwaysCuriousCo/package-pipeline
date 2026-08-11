@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Filament\Livewire\EmailNotificationsForm;
 use App\Http\Middleware\AuthenticateComposer;
 use App\Notifications\Channels\WebhookChannel;
 use App\Support\ActingCredential;
@@ -63,6 +64,20 @@ class AppServiceProvider extends ServiceProvider
         Notification::resolved(
             fn (ChannelManager $channels) => $channels->extend('webhook', fn (): WebhookChannel => new WebhookChannel),
         );
+
+        // The profile page's email-notifications section. Registered here, in a
+        // provider that runs on every request, rather than alongside the panel
+        // that renders it: a Livewire update posts to /livewire/update, which
+        // is outside the panel's middleware and so never boots it. A component
+        // known only to the panel resolves when the page is drawn and then
+        // cannot be found when its form is submitted — which surfaces as
+        // Livewire's release-token mismatch rather than as anything naming the
+        // component. The plugin registers its own for the same reason.
+        //
+        // Unconditional, unlike the panel-side registration: the alias costs
+        // nothing when the section is not rendered, and making it depend on
+        // config would only add a second way for the two halves to disagree.
+        Livewire::component('email_notifications_form', EmailNotificationsForm::class);
 
         $this->defineRateLimiters();
 
