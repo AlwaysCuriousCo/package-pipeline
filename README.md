@@ -267,6 +267,8 @@ None of these turns mirroring on — that is a per-repository decision made in t
 | --- | --- |
 | `SLACK_BOT_USER_OAUTH_TOKEN` | Slack bot token (`xoxb-…`). Published releases and failed syncs are announced there on top of the panel's own notification bell. |
 | `SLACK_BOT_USER_DEFAULT_CHANNEL` | The channel to post in (`#releases`). Both variables are needed; leave either empty to skip Slack entirely. |
+| `MAIL_ADMIN_NOTIFICATIONS` | Also email the announcements to every panel user holding a role (default `false`). Needs a real mailer set up first — under the default `MAIL_MAILER=log` an enabled fan-out writes to the log and delivers nothing. Each user can then opt out for themselves on their profile page. See [Emailing the announcements](docs/deployment.md#emailing-the-announcements). |
+| `MAIL_MAILER` / `RESEND_API_KEY` | The mailer itself, `log` by default. [Resend](https://resend.com) is installed and wants only these two, with `MAIL_FROM_ADDRESS` on a domain verified in that account; `ses`, `postmark` and `smtp` are configured and work the same way. See [Mail is off by default](docs/deployment.md#mail-is-off-by-default-and-resend-is-the-driver-to-reach-for). |
 
 ## Command reference
 

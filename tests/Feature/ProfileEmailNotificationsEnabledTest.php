@@ -51,6 +51,6 @@ class ProfileEmailNotificationsEnabledTest extends TestCase
         $this->get(EditProfilePage::getUrl())
             ->assertSuccessful()
             ->assertSee('Email notifications')
-            ->assertSee("Email me the registry's announcements", escape: false);
+            ->assertSee("Email me the registry's announcements");
     }
 }
