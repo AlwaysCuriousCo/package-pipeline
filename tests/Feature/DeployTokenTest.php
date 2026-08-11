@@ -10,6 +10,7 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
 use App\Models\User;
+use App\Providers\AppServiceProvider;
 use App\Support\NewToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -219,6 +220,38 @@ class DeployTokenTest extends TestCase
         }
 
         $this->assertSame($one, $this->renderDeployTokenList());
+    }
+
+    /**
+     * Rolling stays on the list page, so its toast is the case Filament
+     * delivers by leaving the notification in the session for a second request
+     * to collect — the hand-off that does not survive a deployment where those
+     * two requests race. The notification has to ride in the response instead.
+     *
+     * @see AppServiceProvider::carryToastsInTheMessageRatherThanTheSession()
+     */
+    public function test_rolling_a_token_sends_the_new_one_to_the_browser_rather_than_the_session(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $deployToken = DeployToken::factory()->create();
+        $this->issueFor($deployToken);
+
+        Livewire::test(ListDeployTokens::class)
+            ->callTableAction('roll', $deployToken)
+            ->assertDispatched(
+                'notificationSent',
+                fn (string $event, array $params): bool => str_contains(
+                    $params['notification']['body'] ?? '',
+                    (string) $deployToken->refresh()->token->token_prefix,
+                ),
+            );
+
+        // Filament's session relay is left running underneath, so a
+        // deployment where it does work keeps its second route to the screen.
+        $this->assertNotNull(
+            session('filament.notifications') ?? session('filament.claimed_notifications'),
+        );
     }
 
     private function scopedToken(): DeployToken

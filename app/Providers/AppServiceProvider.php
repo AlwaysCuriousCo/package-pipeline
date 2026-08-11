@@ -17,6 +17,11 @@ use Illuminate\Notifications\ChannelManager;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Livewire\Component;
+use Livewire\Livewire;
+
+use function Livewire\on;
+use function Livewire\store;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -39,6 +44,8 @@ class AppServiceProvider extends ServiceProvider
         // One per request, so that the credential a token-authenticated write
         // is attributed to cannot outlive the request that presented it.
         $this->app->scoped(ActingCredential::class);
+
+        $this->carryToastsInTheMessageRatherThanTheSession();
     }
 
     /**
@@ -62,6 +69,77 @@ class AppServiceProvider extends ServiceProvider
         AboutCommand::add('Registry', fn (): array => [
             'Scheduler locking' => $this->schedulerLocking(),
         ]);
+    }
+
+    /**
+     * Hand a toast to the browser in the response that raised it.
+     *
+     * Filament's own delivery is a relay through the session: `send()` writes
+     * the notification to it, a dehydrate hook moves it to
+     * `filament.claimed_notifications` and dispatches `notificationsSent` with
+     * no payload, and the notifications component then makes a *second*
+     * request whose only job is to read that key back out.
+     *
+     * Which asks the session to carry a value between two requests the browser
+     * fires back to back — and Laravel saves the session in `terminate()`,
+     * after the response has already gone out. Locally the write always wins
+     * that race. Behind a load balancer it does not: the second request reads
+     * the session before the first has written it, finds nothing, and then
+     * saves its own stale copy over the top — so the toast is not merely late,
+     * it is gone, and no later page load shows it either. An action that
+     * redirects is unaffected, which is why creating a token announced itself
+     * in production while rolling one did so only in development.
+     *
+     * So we read the notification before Filament's hook does and dispatch it
+     * *with* its payload, to the `notificationSent` listener the component
+     * already carries for client-side notifications. There is still a second
+     * request — Filament renders a notification server side, so there has to
+     * be — but it now arrives holding the toast instead of going looking for
+     * it, and nothing has to survive in between. Filament's relay is left
+     * running alongside rather than replaced; the two cannot double up,
+     * for the reason given below.
+     *
+     * Registered from `register()` rather than `boot()`, and that is
+     * load-bearing: dehydrate hooks fire in registration order, and a listener
+     * added after Filament's dispatches too late to be serialised into the
+     * response — the event is simply dropped. Registering before it puts this
+     * in the slot that works.
+     *
+     * Nothing here is specific to tokens: it is every toast raised by an
+     * action that stays on the page.
+     */
+    private function carryToastsInTheMessageRatherThanTheSession(): void
+    {
+        on('dehydrate', function (Component $component): void {
+            if (! Livewire::isLivewireRequest()) {
+                return;
+            }
+
+            // A redirect is the one case where the session relay is sound —
+            // the next page load pulls it — and dispatching into a response
+            // the browser is about to navigate away from would lose it.
+            if (store($component)->has('redirect')) {
+                return;
+            }
+
+            // Read, not taken. Filament's relay still runs and still clears
+            // these keys on its own schedule, so a deployment where it works
+            // keeps working and `assertNotified()` still has something to
+            // assert on. A toast arriving down both routes is not shown twice:
+            // the component keys them by id, so the second put replaces the
+            // first.
+            //
+            // Both keys, so the order this lands in stops mattering: whichever
+            // hook ran first, what it left behind is picked up here.
+            $notifications = array_merge(
+                session()->get('filament.notifications') ?? [],
+                session()->get('filament.claimed_notifications') ?? [],
+            );
+
+            foreach ($notifications as $notification) {
+                $component->dispatch('notificationSent', notification: $notification);
+            }
+        });
     }
 
     /**
