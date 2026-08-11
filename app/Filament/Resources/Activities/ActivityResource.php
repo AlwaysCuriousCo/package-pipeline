@@ -41,11 +41,11 @@ use UnitEnum;
  * heaviest exactly where the trail matters most.
  *
  * So it is said out loud instead, and said where the decision is made — the
- * Roles screen carries it as a notice, and the README says it under "Roles and
- * permissions". Treat the permission as "may read the whole registry's history"
- * and grant it accordingly.
+ * pages where a role is created or edited carry it as a notice, and the README
+ * says it under "Roles and permissions". Treat the permission as "may read the
+ * whole registry's history" and grant it accordingly.
  *
- * @see AdminPanelProvider for the notice on the Roles screen
+ * @see AdminPanelProvider for the notice on the role create and edit pages
  *
  * @extends \Filament\Resources\Resource<Activity>
  */

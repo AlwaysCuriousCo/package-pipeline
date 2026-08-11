@@ -15,14 +15,15 @@ Sharing private PHP packages across projects is a chore: every consuming app nee
 ## Requirements
 
 - PHP **8.3+** with Composer
+- Node **22.19+** with npm, to compile the admin panel's stylesheet
 - SQLite (default — nothing to configure), or MySQL/Postgres if you prefer
 - A GitHub or GitLab account with the repositories you want to serve (GitHub Enterprise and self-managed GitLab both work; each source can point at its own API base URL)
 
-No Node.js, and no front-end build step: every page the app serves is Filament's, and Filament ships its own compiled assets.
+Every page the app serves is Filament's, but Filament's shipped stylesheet carries only its own `fi-*` classes and no Tailwind utility layer. The panel's views use utility classes, so `npm run build` compiles a theme that has both — see [Development](#development). A deploy that skips it serves those views unstyled, without erroring.
 
 ## Quickstart
 
-Clone and run the one-shot setup script. It installs dependencies, creates `.env`, generates an app key, runs migrations, and seeds the panel's permissions:
+Clone and run the one-shot setup script. It installs PHP and Node dependencies, builds the panel stylesheet, creates `.env`, generates an app key, runs migrations, and seeds the panel's permissions:
 
 ```bash
 git clone https://github.com/AlwaysCuriousCo/package-pipeline.git
@@ -309,17 +310,27 @@ composer test        # phpunit via artisan test
 composer lint        # code style, report only (Laravel Pint)
 composer analyse     # static analysis (PHPStan via Larastan, level 6)
 vendor/bin/pint      # apply the fixes `composer lint` reports
+npm run build        # compile the panel stylesheet
 ```
 
-CI runs all three on every pull request, so a branch that passes them locally is a branch that goes green.
+CI runs the first three on every pull request, so a branch that passes them locally is a branch that goes green.
 
-`composer run dev` runs the web server, a queue worker, and `pail` log streaming together in one terminal — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever. `php artisan dev:list` shows what it starts; the equivalent three terminals are:
+`composer run dev` runs the web server, a queue worker, `pail` log streaming, and the Vite dev server together in one terminal — if you run pieces manually instead, remember the queue worker, or panel-triggered syncs will sit in the `jobs` table forever. `php artisan dev:list` shows what it starts; the equivalent four terminals are:
 
 ```bash
 php artisan serve
 php artisan queue:listen --tries=1 --timeout=0
 php artisan pail --timeout=0
+npm run dev
 ```
+
+### The panel stylesheet
+
+The admin panel loads `resources/css/filament/admin/theme.css`, compiled by Vite and registered with `->viteTheme()` in `AdminPanelProvider`. It replaces the `app.css` that `filament:upgrade` publishes rather than loading beside it, and it exists because Filament's shipped build has no Tailwind utility layer — only the `fi-*` classes Filament's own views use.
+
+Tailwind generates utilities only for files named by the `@source` globs in that file, which currently cover `app/Filament/` and `resources/views/filament/`. **A Blade view outside those paths that uses a utility class renders unstyled** — no build error, nothing in the browser console, just a `div` that ignored `grid` and `p-4`. Add an `@source` line when you add a view root.
+
+Neither `npm run dev` nor `npm run build` is optional in a fresh checkout. `->viteTheme()` resolves the stylesheet through Laravel's Vite helper, which throws `ViteManifestNotFoundException` when there is no `public/build/manifest.json` and no dev server running — so every admin page returns a 500 rather than rendering unstyled. That is the loud failure; the quiet one is the `@source` glob above.
 
 ## Deploying
 
@@ -340,6 +351,7 @@ The short version is below. **[docs/deployment.md](docs/deployment.md)** is the 
 
   Every task is `onOneServer()`, which needs a shared cache store that supports locks — the default `database`, or `redis`. `CACHE_STORE=file` defeats that once there is more than one container, each holding its own lock; `CACHE_STORE=array` defeats it on *any* deployment, because `schedule:run` is a fresh process every minute and an in-memory lock does not outlive it. That is a correctness problem rather than a performance one — concurrent rebuilds of one package end with the loser's prune deleting the winner's rows. `php artisan about` reports which you have under **Registry → Scheduler locking**; see [The cache store is not just a cache](docs/deployment.md#the-cache-store-is-not-just-a-cache).
 
+- **Build the panel stylesheet** with `npm ci && npm run build`, on every deploy. `public/build` is not in version control, and `->viteTheme()` throws `ViteManifestNotFoundException` when the manifest is missing — so a deploy that skips this answers 500 on every admin page while the Composer endpoints carry on working normally. See [The panel stylesheet](#the-panel-stylesheet).
 - **Seed the permissions** with `php artisan db:seed --force`, after migrating and on any deploy that adds a resource. Shield's policies check permissions that must exist as rows in the database; without them the panel denies everything, super admin included.
 - **Create the first admin account** with `php artisan admin:create --email=you@example.com`. A command runner with no terminal attached (Laravel Cloud's, a deploy hook) can't prompt for a password, so the command prints a sealed, single-use link that sets one in the browser instead — no password in the environment, and none in the provider's command log. The link expires after **5 minutes**; re-run the command for a fresh one. It needs no mail configuration.
 - **Set `DIST_DISK=s3`** (and the `AWS_*` variables) whenever app containers don't share a filesystem, so every instance sees the same stored archives. On Laravel Cloud, attaching an object storage bucket injects the `AWS_*` values automatically. Downloads are then redirected to short-lived pre-signed URLs rather than streamed through PHP, so the bucket's endpoint has to resolve from wherever `composer install` runs — an internal-only hostname (a MinIO service name, say) breaks clients that the app itself can reach the bucket from.
@@ -353,12 +365,15 @@ The short version is below. **[docs/deployment.md](docs/deployment.md)** is the 
 
 1. **Attach a database.** App containers are ephemeral, so the SQLite default won't survive a deploy — attach a Cloud database (MySQL or Postgres) from the environment's **Resources** and let Cloud inject the `DB_*` variables.
 2. **Attach an object storage bucket** and set `DIST_DISK=s3`. Cloud injects the `AWS_*` variables when the bucket is attached; without it, stored version archives vanish on every deploy and Composer downloads 404 until the next sync rebuilds them.
-3. **Add the deploy commands** so migrations and Shield's permission rows are in place before anyone logs in:
+3. **Add the deploy commands** so the panel stylesheet is built and migrations and Shield's permission rows are in place before anyone logs in:
 
    ```bash
+   npm ci && npm run build
    php artisan migrate --force
    php artisan db:seed --force
    ```
+
+   Cloud runs a Node build automatically when it detects `package.json`, in which case the first line is already covered — but check the deploy log rather than assume it, because the symptom of a missing build is a 500 on every admin page.
 
 4. **Add a queue worker** to the environment (Resources → Queue Worker, default queue) and give it a **310-second timeout**, for the reason above. Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
 5. **Add a scheduler** to the environment (Resources → Scheduler) so the maintenance tasks above actually run. Cloud's scheduler invokes `schedule:run` for you.

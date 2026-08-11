@@ -347,8 +347,16 @@ release looks after itself.
   package no webhook covers, and the nightly commands are what stop archives,
   notifications and job batches accumulating without bound. See
   [docs/deployment.md](docs/deployment.md).
-- **Node is no longer needed.** `npm install` and `npm run build` are gone from
-  setup; there was no front-end build being served.
+- **Node 22.19+ and `npm run build` are required**, and a deploy that skips the
+  build serves 500s from every admin page. An earlier revision of this release
+  removed the front-end build on the grounds that none was being served, which
+  was true and incomplete: Filament's shipped stylesheet carries only its own
+  `fi-*` classes and no Tailwind utility layer, so the panel views that use
+  utility classes had been rendering unstyled. The panel now compiles its own
+  theme — Filament's stylesheet rebuilt from source, plus a utility layer
+  generated from `app/Filament` and `resources/views/filament` — registered with
+  `->viteTheme()`. `composer run setup` runs the build; CI and deploy pipelines
+  need `npm ci && npm run build` added.
 - Nothing new is enabled by default. Upstream mirroring, the Prometheus
   endpoint, outgoing webhooks and vendor reservations all start off, and a
   registry that ignores them behaves as it did before.

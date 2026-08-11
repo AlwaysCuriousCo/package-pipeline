@@ -6,7 +6,8 @@ use App\Filament\Auth\ResetPassword;
 use App\Filament\Pages\ApiTokens;
 use App\Filament\Pages\Dashboard;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
-use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource;
+use BezhanSalleh\FilamentShield\Resources\Roles\Pages\CreateRole;
+use BezhanSalleh\FilamentShield\Resources\Roles\Pages\EditRole;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -36,6 +37,12 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
+            // Our own stylesheet rather than the one `filament:upgrade`
+            // publishes. It rebuilds Filament's from source and adds the
+            // Tailwind utility layer that Filament's shipped build omits —
+            // without it, every utility class in resources/views/filament is a
+            // no-op. Requires `npm run build`; see resources/css/filament/admin/theme.css.
+            ->viteTheme('resources/css/filament/admin/theme.css')
             // Navigation is one level deep and every page names itself;
             // a trail on top of that is clutter.
             ->breadcrumbs(false)
@@ -53,11 +60,15 @@ class AdminPanelProvider extends PanelProvider
             // tell you so, so it is said on the screen itself rather than only
             // in a docblock the person ticking the box will never open.
             //
+            // Only where the box is ticked: on the list and view pages there
+            // is no decision to inform, and a standing banner there would be
+            // read past by the time it mattered.
+            //
             // @see \App\Filament\Resources\Activities\ActivityResource
             ->renderHook(
                 PanelsRenderHook::PAGE_START,
                 fn (): ViewContract => view('filament.shield.audit-log-reach'),
-                scopes: RoleResource::class,
+                scopes: [CreateRole::class, EditRole::class],
             )
             // The emailed "forgot password" flow, on Filament's own signed
             // route. The subclass only adds a second way in — see below.
