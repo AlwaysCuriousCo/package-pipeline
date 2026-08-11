@@ -38,6 +38,19 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
 
+      # Not decoration. The panel resolves its stylesheet through
+      # `->viteTheme()`, which throws `ViteManifestNotFoundException` when
+      # `public/build/manifest.json` is absent — so without this every test
+      # that renders an admin page over HTTP fails with a 500.
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build assets
+        run: npm ci && npm run build
+
       - name: Copy environment file
         run: cp .env.example .env
 
@@ -118,6 +131,16 @@ jobs:
 
       - name: Install Composer dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
+
+      # As above: no manifest, no admin page. See the SQLite leg.
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build assets
+        run: npm ci && npm run build
 
       - name: Copy environment file
         run: cp .env.example .env

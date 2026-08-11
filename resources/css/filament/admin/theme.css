@@ -1,0 +1,21 @@
+/*
+ * The admin panel's stylesheet, compiled by Vite and registered on the panel
+ * with `->viteTheme()`. It replaces the `app.css` that `filament:upgrade`
+ * publishes, rather than loading alongside it.
+ *
+ * The import below is Filament's own theme source, so every `fi-*` class the
+ * panel depends on is rebuilt here from the installed version — nothing is
+ * lost by taking over the stylesheet. What it adds is a utility layer built
+ * from the `@source` globs: Tailwind scans those files and emits only the
+ * utilities they actually name.
+ *
+ * Which means the globs are load-bearing. A Blade view outside them that uses
+ * a utility class gets no rule for it and simply renders unstyled — silently,
+ * with no build error and nothing in the console. Both of our Filament view
+ * roots are covered below; a view added anywhere else needs its own `@source`.
+ */
+
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@source '../../../../app/Filament/**/*';
+@source '../../../../resources/views/filament/**/*';
