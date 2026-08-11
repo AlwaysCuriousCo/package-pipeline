@@ -193,12 +193,15 @@ class ScheduleTest extends TestCase
         // The key is a real uuid column, which PostgreSQL enforces and the
         // other two engines do not, so the rows are labelled beside the key
         // rather than in it.
-        $ids = collect(['kept-unread', 'kept-just-read', 'pruned-read', 'pruned-ancient'])
+        $ids = collect(['kept-unread', 'kept-just-read', 'kept-ancient-just-read', 'pruned-read', 'pruned-ancient'])
             ->mapWithKeys(fn (string $label): array => [$label => (string) Str::orderedUuid()]);
 
         $user->notifications()->createMany([
             ['id' => $ids['kept-unread'], 'type' => 'Test', 'data' => [], 'created_at' => now()->subDays(10)],
             ['id' => $ids['kept-just-read'], 'type' => 'Test', 'data' => [], 'read_at' => now()->subDay(), 'created_at' => now()->subDays(10)],
+            // An old failure somebody has only just opened: the 30 days that
+            // reading it earns are not shortened by the age of the row.
+            ['id' => $ids['kept-ancient-just-read'], 'type' => 'Test', 'data' => [], 'read_at' => now()->subDay(), 'created_at' => now()->subDays(100)],
             ['id' => $ids['pruned-read'], 'type' => 'Test', 'data' => [], 'read_at' => now()->subDays(31), 'created_at' => now()->subDays(40)],
             ['id' => $ids['pruned-ancient'], 'type' => 'Test', 'data' => [], 'created_at' => now()->subDays(91)],
         ]);
@@ -208,7 +211,7 @@ class ScheduleTest extends TestCase
         $labels = $ids->flip();
 
         $this->assertSame(
-            ['kept-just-read', 'kept-unread'],
+            ['kept-ancient-just-read', 'kept-just-read', 'kept-unread'],
             DB::table('notifications')
                 ->pluck('id')
                 ->map(fn (string $id): string => (string) $labels->get($id))

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -127,6 +128,25 @@ class AuditArchivesCommandTest extends TestCase
         $this->artisan('archives:audit')
             ->expectsOutputToContain('where its version says it is')
             ->assertSuccessful();
+    }
+
+    /**
+     * The all-clear counts what was compared. A version inside the grace
+     * window was never listed against the disk, so reporting it as confirmed
+     * present would claim an answer the run does not have.
+     *
+     * Run through Artisan rather than the test harness because the assertion
+     * is on the tail of the line: the harness pads and clips captured output
+     * to a terminal width the real command is not writing to.
+     */
+    public function test_the_all_clear_counts_only_the_versions_it_compared(): void
+    {
+        $this->version('1.0.0');
+
+        $this->version('1.2.0')->forceFill(['updated_at' => now()])->save();
+
+        $this->assertSame(0, Artisan::call('archives:audit'));
+        $this->assertStringContainsString('(1 checked, 1 too recent to check)', Artisan::output());
     }
 
     /**

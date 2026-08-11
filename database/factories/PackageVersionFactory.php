@@ -25,7 +25,10 @@ class PackageVersionFactory extends Factory
             'is_dev' => false,
             'released_at' => fake()->dateTimeBetween('-2 years'),
             'metadata' => fn (array $attributes): array => [
-                'name' => Package::query()->find($attributes['package_id'])?->name ?? 'acme/widgets',
+                // Read as a column rather than a model: a test that made up a
+                // package_id, or deleted the row, still gets metadata instead
+                // of a dereference of nothing.
+                'name' => Package::query()->whereKey($attributes['package_id'])->value('name') ?? 'acme/widgets',
                 'version' => $attributes['version'],
                 'type' => 'library',
                 'require' => ['php' => '^8.3'],

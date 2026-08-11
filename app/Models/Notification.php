@@ -35,10 +35,17 @@ class Notification extends DatabaseNotification
      */
     public function prunable(): Builder
     {
+        // Each branch carries its own read/unread test, so the two retentions
+        // never reach past each other: a failure that sat unread for months
+        // and was opened yesterday is a notification somebody is working
+        // through, and it keeps the 30 days after `read_at` that being read
+        // earns it rather than being swept by the age of the row.
         return static::query()
             ->where(fn (Builder $query) => $query
                 ->whereNotNull('read_at')
                 ->where('read_at', '<', now()->subDays(self::READ_RETENTION_DAYS)))
-            ->orWhere('created_at', '<', now()->subDays(self::RETENTION_DAYS));
+            ->orWhere(fn (Builder $query) => $query
+                ->whereNull('read_at')
+                ->where('created_at', '<', now()->subDays(self::RETENTION_DAYS)));
     }
 }

@@ -83,7 +83,7 @@ class SsoController extends Controller
         }
 
         if (! $user instanceof User) {
-            $user = $this->register($source, $externalId, $email, $identity->getName());
+            $user = $this->register($source, $identity, $externalId, $email);
 
             if ($user === null) {
                 return $this->refuse($source->allow_registration
@@ -128,11 +128,23 @@ class SsoController extends Controller
      * Provision the account an unknown identity is entitled to, or null when
      * it is not entitled to one.
      */
-    private function register(AuthenticationSource $source, string $externalId, ?string $email, ?string $name): ?User
+    private function register(AuthenticationSource $source, Identity $identity, string $externalId, ?string $email): ?User
     {
         if (! $source->allow_registration || blank($email) || ! $source->allowsDomain($email)) {
             return null;
         }
+
+        // The same promise adoption asks for. A domain allowlist says which
+        // addresses may become accounts here, and it can only mean that if
+        // the address is the provider's to assert — an OIDC issuer that lets
+        // a principal type an unverified address into its own profile would
+        // otherwise hand out an account on any allowed domain for the asking,
+        // stamped verified below on the strength of that same claim.
+        if (! $this->vouchedForEmail($source, $identity)) {
+            return null;
+        }
+
+        $name = $identity->getName();
 
         $user = User::query()->create([
             'name' => $name ?: Str::headline(Str::before($email, '@')),

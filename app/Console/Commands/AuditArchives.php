@@ -139,7 +139,14 @@ class AuditArchives extends Command
         $lost = $checked->filter(fn (PackageVersion $version): bool => ! isset($stored[$version->archive_path]));
 
         if ($lost->isEmpty()) {
-            $this->components->info("Every stored archive is where its version says it is ({$referenced} checked).");
+            // What was compared, not what exists: versions touched inside the
+            // grace window were never listed against the disk, and counting
+            // them here would report them as confirmed present when the next
+            // run is the first thing to look at them.
+            $skipped = $referenced - $checked->count();
+            $note = $skipped > 0 ? ", {$skipped} too recent to check" : '';
+
+            $this->components->info("Every stored archive is where its version says it is ({$checked->count()} checked{$note}).");
 
             return self::SUCCESS;
         }

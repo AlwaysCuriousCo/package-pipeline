@@ -247,6 +247,38 @@ class SsoTest extends TestCase
         $this->assertDatabaseMissing('users', ['email' => 'stranger@elsewhere.io']);
     }
 
+    public function test_an_unverified_oidc_identity_cannot_register_an_account(): void
+    {
+        $this->source->update(['provider' => AuthProvider::Oidc, 'allowed_domains' => ['example.com']]);
+
+        // The allowlist says which addresses may become accounts here, which
+        // is only an answer if the issuer is the one asserting the address.
+        foreach ([[], ['email_verified' => false], ['email_verified' => 'false']] as $claims) {
+            $this->returningIdentity('ext-9', 'new@example.com', claims: $claims);
+
+            $this->get(route('sso.callback', $this->source))
+                ->assertRedirect(route('filament.admin.auth.login'))
+                ->assertSessionHas('sso_error');
+
+            $this->assertGuest();
+            $this->assertDatabaseMissing('users', ['email' => 'new@example.com']);
+        }
+    }
+
+    public function test_a_verified_oidc_identity_registers_just_in_time(): void
+    {
+        $this->source->update(['provider' => AuthProvider::Oidc]);
+
+        $this->returningIdentity('ext-9', 'new@example.com', 'New Dev', claims: ['email_verified' => true]);
+
+        $this->get(route('sso.callback', $this->source))->assertRedirect('/admin');
+
+        $user = User::query()->where('email', 'new@example.com')->sole();
+
+        $this->assertAuthenticatedAs($user);
+        $this->assertNotNull($user->email_verified_at);
+    }
+
     public function test_registration_can_be_switched_off(): void
     {
         $this->source->update(['allow_registration' => false]);
