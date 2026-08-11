@@ -15,7 +15,7 @@ Sharing private PHP packages across projects is a chore: every consuming app nee
 ## Requirements
 
 - PHP **8.3+** with Composer
-- Node **22.19+** with npm, to compile the admin panel's stylesheet
+- Node **22+** with npm, to compile the front-end assets and the admin panel's stylesheet
 - SQLite (default — nothing to configure), or MySQL/Postgres if you prefer
 - A GitHub or GitLab account with the repositories you want to serve (GitHub Enterprise and self-managed GitLab both work; each source can point at its own API base URL)
 
@@ -365,19 +365,28 @@ The short version is below. **[docs/deployment.md](docs/deployment.md)** is the 
 
 1. **Attach a database.** App containers are ephemeral, so the SQLite default won't survive a deploy — attach a Cloud database (MySQL or Postgres) from the environment's **Resources** and let Cloud inject the `DB_*` variables.
 2. **Attach an object storage bucket** and set `DIST_DISK=s3`. Cloud injects the `AWS_*` variables when the bucket is attached; without it, stored version archives vanish on every deploy and Composer downloads 404 until the next sync rebuilds them.
-3. **Add the deploy commands** so the panel stylesheet is built and migrations and Shield's permission rows are in place before anyone logs in:
+3. **Set the build command** (Deployments → Build Commands) so the panel stylesheet is compiled into the image:
 
    ```bash
-   npm ci && npm run build
+   composer install --no-dev && npm ci && npm run build
+   ```
+
+   Cloud does not detect `package.json` and add the Node step for you on a PHP runtime — the build command is whatever you set it to, and an application created before this repository had a `package.json` will not have one. The `npm` half is not optional: without it every admin page answers 500 with `ViteManifestNotFoundException`.
+
+   It has to be a *build* command, not a deploy command. Cloud discards filesystem changes made by deploy commands, so a build run there writes `public/build/` and then throws it away — the same 500, on every deploy, no matter how many times you run it.
+
+4. **Add the deploy commands** so migrations and Shield's permission rows are in place before anyone logs in:
+
+   ```bash
    php artisan migrate --force
    php artisan db:seed --force
    ```
 
-   Cloud runs a Node build automatically when it detects `package.json`, in which case the first line is already covered — but check the deploy log rather than assume it, because the symptom of a missing build is a 500 on every admin page.
+   Nothing else belongs here. In particular Cloud documents `php artisan optimize:clear` as a command that causes unexpected behaviour around the queue, and `queue:restart` is already handled for you after each deployment.
 
-4. **Add a queue worker** to the environment (Resources → Queue Worker, default queue) and give it a **310-second timeout**, for the reason above. Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
-5. **Add a scheduler** to the environment (Resources → Scheduler) so the maintenance tasks above actually run. Cloud's scheduler invokes `schedule:run` for you.
-6. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
+5. **Add a queue worker** to the environment (Resources → Queue Worker, default queue) and give it a **310-second timeout**, for the reason above. Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
+6. **Add a scheduler** to the environment (Resources → Scheduler) so the maintenance tasks above actually run. Cloud's scheduler invokes `schedule:run` for you.
+7. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
 
 #### Create your super admin
 
