@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Package;
 use App\Models\User;
+use App\Notifications\Concerns\RoutedByAdminNotifier;
 use App\Notifications\PackageAbandoned;
 use App\Notifications\PackageSyncFailed;
 use App\Notifications\PackageVersionsPublished;
@@ -23,8 +24,8 @@ use Tests\TestCase;
  * on a fresh install, and no user preference can overrule it. The column is the
  * person's, on by default, and only ever narrows.
  *
- * @see \App\Notifications\Concerns\RoutedByAdminNotifier
- * @see \App\Models\User::wantsMailAnnouncements()
+ * @see RoutedByAdminNotifier
+ * @see User::wantsMailAnnouncements()
  */
 class AdminMailNotificationsTest extends TestCase
 {

@@ -12,7 +12,7 @@ use Tests\TestCase;
 /**
  * The per-user half of the switch, on the profile page.
  *
- * @see \App\Filament\Livewire\EmailNotificationsForm
+ * @see EmailNotificationsForm
  */
 class ProfileEmailNotificationsTest extends TestCase
 {
