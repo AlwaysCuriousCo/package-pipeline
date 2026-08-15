@@ -475,7 +475,12 @@ class ComposerRepositoryTest extends TestCase
             // The URL is keyed by commit, so the bytes behind it never change
             // and a client may keep them for as long as it likes. Private:
             // a shared cache is no party to who this app serves an archive to.
-            ->assertHeader('Cache-Control', 'immutable, max-age=31536000, private');
+            ->assertHeader('Cache-Control', 'immutable, max-age=31536000, private')
+            // Named for the release, not the commit the URL is keyed by:
+            // Composer names its own downloads, so this filename exists for
+            // the person who opened the URL in a browser, and forty hex
+            // characters tell them nothing about which release they got.
+            ->assertHeader('Content-Disposition', 'attachment; filename=acme-widgets-v1.1.0.zip');
 
         $this->assertSame('zip-bytes', $response->streamedContent());
 

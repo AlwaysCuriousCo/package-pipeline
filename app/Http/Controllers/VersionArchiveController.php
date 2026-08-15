@@ -74,7 +74,7 @@ class VersionArchiveController extends Controller
             "The stored archive for {$package->name}@{$version->version} is missing from the dist disk.",
         );
 
-        $filename = $this->filename($package, $version);
+        $filename = ArchiveStore::downloadFilename($package->name, $version->version);
 
         // Only an archive actually being served counts; every 404 above
         // returned before reaching this line.
@@ -111,20 +111,5 @@ class VersionArchiveController extends Controller
             // by row id may be replayed as though it were immutable.
             'Cache-Control' => 'no-store, private',
         ]);
-    }
-
-    /**
-     * What the browser saves the archive as: vendor-package-version.zip.
-     *
-     * A version is free-form enough to be a filename hazard — a branch build
-     * is stored as `dev-feat/enhance`, and Composer allows more besides — so
-     * everything outside a conservative set becomes a hyphen rather than being
-     * trusted to survive a Content-Disposition header intact.
-     */
-    private function filename(Package $package, PackageVersion $version): string
-    {
-        $stem = preg_replace('/[^A-Za-z0-9._-]+/', '-', "{$package->name}-{$version->version}") ?? 'archive';
-
-        return trim($stem, '-.').'.zip';
     }
 }
