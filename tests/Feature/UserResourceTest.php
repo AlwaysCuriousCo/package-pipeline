@@ -262,6 +262,19 @@ class UserResourceTest extends TestCase
         NotificationFacade::assertSentTo($user, WelcomeUser::class);
     }
 
+    public function test_resending_the_welcome_email_says_so_when_mail_goes_nowhere(): void
+    {
+        NotificationFacade::fake();
+        config()->set('mail.default', 'log');
+
+        $user = User::factory()->create();
+
+        Livewire::test(EditUser::class, ['record' => $user->getKey()])
+            ->callAction(TestAction::make('sendWelcomeEmail'))
+            ->assertHasNoActionErrors()
+            ->assertNotified('Welcome email went nowhere');
+    }
+
     public function test_the_welcome_email_names_the_account_and_where_to_sign_in(): void
     {
         $user = User::factory()->create(['name' => 'Jo Packager', 'email' => 'jo@example.com']);

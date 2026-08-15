@@ -57,6 +57,13 @@ class RepositoryResource extends Resource
         return RepositoriesTable::configure($table);
     }
 
+    public static function getRelations(): array
+    {
+        return [
+            RelationManagers\PackagesRelationManager::class,
+        ];
+    }
+
     public static function getPages(): array
     {
         return [

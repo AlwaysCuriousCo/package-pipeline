@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Resources\Repositories\Pages\CreateRepository;
 use App\Filament\Resources\Repositories\Pages\EditRepository;
 use App\Filament\Resources\Repositories\Pages\ListRepositories;
+use App\Filament\Resources\Repositories\RelationManagers\PackagesRelationManager;
 use App\Filament\Resources\Repositories\RepositoryResource;
 use App\Models\MirroredArchive;
 use App\Models\MirroredPackage;
@@ -237,6 +238,20 @@ class RepositoryResourceTest extends TestCase
         }
 
         $this->assertSame($one, $this->renderRepositoryList());
+    }
+
+    public function test_the_edit_page_lists_the_packages_served_by_the_repository(): void
+    {
+        $repository = Repository::factory()->create();
+        $mine = Package::factory()->create(['repository_id' => $repository->id]);
+        $theirs = Package::factory()->create(['repository_id' => Repository::factory()->create()->id]);
+
+        Livewire::test(PackagesRelationManager::class, [
+            'ownerRecord' => $repository,
+            'pageClass' => EditRepository::class,
+        ])
+            ->assertCanSeeTableRecords([$mine])
+            ->assertCanNotSeeTableRecords([$theirs]);
     }
 
     /**
