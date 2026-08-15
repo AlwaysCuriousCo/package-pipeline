@@ -6,6 +6,7 @@ use App\Enums\WebhookEvent;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
 use App\Notifications\Concerns\AboutOnePackage;
+use App\Notifications\Concerns\AnnouncedByMail;
 use App\Notifications\Concerns\RoutedByAdminNotifier;
 use App\Notifications\Contracts\SendsWebhook;
 use Filament\Actions\Action;
@@ -27,7 +28,7 @@ use Illuminate\Notifications\Slack\SlackMessage;
  */
 class PackageAbandoned extends Notification implements SendsWebhook, ShouldQueue
 {
-    use AboutOnePackage, Queueable, RoutedByAdminNotifier;
+    use AboutOnePackage, AnnouncedByMail, Queueable, RoutedByAdminNotifier;
 
     public function __construct(public readonly Package $package) {}
 
@@ -83,12 +84,17 @@ class PackageAbandoned extends Notification implements SendsWebhook, ShouldQueue
             ->contextBlock(fn (ContextBlock $block) => $block->text((string) $this->package->repository));
     }
 
-    private function title(): string
+    protected function mailTone(): string
+    {
+        return 'warning';
+    }
+
+    protected function title(): string
     {
         return "Abandoned {$this->package->name}";
     }
 
-    private function body(): string
+    protected function body(): string
     {
         return filled($this->package->replacement_package)
             ? "Consumers are now told to use {$this->package->replacement_package} instead."

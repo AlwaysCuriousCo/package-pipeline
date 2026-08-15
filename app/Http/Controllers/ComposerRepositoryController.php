@@ -1003,7 +1003,7 @@ class ComposerRepositoryController extends Controller
             return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
         }
 
-        return $disk->download($version->archive_path, "{$vendor}-{$package}-{$reference}.zip", [
+        return $disk->download($version->archive_path, ArchiveStore::downloadFilename($name, $version->version), [
             'Content-Type' => 'application/zip',
             // The URL names a commit, so it can only ever answer with these
             // bytes: there is nothing for a client to revalidate, and a year
@@ -1058,7 +1058,10 @@ class ComposerRepositoryController extends Controller
             return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
         }
 
-        return $this->archives->disk()->download($path, str_replace('/', '-', $name)."-{$reference}.zip", [
+        // Named by reference rather than by version, unlike a published
+        // archive: a mirrored one is addressed by the upstream's commit and
+        // this registry holds no version row to look a tag up in.
+        return $this->archives->disk()->download($path, ArchiveStore::downloadFilename($name, $reference), [
             'Content-Type' => 'application/zip',
             'Cache-Control' => 'private, max-age=31536000, immutable',
         ]);

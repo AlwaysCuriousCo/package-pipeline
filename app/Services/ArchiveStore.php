@@ -59,6 +59,32 @@ class ArchiveStore
     }
 
     /**
+     * What the browser saves an archive as: `vendor-package-version.zip`.
+     *
+     * Stored paths are uuids, so every endpoint that serves an archive has to
+     * name the download itself, and they all name it the same way here — what
+     * an operator gets out of the panel and what they get by opening a dist
+     * URL should not be two different files on disk.
+     *
+     * The version is what a human recognises the archive by; a commit
+     * reference is not, and forty hex characters of one is what makes an
+     * otherwise readable filename unreadable. It is also what keeps two
+     * releases of the same package from landing as `name.zip` and
+     * `name (1).zip` in a downloads folder.
+     *
+     * Both halves are free-form enough to be a filename hazard — a branch
+     * build is stored as `dev-feat/enhance`, and Composer allows more besides
+     * — so everything outside a conservative set becomes a hyphen rather than
+     * being trusted to survive a Content-Disposition header intact.
+     */
+    public static function downloadFilename(string $name, string $version): string
+    {
+        $stem = preg_replace('/[^A-Za-z0-9._-]+/', '-', "{$name}-{$version}") ?? 'archive';
+
+        return trim($stem, '-.').'.zip';
+    }
+
+    /**
      * A URL the client can fetch this archive from directly, or null when the
      * disk has none to give and the app has to serve the bytes itself.
      *

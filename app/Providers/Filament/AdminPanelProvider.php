@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Auth\ResetPassword;
+use App\Filament\Livewire\EmailNotificationsForm;
 use App\Filament\Pages\ApiTokens;
 use App\Filament\Pages\Dashboard;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
@@ -83,6 +84,18 @@ class AdminPanelProvider extends PanelProvider
             // why that is worth avoiding.
             ->routes(fn (): Route => RouteFacade::get('password-reset/set', ResetPassword::class)
                 ->name('auth.password-reset.set'))
+            // The pipeline mark, served from public/ rather than through Vite:
+            // the favicon is requested by the browser at a fixed URL before any
+            // manifest is consulted, so both need a stable, unhashed path.
+            // Source of truth is art/logo.png; public/images/* and
+            // public/favicon.ico are resized copies of it.
+            //
+            // No dark-mode variant is registered because there is nothing to
+            // vary — the mark is mid-teal on transparent, which holds its
+            // contrast against both the light and dark sidebar.
+            ->brandLogo(asset('images/logo.png'))
+            ->brandLogoHeight('2rem')
+            ->favicon(asset('images/favicon-32x32.png'))
             ->colors([
                 'primary' => Color::Amber,
             ])
@@ -103,10 +116,19 @@ class AdminPanelProvider extends PanelProvider
             // Self-service profile page, reached from the user menu rather
             // than the sidebar. Account deletion stays off: accounts are
             // provisioned and removed by admins here.
+            //
+            // The email-notifications section is added only when the
+            // installation has turned announcement emails on, because the
+            // toggle would otherwise govern nothing — see config/registry.php.
             ->plugin(
                 FilamentEditProfilePlugin::make()
                     ->shouldRegisterNavigation(false)
                     ->shouldShowDeleteAccountForm(false)
+                    ->customProfileComponents(array_filter([
+                        'email_notifications_form' => config('registry.notifications.mail')
+                            ? EmailNotificationsForm::class
+                            : null,
+                    ]))
             )
             ->userMenuItems([
                 'profile' => MenuItem::make()

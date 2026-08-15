@@ -110,6 +110,19 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   the panel's own resources so a fresh database gets them from `db:seed`.
 - Slack notifications for published releases and failed syncs, alongside the
   panel's own notification bell.
+- Email notifications for the same announcements, off by default and turned on
+  with `MAIL_ADMIN_NOTIFICATIONS=true` once a mailer is configured. Recipients
+  are the panel users holding a role, and each of them can opt out under **Email
+  notifications** on their profile page — the environment setting decides
+  whether email happens at all, the profile toggle only ever narrows it. The
+  bell is not on the toggle, so switching email off never leaves somebody with
+  no way of hearing that a package stopped syncing. See [Emailing the
+  announcements](docs/deployment.md#emailing-the-announcements).
+- [Resend](https://resend.com) as an installed mail transport:
+  `MAIL_MAILER=resend` and `RESEND_API_KEY` are the whole of the setup, with
+  `MAIL_FROM_ADDRESS` on a domain verified in that account. `ses`, `postmark`
+  and `smtp` remain configured and work unchanged. Mail stays on the `log`
+  driver by default.
 - Operational commands, so a deployment can be provisioned without a browser:
   `admin:create`, `user:add`, `user:reset-password`, `package:add`,
   `package:delete`, `package:rebuild`, `packages:sync`, `token:add`,

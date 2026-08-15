@@ -6,6 +6,7 @@ use App\Enums\WebhookEvent;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Models\Package;
 use App\Notifications\Concerns\AboutOnePackage;
+use App\Notifications\Concerns\AnnouncedByMail;
 use App\Notifications\Concerns\RoutedByAdminNotifier;
 use App\Notifications\Contracts\SendsWebhook;
 use App\Services\SyncOutcome;
@@ -27,7 +28,7 @@ use Illuminate\Notifications\Slack\SlackMessage;
  */
 class PackageVersionsPublished extends Notification implements SendsWebhook, ShouldQueue
 {
-    use AboutOnePackage, Queueable, RoutedByAdminNotifier;
+    use AboutOnePackage, AnnouncedByMail, Queueable, RoutedByAdminNotifier;
 
     public function __construct(
         public readonly Package $package,
@@ -90,7 +91,12 @@ class PackageVersionsPublished extends Notification implements SendsWebhook, Sho
             ->contextBlock(fn (ContextBlock $block) => $block->text($this->package->repository));
     }
 
-    private function title(): string
+    protected function mailTone(): string
+    {
+        return 'success';
+    }
+
+    protected function title(): string
     {
         if ($this->outcome->initialImport) {
             return "Imported {$this->package->name}";
@@ -101,7 +107,7 @@ class PackageVersionsPublished extends Notification implements SendsWebhook, Sho
             : "{$this->package->name} — ".count($this->outcome->releases).' new versions';
     }
 
-    private function body(): string
+    protected function body(): string
     {
         // A first import can bring in years of tags at once; listing them all
         // would say less than the count and the latest version do.

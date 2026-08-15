@@ -54,6 +54,82 @@ large archive. Below it, the queue decides a still-running import was abandoned
 and hands it to a second worker, which downloads and stores the same archive
 again. The default of 330 already accounts for this; it is only ever raised.
 
+### Mail is off by default, and Resend is the driver to reach for
+
+`MAIL_MAILER=log` is the shipped default and a deployment can stay on it
+indefinitely. Out of the box almost nothing here emails anybody: announcements
+go to the panel's bell, Slack and outgoing webhooks, and account setup links are
+printed by `admin:create` and `user:add` for you to deliver yourself. The one
+message the panel sends unprompted is the welcome email an admin can trigger
+from the Users screen, which simply does nothing useful while the log driver is
+set. Mail is a convenience you turn on, never a dependency of the registry
+working.
+
+When you do want it, [Resend](https://resend.com) is installed and takes two
+variables:
+
+```dotenv
+MAIL_MAILER=resend
+RESEND_API_KEY=re_...
+MAIL_FROM_ADDRESS="registry@example.com"
+```
+
+`MAIL_FROM_ADDRESS` has to sit on a domain verified in that Resend account —
+adding the SPF and DKIM records it gives you is the whole of the setup, and
+until they resolve every send is rejected rather than merely spam-filed. The
+free tier is measured in thousands of messages a month, which a registry's
+notification traffic will not come close to.
+
+Every other Laravel transport still works unchanged — `ses` and `postmark` are
+already configured in [config/mail.php](../config/mail.php) and need only their
+key in `services.php`'s environment variables. SES is the one worth switching to
+if volume ever becomes a real number.
+
+One thing not to do: route failure alerts *only* through mail. A provider outage
+and the alert about it travel the same wire, so the message that matters most is
+the one least likely to arrive. Keep Slack or a webhook configured alongside it.
+
+### Emailing the announcements
+
+With a mailer configured, `MAIL_ADMIN_NOTIFICATIONS=true` adds email to the
+fan-out for the four things the registry announces — a package published
+releases, a sync failed, a package was abandoned, and a package cannot be served
+under the name it is stored as. Every panel user holding a role is a recipient.
+
+```dotenv
+MAIL_ADMIN_NOTIFICATIONS=true
+```
+
+It is off by default and should stay off until a real mailer is behind it. Under
+`MAIL_MAILER=log` an enabled fan-out writes each announcement to the log file
+and delivers nothing, which is a switch that appears to work and does not.
+
+Two switches decide whether any given person is emailed, and they are not
+interchangeable:
+
+| | Decides | Default |
+| --- | --- | --- |
+| `MAIL_ADMIN_NOTIFICATIONS` | whether email is a channel on this installation at all | off |
+| The **Email notifications** section on each user's profile page | whether that person is one of the recipients | on |
+
+The per-user setting only ever narrows. Turning the environment setting off
+stops every email regardless of what any user's row says, and no profile toggle
+can start them again — which also means enabling it emails everyone who has not
+been to their profile page to say otherwise. That is deliberate: the alternative
+is a feature that looks broken until every user has opted in one at a time. The
+profile section is not rendered at all while the environment setting is off.
+
+The bell is not on the toggle and cannot be switched off. It costs a row, it is
+read where the work is done, and a user able to silence it would be a user the
+registry has no way of reaching about a package that stopped syncing.
+
+Volume is the thing to size this against before turning it on. An installation
+syncing thirty packages can publish a dozen releases in an afternoon, which
+makes a fine Slack channel and a poor inbox. If the releases are the noise and
+the failures are the point, Slack or an outgoing webhook filtered on
+`sync.failed` is the better instrument — see
+[docs/outgoing-webhooks.md](outgoing-webhooks.md).
+
 ### The cache store is not just a cache
 
 This one deserves its own heading because the failure is silent.

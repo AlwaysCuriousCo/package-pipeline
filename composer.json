@@ -17,6 +17,7 @@
         "laravel/socialite": "^5.29",
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
+        "resend/resend-php": "^1.0",
         "spatie/laravel-activitylog": "^4.12"
     },
     "require-dev": {

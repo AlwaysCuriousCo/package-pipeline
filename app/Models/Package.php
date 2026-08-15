@@ -849,13 +849,21 @@ class Package extends Model
     {
         $repository = $this->composerRepository;
 
-        // A package in a named repository is reached through that mount, and
-        // the config key carries the path so two repositories on the same
-        // registry never fight over one entry in the consumer's composer.json.
-        $repositoryKey = Str::slug(config('app.name')) ?: 'private';
+        // A configured key is used exactly as it was typed: whoever set it has
+        // decided what the entry in the consumer's composer.json is called, and
+        // that includes taking on the collision below.
+        $repositoryKey = (string) config('registry.composer_repository_key');
 
-        if (! $repository->isDefault()) {
-            $repositoryKey .= "-{$repository->path}";
+        if ($repositoryKey === '') {
+            // Otherwise it is derived. A package in a named repository is
+            // reached through that mount, and the derived key carries the path
+            // so two repositories on the same registry never fight over one
+            // entry in the consumer's composer.json.
+            $repositoryKey = Str::slug(config('app.name')) ?: 'private';
+
+            if (! $repository->isDefault()) {
+                $repositoryKey .= "-{$repository->path}";
+            }
         }
 
         $repositoryUrl = rtrim($repository->url(), '/');
