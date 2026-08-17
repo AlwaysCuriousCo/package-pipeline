@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 class PackageSyncNotificationTest extends TestCase
@@ -50,7 +51,7 @@ class PackageSyncNotificationTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);

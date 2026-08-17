@@ -9,9 +9,14 @@ use App\Models\PackageVersion;
 use App\Models\Repository;
 use App\Models\User;
 use App\Support\VersionNormalizer;
+use DateTimeInterface;
 use Filament\Actions\Testing\TestAction;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\Filesystem as Flysystem;
+use League\Flysystem\Local\LocalFilesystemAdapter as FlysystemLocalAdapter;
 use Livewire\Livewire;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -61,7 +66,7 @@ class VersionArchiveDownloadTest extends TestCase
 
         $response->assertOk();
         $response->assertHeader('content-type', 'application/zip');
-        $response->assertDownload('acme-widgets-1.5.0.zip');
+        $response->assertDownload('widgets-1.5.0.zip');
         $this->assertSame('zip-bytes', $response->streamedContent());
     }
 
@@ -77,7 +82,48 @@ class VersionArchiveDownloadTest extends TestCase
         $version = $this->version('dev-feat/enhance');
 
         $this->get(route('downloads.version', $version))
-            ->assertDownload('acme-widgets-dev-feat-enhance.zip');
+            ->assertDownload('widgets-dev-feat-enhance.zip');
+    }
+
+    /**
+     * A disk with URLs of its own takes the transfer, and then it is the disk
+     * naming the file the operator saves. Stored paths are uuids, so a
+     * redirect that asks for nothing hands over `019ff239-....zip` — the same
+     * archive under a name nobody can tell from any other.
+     */
+    public function test_a_redirect_to_object_storage_still_names_the_download(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $options = [];
+
+        $root = storage_path('framework/testing/disks/signing');
+        File::cleanDirectory($root);
+
+        $adapter = new FlysystemLocalAdapter($root);
+        $disk = new FilesystemAdapter(new Flysystem($adapter), $adapter);
+
+        // By reference because Laravel rebinds the callback to the disk it
+        // belongs to, which leaves the test's own $this out of reach.
+        $disk->buildTemporaryUrlsUsing(
+            function (string $path, DateTimeInterface $expiration, array $given) use (&$options): string {
+                $options = $given;
+
+                return "https://objects.test/{$path}";
+            },
+        );
+
+        Storage::set('s3', $disk);
+        config(['filesystems.dists' => 's3']);
+
+        $version = $this->version('1.5.0');
+
+        $this->get(route('downloads.version', $version))->assertRedirect();
+
+        $this->assertSame(
+            ['ResponseContentDisposition' => 'attachment; filename="widgets-1.5.0.zip"'],
+            $options,
+        );
     }
 
     /**

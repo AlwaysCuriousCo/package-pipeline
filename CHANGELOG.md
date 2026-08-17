@@ -175,6 +175,17 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Changed
 
+- An archive is named for the package everywhere it is handed over. The
+  download is `widgets-1.4.0.zip` rather than `acme-widgets-1.4.0.zip` — the
+  vendor is the same word on every archive a registry serves — and a dist disk
+  that answers with its own pre-signed URL is now asked for that name too,
+  where before it named the download after the stored object and handed over
+  `019ff239-....zip`. Inside the zip, the single top-level directory is the
+  package's own name (`widgets/`) instead of the provider's `owner-repo-sha/`.
+  Composer discards that directory either way, and the `shasum` served beside
+  an archive is still the hash of the bytes served, so nothing changes for a
+  consuming client. Archives already stored are left alone; run
+  `php artisan package:rebuild` to restate them.
 - Per-package `/p2` metadata answers conditional requests. Every response
   carries `Last-Modified`, a weak `ETag` and `Cache-Control: no-cache, private`,
   and a Composer client whose copy is current is answered `304` after a single

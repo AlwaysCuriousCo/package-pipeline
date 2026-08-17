@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Users\Actions;
 use App\Filament\Resources\Users\Schemas\UserForm;
 use App\Models\User;
 use App\Notifications\WelcomeUser;
+use App\Support\MailDelivery;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
@@ -31,13 +32,38 @@ class SendWelcomeEmailAction
             ->authorize(fn (User $record): bool => auth()->user()?->can('update', $record) ?? false)
             ->requiresConfirmation()
             ->modalHeading('Send the welcome email')
-            ->modalDescription(fn (User $record): string => sprintf(
-                'A note goes to %s saying the account exists and where to sign in. It carries no password, and sending it changes nothing about the account.',
-                $record->email,
-            ))
+            ->modalDescription(function (User $record): string {
+                $description = sprintf(
+                    'A note goes to %s saying the account exists and where to sign in. It carries no password, and sending it changes nothing about the account.',
+                    $record->email,
+                );
+
+                if (MailDelivery::delivers()) {
+                    return $description;
+                }
+
+                return $description.sprintf(
+                    ' Mail is set to the `%s` driver, which delivers nothing — the message will be accepted and discarded.',
+                    MailDelivery::driver(),
+                );
+            })
             ->modalSubmitActionLabel('Send it')
             ->action(function (User $record): void {
                 $record->notify(new WelcomeUser);
+
+                if (! MailDelivery::delivers()) {
+                    Notification::make()
+                        ->warning()
+                        ->title('Welcome email went nowhere')
+                        ->body(sprintf(
+                            'Mail is set to the `%s` driver, so nothing was delivered to %s. Configure a mailer and send it again.',
+                            MailDelivery::driver(),
+                            $record->email,
+                        ))
+                        ->send();
+
+                    return;
+                }
 
                 Notification::make()
                     ->success()

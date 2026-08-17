@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Livewire\Livewire;
 use RuntimeException;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 /**
@@ -64,7 +65,7 @@ class PackageSyncBatchTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);
@@ -163,7 +164,7 @@ class PackageSyncBatchTest extends TestCase
         $this->fakeGitHub([
             'api.github.com/repos/acme/widgets/zipball/*' => fn ($request) => str_contains($request->url(), str_repeat('b', 40))
                 ? Http::response('<html>maintenance</html>', 200, ['Content-Type' => 'text/html'])
-                : Http::response('zip-bytes', 200, ['Content-Type' => 'application/zip']),
+                : Http::response(Zipball::bytes(), 200, ['Content-Type' => 'application/zip']),
         ]);
 
         $package = $this->makePackage();

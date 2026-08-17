@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Spatie\Permission\Models\Role;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 /**
@@ -56,7 +57,7 @@ class PackageNameNormalizationTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'api.github.com/repos/acme/widgets/zipball/*' => Http::response('zip-bytes', 200, [
+            'api.github.com/repos/acme/widgets/zipball/*' => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);

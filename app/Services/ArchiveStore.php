@@ -59,18 +59,20 @@ class ArchiveStore
     }
 
     /**
-     * What the browser saves an archive as: `vendor-package-version.zip`.
+     * What the browser saves an archive as: `package-version.zip`.
      *
      * Stored paths are uuids, so every endpoint that serves an archive has to
      * name the download itself, and they all name it the same way here — what
      * an operator gets out of the panel and what they get by opening a dist
      * URL should not be two different files on disk.
      *
-     * The version is what a human recognises the archive by; a commit
-     * reference is not, and forty hex characters of one is what makes an
-     * otherwise readable filename unreadable. It is also what keeps two
-     * releases of the same package from landing as `name.zip` and
-     * `name (1).zip` in a downloads folder.
+     * The vendor is dropped: it is the same word on every archive a given
+     * registry hands out, so it lengthens the name without telling whoever
+     * reads it which package this is. The version stays, because that is what
+     * a human recognises the archive by — a commit reference is not, and forty
+     * hex characters of one is what makes an otherwise readable filename
+     * unreadable — and because it keeps two releases of the same package from
+     * landing as `name.zip` and `name (1).zip` in a downloads folder.
      *
      * Both halves are free-form enough to be a filename hazard — a branch
      * build is stored as `dev-feat/enhance`, and Composer allows more besides
@@ -79,9 +81,19 @@ class ArchiveStore
      */
     public static function downloadFilename(string $name, string $version): string
     {
-        $stem = preg_replace('/[^A-Za-z0-9._-]+/', '-', "{$name}-{$version}") ?? 'archive';
+        $stem = preg_replace('/[^A-Za-z0-9._-]+/', '-', self::slug($name)."-{$version}") ?? 'archive';
 
         return trim($stem, '-.').'.zip';
+    }
+
+    /**
+     * The package half of a `vendor/package` name — what an operator calls the
+     * package, and all the download filename and the archive's own top-level
+     * directory are named after.
+     */
+    public static function slug(string $name): string
+    {
+        return Str::afterLast($name, '/');
     }
 
     /**
@@ -93,8 +105,16 @@ class ArchiveStore
      * redirecting to it would cost a round trip and hand the transfer straight
      * back to PHP. Only a disk whose URLs somebody else answers takes work off
      * the app, which is the whole reason to redirect.
+     *
+     * $filename is what the client should save the object as. Stored paths are
+     * uuids, and a storage service serving one of them directly names the
+     * download after the object key — so without this the redirect hands the
+     * browser `019ff239-....zip` where streaming the same archive through PHP
+     * would have handed it `crisp-v1.0.0.zip`. The signature covers the header
+     * it asks for, so a URL cannot be edited into renaming somebody else's
+     * object.
      */
-    public function temporaryUrl(string $path): ?string
+    public function temporaryUrl(string $path, ?string $filename = null): ?string
     {
         $disk = $this->disk();
 
@@ -106,7 +126,11 @@ class ArchiveStore
             return null;
         }
 
-        return $disk->temporaryUrl($path, now()->addMinutes(self::URL_LIFETIME_MINUTES));
+        return $disk->temporaryUrl(
+            $path,
+            now()->addMinutes(self::URL_LIFETIME_MINUTES),
+            $filename === null ? [] : ['ResponseContentDisposition' => 'attachment; filename="'.$filename.'"'],
+        );
     }
 
     /**

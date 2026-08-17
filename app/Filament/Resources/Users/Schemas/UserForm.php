@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Users\Schemas;
 use App\Filament\Resources\Users\Actions\SendWelcomeEmailAction;
 use App\Models\Package;
 use App\Models\User;
+use App\Support\MailDelivery;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -87,8 +88,8 @@ class UserForm
      */
     private static function sendWelcomeEmail(): Toggle
     {
-        $mailer = (string) config('mail.default');
-        $deliverable = ! in_array($mailer, ['log', 'array'], strict: true);
+        $mailer = MailDelivery::driver();
+        $deliverable = MailDelivery::delivers();
 
         return Toggle::make('send_welcome_email')
             ->label('Send welcome email')

@@ -16,7 +16,7 @@ existed and what most of them still are.
 | --- | --- | --- |
 | Manifest read from | `composer.json` | `packages/widgets/composer.json` |
 | Versions discovered from | the repository's tags and branches | the same |
-| Dist archive | the provider's zipball, stored byte for byte | that zipball cut down to `packages/widgets`, re-rooted |
+| Dist archive | the provider's zipball, re-rooted under the package's name | that zipball cut down to `packages/widgets`, re-rooted |
 | A push syncs | this package | every package published from the repository |
 
 Versions come from the repository's tags and branches, because that is all a
@@ -46,8 +46,13 @@ nested where it was. So an unmodified zipball offered as the dist for
 
 The archive is therefore **re-rooted** after it is downloaded and before it is
 stored: everything outside `packages/widgets/` is dropped, and everything
-inside it moves up to sit under one directory named for the package and
-version. What Composer downloads is the package's own tree and nothing else.
+inside it moves up to sit under one directory named for the package —
+`widgets/`. What Composer downloads is the package's own tree and nothing else.
+
+A root package's archive is re-rooted too, and only that: no entry is dropped,
+but the provider's own wrapper — `AlwaysCuriousCo-crisp-0acb7f6.../`, which
+names a download of a commit rather than a package — becomes `crisp/`. Composer
+discards the name either way; whoever opens the zip does not.
 
 Nothing is unpacked to do it. The download is edited in place through the zip's
 central directory — entries outside the subtree are deleted, entries inside are
@@ -66,6 +71,9 @@ Two consequences worth knowing:
   import**, rather than storing whatever it did contain. A dist holding the
   wrong tree is worse than a version that is missing: the missing one is
   obvious and the next sync retries it, while the wrong one installs.
+- **Archives already stored are not rewritten in place**: a version imported
+  before this keeps the root it was built with until the package is rebuilt
+  (`php artisan package:rebuild acme/widgets`, or *Rebuild* in the panel).
 
 ## Webhooks
 

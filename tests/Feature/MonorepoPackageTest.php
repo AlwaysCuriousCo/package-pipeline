@@ -258,7 +258,11 @@ class MonorepoPackageTest extends TestCase
         $roots = array_unique(array_map(fn (string $name): string => strtok($name, '/'), array_keys($entries)));
         $this->assertCount(1, $roots);
 
+        // Named for the package, not for the repository and commit the
+        // provider cut the download from.
         $root = reset($roots);
+        $this->assertSame('widgets', $root);
+
         $paths = array_map(fn (string $name): string => substr($name, strlen($root) + 1), array_keys($entries));
         sort($paths);
 
@@ -297,13 +301,13 @@ class MonorepoPackageTest extends TestCase
     }
 
     /**
-     * A package published from the root is untouched by any of this: its
-     * archive is stored exactly as the provider sent it.
+     * A package published from the root keeps every file the provider sent,
+     * but not the provider's name for the download: `acme-mono-a1b2c3d/`
+     * describes a commit, where `mono/` describes the package whoever opens
+     * the zip asked for.
      */
-    public function test_a_root_package_stores_the_providers_archive_unchanged(): void
+    public function test_a_root_package_keeps_every_file_under_the_packages_own_directory(): void
     {
-        $zipball = file_get_contents($this->monorepoZipball());
-
         $this->fakeGitHub();
 
         $package = $this->makePackage('acme/mono', '');
@@ -312,10 +316,22 @@ class MonorepoPackageTest extends TestCase
 
         $version = $package->versions()->where('version', '1.0.0')->firstOrFail();
 
-        $this->assertSame(
-            $zipball,
-            Storage::disk(config('filesystems.dists'))->get($version->archive_path),
-        );
+        $stored = tempnam(sys_get_temp_dir(), 'stored-dist-');
+        file_put_contents($stored, Storage::disk(config('filesystems.dists'))->get($version->archive_path));
+
+        $paths = array_keys($this->entriesOf($stored));
+        sort($paths);
+
+        $this->assertSame([
+            'mono/README.md',
+            'mono/composer.json',
+            'mono/packages/',
+            'mono/packages/gadgets/composer.json',
+            'mono/packages/widgets/',
+            'mono/packages/widgets/composer.json',
+            'mono/packages/widgets/src/Widget.php',
+            'mono/packages/widgets/src/widgets/Inner.php',
+        ], $paths);
     }
 
     /**

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 /**
@@ -40,7 +41,7 @@ class ConsoleSyncGuardTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);
