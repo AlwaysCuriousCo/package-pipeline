@@ -480,7 +480,7 @@ class ComposerRepositoryTest extends TestCase
             // Composer names its own downloads, so this filename exists for
             // the person who opened the URL in a browser, and forty hex
             // characters tell them nothing about which release they got.
-            ->assertHeader('Content-Disposition', 'attachment; filename=acme-widgets-v1.1.0.zip');
+            ->assertHeader('Content-Disposition', 'attachment; filename=widgets-v1.1.0.zip');
 
         $this->assertSame('zip-bytes', $response->streamedContent());
 

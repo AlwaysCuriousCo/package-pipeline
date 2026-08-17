@@ -96,7 +96,7 @@ class VersionArchiveController extends Controller
         // credential for this one object until it expires minutes later, and
         // it is minted only after the visibility check above has passed — the
         // same bargain the dist endpoint makes, and only ever in that shape.
-        $url = $this->archives->temporaryUrl($version->archive_path);
+        $url = $this->archives->temporaryUrl($version->archive_path, $filename);
 
         if ($url !== null) {
             // The archive is immutable; this response is not — it carries a

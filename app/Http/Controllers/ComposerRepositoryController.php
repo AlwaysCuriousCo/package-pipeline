@@ -993,7 +993,10 @@ class ComposerRepositoryController extends Controller
         // (see ArchiveStore for the window). Anything that mints one earlier,
         // or for a path the caller has not been cleared for, gives that check
         // away.
-        $url = $this->archives->temporaryUrl($version->archive_path);
+        $url = $this->archives->temporaryUrl(
+            $version->archive_path,
+            ArchiveStore::downloadFilename($name, $version->version),
+        );
 
         if ($url !== null) {
             // The archive is immutable; this response is not. It carries a URL
@@ -1052,7 +1055,7 @@ class ComposerRepositoryController extends Controller
         // Both ways of serving an archive, chosen exactly as they are for a
         // published one; see dist() above for why a signing disk is handed the
         // transfer and why the redirect must not be cached.
-        $url = $this->archives->temporaryUrl($path);
+        $url = $this->archives->temporaryUrl($path, ArchiveStore::downloadFilename($name, $reference));
 
         if ($url !== null) {
             return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
