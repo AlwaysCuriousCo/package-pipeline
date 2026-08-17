@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 class SourceTest extends TestCase
@@ -294,7 +295,7 @@ class SourceTest extends TestCase
             'github.acme.test/api/v3/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'github.acme.test/api/v3/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+            'github.acme.test/api/v3/repos/acme/widgets/zipball/*' => fn () => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);

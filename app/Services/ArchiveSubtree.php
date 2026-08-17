@@ -39,6 +39,13 @@ class ArchiveSubtree
      * Reduce the zip at $path to the contents of $subdirectory, re-rooted
      * under a single directory named $root.
      *
+     * An empty $subdirectory means the whole repository is the package, and
+     * then the only work is the renaming: the provider's own wrapper directory
+     * becomes $root. Worth doing for its own sake — `AlwaysCuriousCo-crisp-
+     * 0acb7f69b694d735a772110cac942260a338e539/` is what a provider calls a
+     * download of a commit, not what this registry publishes — and it costs
+     * one rewrite of a file that was just written to disk anyway.
+     *
      * A single top-level directory rather than bare entries at the zip root,
      * because that is the shape every provider and packagist.org produce and
      * the one Composer's extractor is happiest with. $root is the caller's to
@@ -58,7 +65,8 @@ class ArchiveSubtree
 
         try {
             $names = $this->names($archive);
-            $prefix = $this->providerPrefix($names).trim($subdirectory, '/').'/';
+            $subdirectory = trim($subdirectory, '/');
+            $prefix = $this->providerPrefix($names).($subdirectory === '' ? '' : "{$subdirectory}/");
 
             $kept = $this->subtree($names, $prefix, $subdirectory, $root);
 
@@ -188,14 +196,16 @@ class ArchiveSubtree
             // different platform will disagree with.
             throw_if(
                 preg_match('#(^|[\\\\/])\.\.([\\\\/]|$)#', $relative) === 1 || str_starts_with($relative, '/'),
-                new RuntimeException("The repository's archive contains an entry that escapes \"{$subdirectory}\": {$name}."),
+                new RuntimeException("The repository's archive contains an entry that escapes {$this->describe($subdirectory)}: {$name}."),
             );
 
             $kept[$index] = $root.'/'.$relative;
         }
 
         throw_if($kept === [], new RuntimeException(
-            "The repository's archive contains no \"{$subdirectory}\" directory."
+            $subdirectory === ''
+                ? "The repository's archive is empty."
+                : "The repository's archive contains no \"{$subdirectory}\" directory."
         ));
 
         // The manifest was read from the provider's API before the archive was
@@ -205,9 +215,18 @@ class ArchiveSubtree
         // claims to be a package it is not; refusing leaves the version
         // unimported and the next sync free to try again.
         throw_unless(in_array($root.'/composer.json', $kept, true), new RuntimeException(
-            "The \"{$subdirectory}\" directory in the repository's archive holds no composer.json."
+            ucfirst($this->describe($subdirectory))." in the repository's archive holds no composer.json."
         ));
 
         return $kept;
+    }
+
+    /**
+     * How to name, in an error a sync failure shows an operator, the part of
+     * the repository this archive was cut down to.
+     */
+    private function describe(string $subdirectory): string
+    {
+        return $subdirectory === '' ? 'the root' : "\"{$subdirectory}\"";
     }
 }

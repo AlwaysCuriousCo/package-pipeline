@@ -597,9 +597,7 @@ class PackageSynchronizer
         try {
             $client->downloadZipball($reference, $temporary);
 
-            if ($package->hasSubdirectory()) {
-                $this->subtrees->reroot($temporary, $package->subdirectory, $this->archiveRoot($package, $version));
-            }
+            $this->subtrees->reroot($temporary, (string) $package->subdirectory, $this->archiveRoot($package));
         } catch (Throwable $exception) {
             File::delete($temporary);
 
@@ -613,13 +611,14 @@ class PackageSynchronizer
      * What to call the single directory a re-rooted archive is wrapped in.
      *
      * Composer discards this name, so it only has to be legible to whoever
-     * opens the zip and distinct from the provider's own wrapper — which the
-     * package name makes it, since that is not derived from the repository
-     * path a provider names its wrapper after.
+     * opens the zip: the package, as its own page and its download filename
+     * call it. Not the vendor as well, and not the version — the archive is
+     * already named for both — and not the provider's `owner-repo-sha`, which
+     * names a download of a commit rather than the package published from it.
      */
-    private function archiveRoot(Package $package, string $version): string
+    private function archiveRoot(Package $package): string
     {
-        $root = preg_replace('#[^A-Za-z0-9._-]+#', '-', "{$package->name}-{$version}");
+        $root = preg_replace('#[^A-Za-z0-9._-]+#', '-', ArchiveStore::slug((string) $package->name));
 
         return trim((string) $root, '-.') ?: 'package';
     }

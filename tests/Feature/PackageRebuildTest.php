@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 /**
@@ -41,7 +42,7 @@ class PackageRebuildTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);
@@ -77,7 +78,10 @@ class PackageRebuildTest extends TestCase
 
         $this->assertArrayNotHasKey('require', $version->metadata);
         $this->assertSame('Widgets for Acme.', $version->metadata['description']);
-        $this->assertSame(sha1('zip-bytes'), $version->shasum);
+        $this->assertSame(
+            sha1((string) Storage::disk(config('filesystems.dists'))->get((string) $version->archive_path)),
+            $version->shasum,
+        );
         Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
     }
 

@@ -9,6 +9,7 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 class PackageSyncTest extends TestCase
@@ -52,7 +53,7 @@ class PackageSyncTest extends TestCase
             'api.github.com/repos/acme/widgets/commits/*' => Http::response([
                 'commit' => ['committer' => ['date' => '2026-02-01T12:00:00Z']],
             ]),
-            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response('zip-bytes', 200, [
+            'api.github.com/repos/acme/widgets/zipball/*' => fn () => Http::response(Zipball::bytes(), 200, [
                 'Content-Type' => 'application/zip',
             ]),
         ]);
@@ -110,7 +111,7 @@ class PackageSyncTest extends TestCase
 
         foreach ($package->versions()->get() as $version) {
             $this->assertNotNull($version->archive_path, "{$version->version} has no stored archive.");
-            $this->assertSame(sha1('zip-bytes'), $version->shasum);
+            $this->assertSame(sha1((string) $disk->get($version->archive_path)), $version->shasum);
             $disk->assertExists($version->archive_path);
 
             // Paths carry the composer name, not the pre-sync placeholder.
@@ -298,9 +299,12 @@ class PackageSyncTest extends TestCase
 
         $version->refresh();
 
+        $disk = Storage::disk(config('filesystems.dists'));
+
         $this->assertNotNull($version->archive_path);
-        $this->assertSame(sha1('zip-bytes'), $version->shasum);
-        Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+
+        $this->assertSame(sha1((string) $disk->get($version->archive_path)), $version->shasum);
+        $disk->assertExists($version->archive_path);
     }
 
     /**
@@ -339,9 +343,12 @@ class PackageSyncTest extends TestCase
 
         $version->refresh();
 
+        $disk = Storage::disk(config('filesystems.dists'));
+
         $this->assertNotNull($version->archive_path);
-        $this->assertSame(sha1('zip-bytes'), $version->shasum);
-        Storage::disk(config('filesystems.dists'))->assertExists($version->archive_path);
+
+        $this->assertSame(sha1((string) $disk->get($version->archive_path)), $version->shasum);
+        $disk->assertExists($version->archive_path);
     }
 
     /**
@@ -401,7 +408,7 @@ class PackageSyncTest extends TestCase
         $this->fakeGitHub([
             'api.github.com/repos/acme/widgets/zipball/*' => fn ($request) => str_contains($request->url(), str_repeat('b', 40))
                 ? Http::response('<html>maintenance</html>', 200, ['Content-Type' => 'text/html'])
-                : Http::response('zip-bytes', 200, ['Content-Type' => 'application/zip']),
+                : Http::response(Zipball::bytes(), 200, ['Content-Type' => 'application/zip']),
         ]);
 
         $package = $this->makePackage();

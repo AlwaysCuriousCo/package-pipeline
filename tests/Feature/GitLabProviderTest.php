@@ -13,6 +13,7 @@ use App\Sources\UnsupportedProviderException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Tests\Support\Zipball;
 use Tests\TestCase;
 
 /**
@@ -50,7 +51,7 @@ class GitLabProviderTest extends TestCase
                 'committed_date' => '2026-02-01T12:00:00Z',
             ]),
             'gitlab.com/api/v4/projects/group%2Fwidgets/repository/archive.zip*' => fn () => Http::response(
-                'zip-bytes', 200, ['Content-Type' => 'application/zip'],
+                Zipball::bytes(), 200, ['Content-Type' => 'application/zip'],
             ),
             'gitlab.com/api/v4/projects/group%2Fwidgets' => Http::response(['default_branch' => 'main']),
         ]);
