@@ -130,6 +130,11 @@ class PublicRepositoryPageTest extends TestCase
         $response->assertSee('Sitemap: '.config('app.url').'/sitemap.xml');
         $response->assertSee('Disallow: /admin');
         $response->assertSee('Disallow: /dist/');
+        // A page's download button is a real archive on the other end: a
+        // crawler following it spends bandwidth and inflates the package's
+        // download count.
+        $response->assertSee('Disallow: /p/*/*/download');
+        $response->assertSee('Disallow: /r/*/p/*/*/download');
     }
 
     public function test_an_installation_that_opts_out_of_indexing_says_so(): void

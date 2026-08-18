@@ -58,9 +58,21 @@ class PageMarkdown
      *                                  providers serve the file and a view of
      *                                  the file at different hosts: an <img>
      *                                  wants raw bytes, an <a> wants the page.
+     * @param  string|null  $linkRootBase  what a link written with a leading
+     *                                     slash resolves against — the
+     *                                     repository root, which for a
+     *                                     monorepo package is not the same
+     *                                     place as $linkBase. Null means the
+     *                                     two are the same.
+     * @param  string|null  $imageRootBase  the same, for images.
      */
-    public function render(string $markdown, ?string $linkBase = null, ?string $imageBase = null): string
-    {
+    public function render(
+        string $markdown,
+        ?string $linkBase = null,
+        ?string $imageBase = null,
+        ?string $linkRootBase = null,
+        ?string $imageRootBase = null,
+    ): string {
         $environment = new Environment([
             // The two settings this class exists for. `escape` renders raw
             // HTML as visible text; `allow_unsafe_links: false` drops
@@ -94,7 +106,13 @@ class PageMarkdown
         // link extension then judges are the absolute ones this resolves to.
         $environment->addEventListener(
             DocumentParsedEvent::class,
-            fn (DocumentParsedEvent $event) => $this->resolveRelativeUrls($event->getDocument(), $linkBase, $imageBase),
+            fn (DocumentParsedEvent $event) => $this->resolveRelativeUrls(
+                $event->getDocument(),
+                $linkBase,
+                $imageBase,
+                $linkRootBase ?? $linkBase,
+                $imageRootBase ?? $imageBase,
+            ),
             // A higher priority than the external-link extension's own
             // listener (0), which decides what is external by looking at the
             // host — and a relative URL has none until this has run.
@@ -115,8 +133,13 @@ class PageMarkdown
      * that does not exist, and `![](logo.png)` becomes a broken image that
      * costs a request and a 404 log line on every page view.
      */
-    private function resolveRelativeUrls(Document $document, ?string $linkBase, ?string $imageBase): void
-    {
+    private function resolveRelativeUrls(
+        Document $document,
+        ?string $linkBase,
+        ?string $imageBase,
+        ?string $linkRootBase,
+        ?string $imageRootBase,
+    ): void {
         foreach ($document->iterator() as $node) {
             if (! $node instanceof Link && ! $node instanceof Image) {
                 continue;
@@ -134,7 +157,14 @@ class PageMarkdown
                 continue;
             }
 
-            $base = $node instanceof Image ? $imageBase : $linkBase;
+            // A leading slash is the one relative form that is not relative
+            // to the document: it means the repository root, so it resolves
+            // against the root base rather than the package's own directory.
+            $root = str_starts_with($url, '/');
+
+            $base = $node instanceof Image
+                ? ($root ? $imageRootBase : $imageBase)
+                : ($root ? $linkRootBase : $linkBase);
 
             $node->setUrl($base === null ? '' : $this->join($base, $url));
         }

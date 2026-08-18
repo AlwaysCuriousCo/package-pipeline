@@ -84,6 +84,10 @@ class RepositoryForm
                         : 'Off, this URL answers 404 to anything but the Composer endpoints under it.'),
                 Toggle::make('page_lists_packages')
                     ->label('List the packages served here')
+                    // On by default, as the column is: a landing page that
+                    // names nothing is the rarer want, and a hidden toggle
+                    // left unset would otherwise save as off.
+                    ->default(true)
                     ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
                     // Only packages that publish a page of their own are ever
                     // listed, whatever this says — naming a package the

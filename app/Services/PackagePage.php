@@ -141,6 +141,8 @@ class PackagePage
             $body,
             $package->pageLinkBase(),
             $package->pageImageBase(),
+            $package->pageLinkRootBase(),
+            $package->pageImageRootBase(),
         );
     }
 
@@ -159,19 +161,24 @@ class PackagePage
     /**
      * Render, through the cache.
      */
-    private function cached(string $body, ?string $linkBase, ?string $imageBase): HtmlString
-    {
+    private function cached(
+        string $body,
+        ?string $linkBase,
+        ?string $imageBase,
+        ?string $linkRootBase = null,
+        ?string $imageRootBase = null,
+    ): HtmlString {
         $body = $this->bounded($body);
 
         $minutes = (int) config('registry.pages.markdown_cache_minutes');
 
-        $render = fn (): string => $this->markdown->render($body, $linkBase, $imageBase);
+        $render = fn (): string => $this->markdown->render($body, $linkBase, $imageBase, $linkRootBase, $imageRootBase);
 
         if ($minutes <= 0) {
             return new HtmlString($render());
         }
 
-        $key = 'page-markdown:'.hash('xxh128', $body."\0".$linkBase."\0".$imageBase);
+        $key = 'page-markdown:'.hash('xxh128', implode("\0", [$body, $linkBase, $imageBase, $linkRootBase, $imageRootBase]));
 
         return new HtmlString(Cache::remember($key, now()->addMinutes($minutes), $render));
     }

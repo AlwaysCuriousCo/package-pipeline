@@ -271,6 +271,26 @@ class PublicPackagePageTest extends TestCase
         $response->assertSee('https://github.com/acme/widgets/raw/HEAD/art/logo.png', false);
     }
 
+    public function test_a_monorepo_readme_resolves_its_links_against_the_right_directory(): void
+    {
+        $this->package([
+            'subdirectory' => 'packages/widgets',
+            'page_source_path' => 'packages/widgets/README.md',
+            'page_source_body' => "See the [guide](docs/install.md) and the [licence](/LICENSE.md).\n\n![logo](/art/logo.png)\n",
+        ]);
+
+        $response = $this->get('/p/acme/widgets');
+
+        // A plain relative link is relative to the package's own directory.
+        $response->assertSee('https://github.com/acme/widgets/blob/HEAD/packages/widgets/docs/install.md', false);
+        // A leading slash means the repository root, as it does on the
+        // provider that rendered this README first.
+        $response->assertSee('https://github.com/acme/widgets/blob/HEAD/LICENSE.md', false);
+        $response->assertSee('https://github.com/acme/widgets/raw/HEAD/art/logo.png', false);
+        $response->assertDontSee('packages/widgets/LICENSE.md', false);
+        $response->assertDontSee('packages/widgets/art/logo.png', false);
+    }
+
     public function test_a_body_written_in_the_panel_wins_over_the_repository(): void
     {
         $this->package([

@@ -1071,7 +1071,7 @@ class Package extends Model
      */
     public function pageLinkBase(): ?string
     {
-        return $this->pageRepositoryBase(fn (SourceProvider $provider, string $url): ?string => $provider->browseUrl($url));
+        return $this->pageRepositoryBase($this->browseResolver());
     }
 
     /**
@@ -1079,17 +1079,55 @@ class Package extends Model
      */
     public function pageImageBase(): ?string
     {
-        return $this->pageRepositoryBase(fn (SourceProvider $provider, string $url): ?string => $provider->rawUrl($url));
+        return $this->pageRepositoryBase($this->rawResolver());
+    }
+
+    /**
+     * The same two, without the package's subdirectory — the repository root.
+     *
+     * Where a link written with a leading slash points: in a README, and so
+     * on every provider that renders one, `/docs/install.md` means the
+     * repository root rather than the directory the file sits in. For a
+     * package that is the whole repository the two bases are identical; for a
+     * monorepo package they are not, and resolving a root-relative link
+     * against the subdirectory base produces a link to a path that does not
+     * exist.
+     */
+    public function pageLinkRootBase(): ?string
+    {
+        return $this->pageRepositoryBase($this->browseResolver(), subdirectory: false);
+    }
+
+    public function pageImageRootBase(): ?string
+    {
+        return $this->pageRepositoryBase($this->rawResolver(), subdirectory: false);
+    }
+
+    /**
+     * @return callable(SourceProvider, string): ?string
+     */
+    private function browseResolver(): callable
+    {
+        return fn (SourceProvider $provider, string $url): ?string => $provider->browseUrl($url);
+    }
+
+    /**
+     * @return callable(SourceProvider, string): ?string
+     */
+    private function rawResolver(): callable
+    {
+        return fn (SourceProvider $provider, string $url): ?string => $provider->rawUrl($url);
     }
 
     /**
      * The subdirectory-aware base for either of the two above. A monorepo
      * package's README lives in its own directory, and its relative links are
-     * relative to that directory rather than to the repository root.
+     * relative to that directory rather than to the repository root — except
+     * for the root-relative ones, which is what $subdirectory: false is for.
      *
      * @param  callable(SourceProvider, string): ?string  $resolve
      */
-    private function pageRepositoryBase(callable $resolve): ?string
+    private function pageRepositoryBase(callable $resolve, bool $subdirectory = true): ?string
     {
         if (blank($this->repository)) {
             return null;
@@ -1101,7 +1139,9 @@ class Package extends Model
             return null;
         }
 
-        return $this->hasSubdirectory() ? $base.'/'.trim((string) $this->subdirectory, '/') : $base;
+        return $subdirectory && $this->hasSubdirectory()
+            ? $base.'/'.trim((string) $this->subdirectory, '/')
+            : $base;
     }
 
     /**

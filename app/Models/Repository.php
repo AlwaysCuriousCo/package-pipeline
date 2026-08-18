@@ -29,6 +29,19 @@ class Repository extends Model
     use HasFactory, LogsAuditableChanges;
 
     /**
+     * The page columns' database defaults, restated for the same reason
+     * Package restates its own: the form reads them off a record it has just
+     * built, and a null where the column says false is a toggle that renders
+     * indeterminate and an audit entry for a change nobody made.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'page_enabled' => false,
+        'page_lists_packages' => true,
+    ];
+
+    /**
      * Where a repository is served and whether it is readable without a
      * token — the switch that turns private packages public.
      *

@@ -74,6 +74,14 @@ class SitemapController extends Controller
                 'Disallow: /admin',
                 'Disallow: /p2/',
                 'Disallow: /dist/',
+                // A page's own download button, under both mounts. The
+                // wildcards are RFC 9309's, and they are spelled out to the
+                // vendor and package segments rather than as a bare
+                // `/*/download` so that a package actually named "download"
+                // keeps its page indexed. A longer match wins over the
+                // `Allow: /` below, which is why these come first.
+                'Disallow: /p/*/*/download',
+                'Disallow: /r/*/p/*/*/download',
                 'Allow: /',
                 '',
                 'Sitemap: '.Repository::default()->pageRootUrl().'/sitemap.xml',
