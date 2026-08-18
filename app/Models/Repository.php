@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Support\Str;
 
 /**
  * A named Composer repository this registry serves.
@@ -21,7 +22,7 @@ use Illuminate\Database\Eloquent\Relations\HasManyThrough;
  * so one installation can serve independent registries — a public one and an
  * internal one, say — with independent access rules.
  */
-#[Fillable(['name', 'path', 'description', 'public'])]
+#[Fillable(['name', 'path', 'description', 'public', 'page_enabled', 'page_body', 'page_image', 'page_lists_packages'])]
 class Repository extends Model
 {
     /** @use HasFactory<RepositoryFactory> */
@@ -35,7 +36,7 @@ class Repository extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'path', 'public'];
+        return ['name', 'path', 'public', 'page_enabled', 'page_lists_packages'];
     }
 
     /**
@@ -45,6 +46,8 @@ class Repository extends Model
     {
         return [
             'public' => 'boolean',
+            'page_enabled' => 'boolean',
+            'page_lists_packages' => 'boolean',
         ];
     }
 
@@ -252,6 +255,117 @@ class Repository extends Model
     public function pathPrefix(): string
     {
         return $this->isDefault() ? '' : "/r/{$this->path}";
+    }
+
+    /**
+     * Whether this repository publishes a landing page.
+     */
+    public function hasPage(): bool
+    {
+        return (bool) $this->page_enabled;
+    }
+
+    /**
+     * Where this repository's page answers — which is the same URL its
+     * Composer endpoints hang off, with nothing after it.
+     *
+     * That is the whole point of putting it there: the URL a project pastes
+     * into `composer config repositories.x composer <url>` is the URL a
+     * person pastes into a browser afterwards, and Composer itself only ever
+     * asks for /packages.json and the paths under it. So the two never
+     * collide, and the address an operator is already handing out becomes the
+     * page describing what is behind it.
+     */
+    public function pageUrl(): string
+    {
+        return $this->url();
+    }
+
+    /**
+     * The registry's root URL, for the page routes that build a URL which is
+     * not inside this repository's mount — a package page lives at /p/... at
+     * the root however many repositories the registry serves.
+     *
+     * Public where rootUrl() is private because that is exactly the
+     * distinction: this is the same deployment fact, asked for by callers
+     * outside the model. @see url()
+     */
+    public function pageRootUrl(): string
+    {
+        return $this->rootUrl();
+    }
+
+    /**
+     * The packages this repository's page lists — those that publish a page
+     * of their own, alphabetically.
+     *
+     * A package without a page is left off rather than listed as plain text:
+     * the list exists to be clicked, and naming a package this registry will
+     * not describe is how a private package's existence leaks out of a
+     * public landing page.
+     *
+     * @return Collection<int, Package>
+     */
+    public function pagePackages(): Collection
+    {
+        if (! $this->page_lists_packages) {
+            return new Collection;
+        }
+
+        return $this->packages()
+            ->withPage()
+            ->orderBy('name')
+            ->get(['id', 'repository_id', 'name', 'description', 'type', 'latest_version', 'abandoned']);
+    }
+
+    /**
+     * The summary the page's meta description and og:description carry.
+     */
+    public function pageSummary(): string
+    {
+        $described = trim((string) $this->description);
+
+        return Str::limit($described !== ''
+            ? $described
+            : "{$this->name} — a Composer repository served by ".config('app.name').'.', 155, preserveWords: true);
+    }
+
+    /**
+     * The social preview image for this page, absolute, or none.
+     */
+    public function pageImageUrl(): ?string
+    {
+        $image = filled($this->page_image)
+            ? (string) $this->page_image
+            : (string) config('registry.page_image', '');
+
+        if ($image === '') {
+            return null;
+        }
+
+        return str_starts_with($image, 'http://') || str_starts_with($image, 'https://')
+            ? $image
+            : $this->pageRootUrl().'/'.ltrim($image, '/');
+    }
+
+    /**
+     * The one `composer config` line that points a project at this
+     * repository — the same line the package pages print, without a package
+     * to require afterwards.
+     */
+    public function configureCommand(): string
+    {
+        $key = (string) config('registry.composer_repository_key');
+
+        if ($key === '') {
+            $key = Str::slug(config('app.name')) ?: 'private';
+
+            if (! $this->isDefault()) {
+                $key .= "-{$this->path}";
+            }
+        }
+
+        return "composer config repositories.{$key} composer ".rtrim($this->url(), '/');
     }
 
     /**
