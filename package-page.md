@@ -1,19 +1,13 @@
-<p align="center">
-  <img src="art/package-pipeline-header.png" alt="Package Pipeline — a self-hosted Composer registry with a Filament admin panel" width="100%">
-</p>
-
-# Package Pipeline
-
-**A self-hosted Composer registry for your private PHP packages, with a [Filament](https://filamentphp.com) admin panel.**
+![Package Pipeline — a self-hosted Composer registry with a Filament admin panel](art/package-pipeline-header.png)
 
 Sharing private PHP packages across projects is a chore: every consuming app
 needs its own `repositories` entries, its own GitHub or GitLab credentials, and
 Composer crawls the provider's API repository by repository just to resolve
 versions. Package Pipeline replaces all of that with one registry you run
-yourself. Point it at your repositories once, and every project can
-`composer require` your packages as if they were on Packagist — one repository
-URL to configure, no per-repo wiring, and your code never leaves your
-infrastructure.
+yourself — the one serving this page. Point it at your repositories once, and
+every project can `composer require` your packages as if they were on
+Packagist: one repository URL to configure, no per-repo wiring, and your code
+never leaves your infrastructure.
 
 ## What you get
 
@@ -26,15 +20,14 @@ infrastructure.
 - **Upstream mirroring** of packagist.org or another registry, so one URL resolves a project's whole dependency graph and a build stops depending on somebody else's uptime.
 - **Reserved vendor prefixes**, the server half of a dependency-confusion defence.
 - **Artifact uploads** for packages built in CI rather than synced from a repository.
+- **Public pages** like this one, for any package or repository you choose to describe.
 - **Download analytics, a license report and a CycloneDX SBOM export.**
 - **An audit log, teams, SSO, outgoing webhooks and a Prometheus endpoint** for the operational side.
 
-## Requirements
+## Running your own
 
-PHP 8.3+, a database (SQLite, MySQL or PostgreSQL), a queue worker and a
-scheduler. Node 22.19+ is needed at build time for the panel's stylesheet.
-
-## Getting started
+Requires PHP 8.3+, a database (SQLite, MySQL or PostgreSQL), a queue worker and
+a scheduler. Node 22.19+ is needed at build time for the panel's stylesheet.
 
 ```bash
 git clone https://github.com/AlwaysCuriousCo/package-pipeline.git
@@ -44,38 +37,27 @@ php artisan admin:create --email=you@example.com
 composer run dev
 ```
 
-Then open <http://localhost:8000>, log in, and add your first package. The full
-walkthrough — connecting a GitHub App source, configuring consuming projects,
-deployment, and the configuration reference — is in the
-[README](README.md).
-
-## Using it from a project
-
-```bash
-composer config repositories.acme composer https://packages.example.com
-composer require acme/your-package
-```
-
-For a private registry, the token goes in the consuming project's `auth.json`:
-
-```bash
-composer config --auth http-basic.packages.example.com token <your-token>
-```
+That installs dependencies, builds the panel stylesheet, creates `.env`,
+generates a key, migrates and seeds permissions, then starts the HTTP server,
+queue worker and log tail together. Log in at <http://localhost:8000> and add
+your first package.
 
 ## Documentation
 
-| Guide | What it covers |
+Full guides ship in the repository:
+
+| File | What it covers |
 | --- | --- |
-| [Public pages](docs/public-pages.md) | Publishing a readable page like this one for a package or a repository |
-| [Webhooks](docs/webhooks.md) | Auto-syncing on push, and telling whether a package is actually covered |
-| [GitHub App](docs/github-app.md) | Registering the app and connecting sources |
-| [Monorepos](docs/monorepos.md) | Publishing several packages from one repository |
-| [Mirroring](docs/mirroring.md) | Serving packagist.org through your own registry |
-| [Dependency confusion](docs/dependency-confusion.md) | Reserving vendors, and the Composer config each project needs |
-| [Management API](docs/api.md) | The `/api/v1` surface, end to end |
-| [Deployment](docs/deployment.md) | Production drivers, scaling, backup and restore |
+| `README.md` | Setup, configuration reference and command reference, end to end |
+| `docs/public-pages.md` | Publishing a page like this one for a package or a repository |
+| `docs/webhooks.md` | Auto-syncing on push, and telling whether a package is actually covered |
+| `docs/github-app.md` | Registering the GitHub App and connecting sources |
+| `docs/monorepos.md` | Publishing several packages from one repository |
+| `docs/mirroring.md` | Serving packagist.org through your own registry |
+| `docs/dependency-confusion.md` | Reserving vendors, and the Composer config each project needs |
+| `docs/api.md` | The `/api/v1` management API |
+| `docs/deployment.md` | Production drivers, scaling, backup and restore |
 
 ## License
 
-Package Pipeline is open-sourced software licensed under the
-[MIT license](LICENSE).
+MIT.
