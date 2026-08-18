@@ -43,7 +43,7 @@ jobs:
       # `public/build/manifest.json` is absent — so without this every test
       # that renders an admin page over HTTP fails with a 500.
       - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: npm
@@ -134,7 +134,7 @@ jobs:
 
       # As above: no manifest, no admin page. See the SQLite leg.
       - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: npm
