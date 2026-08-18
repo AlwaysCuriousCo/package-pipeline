@@ -41,11 +41,36 @@ return new class extends Migration
             // Whether the version history table is rendered.
             $table->boolean('page_versions')->default(true);
 
-            // Markdown written in the panel, which wins over anything the
-            // repository carries. The escape hatch for a package whose README
-            // is written for contributors rather than consumers, and the only
-            // body available for a package published by artifact upload,
-            // which has no repository to read one from.
+            // The two facts in the page's header that are not the package's
+            // own description. `page_type` is what Composer calls it —
+            // library, project, metapackage — which is useful and harmless.
+            //
+            // `page_source` is the repository URL, and it defaults to *off*
+            // because it is the one field on a page that names infrastructure
+            // rather than describing a package: on a private package it
+            // publishes the organisation and repository name to anyone who
+            // opens the page. Switching it on is a decision, and a reasonable
+            // one for anything open source.
+            $table->boolean('page_type')->default(true);
+            $table->boolean('page_source')->default(false);
+
+            // Where the page's body comes from, as App\Enums\PageBodySource:
+            // the repository's page file or README, one file the admin names,
+            // or markdown written in the panel. Stated rather than inferred
+            // from whether the textarea below is empty, so that "publish the
+            // README again" is a choice rather than the act of deleting what
+            // was typed.
+            $table->string('page_body_source', 16)->default('auto');
+
+            // Which file, when the source above is `file`. Relative to the
+            // package's own directory, so a monorepo package names its own
+            // docs/registry.md rather than the repository root's.
+            $table->string('page_body_path')->nullable();
+
+            // Markdown written in the panel. The escape hatch for a package
+            // whose README is written for contributors rather than consumers,
+            // and the only body available for a package published by artifact
+            // upload, which has no repository to read one from.
             $table->longText('page_body')->nullable();
 
             // The image social platforms show when the page's URL is pasted
@@ -105,6 +130,10 @@ return new class extends Migration
                 'page_downloads',
                 'page_install',
                 'page_versions',
+                'page_type',
+                'page_source',
+                'page_body_source',
+                'page_body_path',
                 'page_body',
                 'page_image',
                 'page_source_body',

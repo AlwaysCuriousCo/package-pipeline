@@ -49,7 +49,11 @@ class PageSchema
             $schema['softwareVersion'] = $package->latest_version;
         }
 
-        if (filled($package->repository)) {
+        // Behind the same switch as the line on the page: structured data is
+        // read by more things than a page is, so publishing the repository
+        // URL here while the page withholds it would leak it further, not
+        // less.
+        if ($package->page_source && filled($package->repository)) {
             $schema['codeRepository'] = (string) $package->repository;
         }
 

@@ -30,11 +30,13 @@ class RefreshPageContentAction
             ->label('Refresh page')
             ->icon(Heroicon::OutlinedArrowDownOnSquare)
             ->color('gray')
-            // Only where there is both a page to refresh and a repository to
-            // refresh it from. A package published by artifact upload has no
-            // file to read, and its page body is whatever was typed in the
-            // panel.
-            ->visible(fn (Package $record): bool => $record->hasPage() && filled($record->repository))
+            // A package published by artifact upload has no file to read.
+            // Only where there is something to read: a page whose body is
+            // written in the panel reads nothing, and offering to refresh it
+            // would promise work that does not happen.
+            ->visible(fn (Package $record): bool => $record->hasPage()
+                && filled($record->repository)
+                && $record->pageBodyCandidates() !== [])
             ->action(function (Package $record): void {
                 $found = app(PackagePage::class)->refresh($record);
 
@@ -49,7 +51,7 @@ class RefreshPageContentAction
                         ->title('No page content found')
                         ->body(sprintf(
                             'Looked for %s in %s. The page will show %s description and install commands alone.',
-                            implode(', ', Package::PAGE_FILES),
+                            implode(', ', $record->pageBodyCandidates()),
                             $record->hasSubdirectory() ? "{$record->subdirectory}/" : 'the repository root',
                             $record->name,
                         ))
@@ -62,12 +64,6 @@ class RefreshPageContentAction
                 // is usually here to find out — a repository with both a
                 // package-page.md and a README publishes only the first.
                 $body = "Read {$record->page_source_path} from the repository.";
-
-                if (filled($record->page_body)) {
-                    // The content was refreshed and the page will not show it,
-                    // which is a confusing enough result to name.
-                    $body .= ' The page still shows the content written here, which takes precedence — clear it to publish the file instead.';
-                }
 
                 Notification::make()
                     ->success()

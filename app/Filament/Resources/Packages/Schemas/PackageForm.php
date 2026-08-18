@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
@@ -76,7 +77,11 @@ class PackageForm
                 self::pageDownloadsSelect(),
                 self::pageInstall(),
                 self::pageVersions(),
+                self::pageType(),
+                self::pageSource(),
                 self::pageImage(),
+                self::pageBodySource(),
+                self::pageBodyPath(),
                 self::pageBody(),
             ]);
     }
@@ -148,6 +153,81 @@ class PackageForm
             ->helperText('The two `composer config` and `composer require` lines, exactly as the panel shows them.');
     }
 
+    public static function pageType(): Toggle
+    {
+        return Toggle::make('page_type')
+            ->label('Show the package type')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->helperText('What Composer calls it — library, project, metapackage.');
+    }
+
+    /**
+     * Whether the page links the repository the package is built from.
+     *
+     * Off by default, alone among these, because it is the one field on a
+     * page that names infrastructure rather than describing a package: on a
+     * private package it publishes the organisation and repository name to
+     * anyone who opens the page. For anything open source it is worth
+     * switching on — it is the link a reader goes looking for.
+     */
+    public static function pageSource(): Toggle
+    {
+        return Toggle::make('page_source')
+            ->label('Show the source repository')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->helperText(fn (?Package $record): string => $record?->composerRepository?->public === false
+                ? 'Off by default: this publishes the repository URL of a private package to anyone who opens the page.'
+                : 'A link to the repository this package is built from.');
+    }
+
+    /**
+     * Where the page's body comes from — the repository's own file, one file
+     * this package names, or markdown written here.
+     */
+    public static function pageBodySource(): Radio
+    {
+        return Radio::make('page_body_source')
+            ->label('Page content')
+            ->options(PageBodySource::class)
+            ->descriptions(collect(PageBodySource::cases())
+                ->mapWithKeys(fn (PageBodySource $case): array => [$case->value => $case->description()])
+                ->all())
+            ->default(PageBodySource::Auto)
+            ->live()
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'));
+    }
+
+    /**
+     * Which file, when one is named. A datalist rather than a select: the
+     * conventional names are offered because they are what a repository
+     * usually has, but the field takes any path — `docs/registry.md` is a
+     * perfectly good answer and no fixed list could have contained it.
+     */
+    public static function pageBodyPath(): TextInput
+    {
+        return TextInput::make('page_body_path')
+            ->label('File')
+            ->maxLength(255)
+            ->datalist(Package::PAGE_FILES)
+            ->placeholder('docs/registry.md')
+            ->required(fn (Get $get): bool => $get('page_body_source') === PageBodySource::File->value)
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled')
+                && $get('page_body_source') === PageBodySource::File->value)
+            // Refused here rather than at the provider, which would answer a
+            // 404 that reads as "the file is missing" for a path that was
+            // never going to be asked for.
+            ->rules([
+                fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                    if (in_array('..', preg_split('#[\\\\/]+#', trim((string) $value)) ?: [], true)) {
+                        $fail('A path cannot climb out of the repository with "..".');
+                    }
+                },
+            ])
+            ->helperText(fn (?Package $record): string => $record?->hasSubdirectory()
+                ? "Relative to {$record->subdirectory}/, this package's own directory in the repository."
+                : 'Relative to the repository root. Read again on every sync.');
+    }
+
     public static function pageVersions(): Toggle
     {
         return Toggle::make('page_versions')
@@ -174,19 +254,17 @@ class PackageForm
     }
 
     /**
-     * The body written here, which wins over the repository's own file.
+     * The body itself, for the one source that is written rather than read.
      */
     public static function pageBody(): Textarea
     {
         return Textarea::make('page_body')
-            ->label('Page content')
-            ->rows(10)
+            ->label('Content')
+            ->rows(12)
             ->columnSpanFull()
-            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
-            ->helperText(fn (?Package $record): string => match (true) {
-                $record?->page_source_path !== null => "Markdown. Leave empty to publish the repository's {$record->page_source_path}, which is what the page shows now.",
-                default => 'Markdown. Leave empty to publish the repository\'s package-page.md or README.md, read on the next sync.',
-            });
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled')
+                && $get('page_body_source') === PageBodySource::Custom->value)
+            ->helperText('Markdown. Headings, lists, tables, code fences and links; raw HTML is escaped rather than rendered.');
     }
 
     /**

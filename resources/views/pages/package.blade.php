@@ -35,18 +35,23 @@
                 <p class="mt-4 text-lg text-zinc-600 dark:text-zinc-400">{{ $package->description }}</p>
             @endif
 
-            <dl class="mt-6 flex flex-wrap gap-x-8 gap-y-3 text-sm text-zinc-500 dark:text-zinc-400">
-                @if ($package->type)
-                    <div><dt class="inline font-medium text-zinc-700 dark:text-zinc-300">Type:</dt> <dd class="inline">{{ $package->type }}</dd></div>
-                @endif
+            @if (($package->page_type && $package->type) || ($package->page_source && filled($package->repository)))
+                <dl class="mt-6 flex flex-wrap gap-x-8 gap-y-3 text-sm text-zinc-500 dark:text-zinc-400">
+                    @if ($package->page_type && $package->type)
+                        <div><dt class="inline font-medium text-zinc-700 dark:text-zinc-300">Type:</dt> <dd class="inline">{{ $package->type }}</dd></div>
+                    @endif
 
-                @if (filled($package->repository))
-                    <div>
-                        <dt class="inline font-medium text-zinc-700 dark:text-zinc-300">Source:</dt>
-                        <dd class="inline"><a class="underline underline-offset-2 hover:text-zinc-900 dark:hover:text-zinc-100" href="{{ $package->repository }}" rel="noopener">{{ $package->repository }}</a></dd>
-                    </div>
-                @endif
-            </dl>
+                    {{-- Off unless an admin switched it on: this is the one
+                         line on a page that names infrastructure rather than
+                         describing a package. --}}
+                    @if ($package->page_source && filled($package->repository))
+                        <div>
+                            <dt class="inline font-medium text-zinc-700 dark:text-zinc-300">Source:</dt>
+                            <dd class="inline"><a class="underline underline-offset-2 hover:text-zinc-900 dark:hover:text-zinc-100" href="{{ $package->repository }}" rel="noopener">{{ $package->repository }}</a></dd>
+                        </div>
+                    @endif
+                </dl>
+            @endif
         </header>
 
         @if ($package->pageRequiresAccess())

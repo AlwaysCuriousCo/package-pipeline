@@ -224,7 +224,9 @@ A package or a repository can publish a page anyone can read — no account, no 
 
 The URL you hand a project is the first thing somebody pastes into a browser, and before this it answered a redirect to a login form for an account they do not have. Now the default repository can answer a landing page there instead, and each package can answer one at `/p/vendor/name`.
 
-Off until you enable one, per package and per repository. A page on a **private** repository still describes the package and shows its version history, but withholds the archives and the install commands and shows an access notice in their place. Every page carries Open Graph and Twitter card tags, JSON-LD and a canonical URL, and `/sitemap.xml` lists them.
+Off until you enable one, per package and per repository. A page on a **private** repository still describes the package and shows its version history, but withholds the archives and the install commands and shows an access notice in their place. Images in the README are re-served by the registry using the package's own credentials, which is what makes a private repository's screenshots — and its social card — render for a reader who has no access to it. Every page carries Open Graph and Twitter card tags, JSON-LD and a canonical URL, and `/sitemap.xml` lists them.
+
+This repository ships [`package-page.md`](package-page.md) as a worked example of a page file.
 
 **[docs/public-pages.md](docs/public-pages.md)** covers all of it: enabling a page, where its content comes from, how untrusted markdown is rendered, what private packages withhold, and the SEO and social-preview tags.
 
@@ -275,6 +277,8 @@ None of these publishes anything — a page is a per-package or per-repository d
 | `PAGE_SITEMAP` | Publish `/sitemap.xml` and an indexing `/robots.txt` (default `true`). `false` leaves pages reachable and unlisted, and answers robots.txt with a blanket disallow. |
 | `PAGE_MARKDOWN_CACHE_MINUTES` | How long a rendered page body is reused (default `1440`). Keyed by a hash of the markdown itself, so a sync that changes the file changes the key. `0` turns it off. |
 | `PAGE_MAX_BODY_KB` | Largest page body stored or rendered (default `512`). The body comes out of somebody else's repository; a file orders of magnitude past this is a generated artifact or a mistake. |
+| `PAGE_ASSET_CACHE_MINUTES` | How long an image fetched out of a package's repository is kept (default `1440`). A page's screenshots are re-served by this app rather than linked to the provider — the only way a private repository's images render for a reader who has no credential for it — so without a cache every visitor costs a provider request. |
+| `PAGE_MAX_ASSET_KB` | Largest image served or cached (default `4096`). |
 
 **Queue timing**
 

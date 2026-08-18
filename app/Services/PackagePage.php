@@ -43,7 +43,7 @@ class PackagePage
      */
     public function refresh(Package $package, ?string $ref = null): bool
     {
-        if (blank($package->repository)) {
+        if (blank($package->repository) || $package->pageBodyCandidates() === []) {
             return false;
         }
 
@@ -55,9 +55,9 @@ class PackagePage
             // next sync would store. Reading the default branch instead would
             // publish a document describing a version that has not shipped,
             // and would be reverted by the next sync anyway.
-            $ref ??= $this->describingRef($package);
+            $ref ??= $package->pageRef();
 
-            foreach (Package::PAGE_FILES as $path) {
+            foreach ($package->pageBodyCandidates() as $path) {
                 $body = $client->file($path, $ref, (string) $package->subdirectory);
 
                 if ($body === null || trim($body) === '') {
@@ -95,30 +95,6 @@ class PackagePage
 
             return false;
         }
-    }
-
-    /**
-     * The ref whose contents describe this package: the current release, or
-     * the version that arrived last for a package that has none, or null for
-     * one with no stored versions at all — where null means "the default
-     * branch", which is the only thing known about a repository that has
-     * never been synced.
-     */
-    private function describingRef(Package $package): ?string
-    {
-        if ($package->latest_version !== null) {
-            $reference = $package->versions()
-                ->where('version', $package->latest_version)
-                ->value('reference');
-
-            if (filled($reference)) {
-                return (string) $reference;
-            }
-        }
-
-        $reference = $package->versions()->orderByDesc('id')->value('reference');
-
-        return filled($reference) ? (string) $reference : null;
     }
 
     /**

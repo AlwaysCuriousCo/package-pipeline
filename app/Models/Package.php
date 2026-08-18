@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
@@ -30,7 +31,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_install', 'page_versions', 'page_body', 'page_image'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -59,6 +60,9 @@ class Package extends Model
         'page_downloads' => PageDownloads::None,
         'page_install' => true,
         'page_versions' => true,
+        'page_type' => true,
+        'page_source' => false,
+        'page_body_source' => PageBodySource::Auto,
         // The column's default, restated for the same reason: a package built
         // in memory is asked where in its repository it lives — by the wizard
         // reading a composer.json, by the client factories — before it has
@@ -85,6 +89,10 @@ class Package extends Model
             // bodies are left off: they are content, and the log is a record
             // of decisions, not a revision history for markdown.
             'page_enabled', 'page_downloads', 'page_install', 'page_versions',
+            // Audited with the rest rather than treated as cosmetic: this is
+            // the switch that publishes the repository URL of a private
+            // package to anonymous readers.
+            'page_source',
         ];
     }
 
@@ -103,7 +111,10 @@ class Package extends Model
             'page_enabled' => 'boolean',
             'page_install' => 'boolean',
             'page_versions' => 'boolean',
+            'page_type' => 'boolean',
+            'page_source' => 'boolean',
             'page_downloads' => PageDownloads::class,
+            'page_body_source' => PageBodySource::class,
             'page_source_synced_at' => 'datetime',
         ];
     }
@@ -1002,21 +1013,51 @@ class Package extends Model
     /**
      * The markdown this page renders, and where it came from.
      *
-     * The panel's own body wins outright: an admin who has written one has
-     * said what this page should say, and a sync that then overwrote it with
-     * the repository's README would be the app arguing with its operator.
+     * `source` is for the panel to describe the page with, and it is a
+     * sentence rather than a value because the useful answer differs by
+     * case: which file was read, that nothing was found, or that the body was
+     * typed here.
      *
      * @return array{body: ?string, source: string}
      */
     public function pageContent(): array
     {
-        if (filled($this->page_body)) {
-            return ['body' => (string) $this->page_body, 'source' => 'panel'];
+        if ($this->pageBodySource() === PageBodySource::Custom) {
+            return filled($this->page_body)
+                ? ['body' => (string) $this->page_body, 'source' => 'panel']
+                : ['body' => null, 'source' => 'empty'];
         }
 
         return filled($this->page_source_body)
             ? ['body' => (string) $this->page_source_body, 'source' => (string) $this->page_source_path]
             : ['body' => null, 'source' => 'none'];
+    }
+
+    /**
+     * Where this page's body is configured to come from.
+     */
+    public function pageBodySource(): PageBodySource
+    {
+        return $this->page_body_source ?? PageBodySource::Auto;
+    }
+
+    /**
+     * The files a sync should look for, in order: the one file this package
+     * names, or the conventional list.
+     *
+     * Empty for a page whose body is written in the panel — there is nothing
+     * to read, and a sync should not spend a provider request discovering
+     * that.
+     *
+     * @return list<string>
+     */
+    public function pageBodyCandidates(): array
+    {
+        return match ($this->pageBodySource()) {
+            PageBodySource::Custom => [],
+            PageBodySource::File => filled($this->page_body_path) ? [(string) $this->page_body_path] : [],
+            PageBodySource::Auto => self::PAGE_FILES,
+        };
     }
 
     /**
@@ -1075,11 +1116,39 @@ class Package extends Model
     }
 
     /**
-     * Where a relative image points: the same file, served as bytes.
+     * Where a relative image in the page's markdown points: back at this
+     * registry, which fetches the file from the repository and serves it.
+     *
+     * Not at the provider's raw host, which is where the obvious answer leads
+     * and where it breaks. A private repository's raw URLs need a GitHub
+     * credential, and the visitor reading the page is exactly the person who
+     * has none — so every screenshot in the README of a private package
+     * renders as a broken image. This registry holds the credential already;
+     * it is the only party in the exchange that can fetch the file at all.
+     *
+     * It is the answer for public repositories too, and deliberately the same
+     * one: the page stops depending on raw.githubusercontent.com being
+     * reachable from wherever the reader is, and the bytes are cached here
+     * rather than fetched from the provider per visitor.
+     *
+     * Absolute URLs in a README — a shields.io badge, an image on a CDN — are
+     * left exactly as they were written. This is only for the relative ones,
+     * which are files in the repository and nothing else.
+     *
+     * The package's subdirectory is folded into the *base* rather than
+     * applied by the controller, so that the path always arrives
+     * repository-root-relative and the root-relative form below is the same
+     * route with a shorter base. @see pageImageRootBase()
      */
     public function pageImageBase(): ?string
     {
-        return $this->pageRepositoryBase($this->rawResolver());
+        $base = $this->pageAssetBase();
+
+        if ($base === null || ! $this->hasSubdirectory()) {
+            return $base;
+        }
+
+        return $base.'/'.trim((string) $this->subdirectory, '/');
     }
 
     /**
@@ -1100,7 +1169,50 @@ class Package extends Model
 
     public function pageImageRootBase(): ?string
     {
-        return $this->pageRepositoryBase($this->rawResolver(), subdirectory: false);
+        return $this->pageAssetBase();
+    }
+
+    /**
+     * Where this package's repository files are re-served from, or null for a
+     * package with no repository to fetch them out of — one published by
+     * artifact upload, whose page body was typed in the panel and can only
+     * carry absolute image URLs.
+     */
+    private function pageAssetBase(): ?string
+    {
+        if (blank($this->repository) || blank($this->name)) {
+            return null;
+        }
+
+        [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
+
+        return $this->composerRepository->url('/p/'.$vendor.'/'.$name.'/asset');
+    }
+
+    /**
+     * The ref a page's content is read at: the release the package's own
+     * metadata came from, the version that arrived last for a package with no
+     * release, or null — meaning the default branch — for one with no stored
+     * versions at all.
+     *
+     * One answer, asked by the body reader and by the asset route, so that a
+     * README and the screenshots inside it are always the same commit's.
+     */
+    public function pageRef(): ?string
+    {
+        if ($this->latest_version !== null) {
+            $reference = $this->versions()
+                ->where('version', $this->latest_version)
+                ->value('reference');
+
+            if (filled($reference)) {
+                return (string) $reference;
+            }
+        }
+
+        $reference = $this->versions()->orderByDesc('id')->value('reference');
+
+        return filled($reference) ? (string) $reference : null;
     }
 
     /**
@@ -1109,14 +1221,6 @@ class Package extends Model
     private function browseResolver(): callable
     {
         return fn (SourceProvider $provider, string $url): ?string => $provider->browseUrl($url);
-    }
-
-    /**
-     * @return callable(SourceProvider, string): ?string
-     */
-    private function rawResolver(): callable
-    {
-        return fn (SourceProvider $provider, string $url): ?string => $provider->rawUrl($url);
     }
 
     /**
@@ -1153,17 +1257,36 @@ class Package extends Model
      */
     public function pageImageUrl(): ?string
     {
-        $image = filled($this->page_image)
-            ? (string) $this->page_image
-            : (string) config('registry.page_image', '');
+        $image = (string) $this->page_image;
 
-        if ($image === '') {
+        if ($image !== '') {
+            if (str_starts_with($image, 'http://') || str_starts_with($image, 'https://')) {
+                return $image;
+            }
+
+            // Anything else is a file in the package's repository, served
+            // through the asset route — which is the only shape that works
+            // for a private repository. A card image is fetched anonymously
+            // by Slack, X and every other unfurler from their own
+            // infrastructure, so a raw provider URL answers them 404 and the
+            // link goes out with no card at all. @see pageImageBase()
+            $base = str_starts_with($image, '/') ? $this->pageImageRootBase() : $this->pageImageBase();
+
+            return $base === null ? null : $base.'/'.ltrim($image, '/');
+        }
+
+        // The registry-wide default is a file this app serves rather than one
+        // any package's repository holds — it stands in for every page, and
+        // no single repository could supply it.
+        $fallback = (string) config('registry.page_image', '');
+
+        if ($fallback === '') {
             return null;
         }
 
-        return str_starts_with($image, 'http://') || str_starts_with($image, 'https://')
-            ? $image
-            : $this->composerRepository->pageRootUrl().'/'.ltrim($image, '/');
+        return str_starts_with($fallback, 'http://') || str_starts_with($fallback, 'https://')
+            ? $fallback
+            : $this->composerRepository->pageRootUrl().'/'.ltrim($fallback, '/');
     }
 
     /**

@@ -24,10 +24,13 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   repository. A page on a private repository still describes the package but
   withholds the archives and the install commands, showing an access notice in
   their place. Markdown from a repository is rendered with raw HTML escaped and
-  relative links resolved against the repository it came from. Every page
-  carries Open Graph and Twitter card tags, JSON-LD and a canonical URL, and
-  `/sitemap.xml` and `/robots.txt` list them (`PAGE_SITEMAP=false` to publish
-  neither). See [docs/public-pages.md](docs/public-pages.md).
+  relative links resolved against the repository it came from, and images in it
+  are re-served by the registry through the package's own credentials — which is
+  what makes a private repository's screenshots, and its social card, render for
+  a reader who has no access to it. Every page carries Open Graph and Twitter
+  card tags, JSON-LD and a canonical URL, and `/sitemap.xml` and `/robots.txt`
+  list them (`PAGE_SITEMAP=false` to publish neither). See
+  [docs/public-pages.md](docs/public-pages.md).
 
 - The [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer):
   `packages.json`, `search.json`, `list.json`, per-package `p2` metadata, and
