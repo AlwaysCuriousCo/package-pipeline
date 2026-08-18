@@ -2,14 +2,17 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Jobs\RefreshPackagePage;
 use App\Models\Package;
+use App\Models\User;
 use App\Services\PackagePage;
 use App\Services\PackageSynchronizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Livewire\Livewire;
 use Tests\Support\Zipball;
 use Tests\TestCase;
 
@@ -205,5 +208,80 @@ class PackagePageContentTest extends TestCase
         ]);
 
         $this->assertFalse(app(PackagePage::class)->refresh($package));
+    }
+
+    public function test_a_refresh_outside_a_sync_reads_the_release_the_page_describes(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/package-page.md*' => Http::response('# Widgets'),
+        ]);
+
+        $package = $this->package(['page_enabled' => true]);
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/package-page.md*' => Http::response('# Rewritten'),
+        ]);
+
+        app(PackagePage::class)->refresh($package->fresh());
+
+        // At the release's own ref rather than the default branch: reading the
+        // branch would publish a document describing a version that has not
+        // shipped, and the next sync would revert it anyway.
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), 'contents/package-page.md')
+            && str_contains($request->url(), 'ref='.str_repeat('a', 40)));
+    }
+
+    public function test_the_panel_action_reports_which_file_it_read(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/package-page.md*' => Http::response('Not Found', 404),
+            'api.github.com/repos/acme/widgets/contents/README.md*' => Http::response('# Widgets'),
+        ]);
+
+        $package = $this->package(['page_enabled' => true]);
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
+            ->callAction('refreshPageContent')
+            ->assertNotified('Page content refreshed');
+
+        $this->assertSame('README.md', $package->fresh()->page_source_path);
+    }
+
+    public function test_the_panel_action_says_so_when_the_repository_has_no_page_file(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $this->fakeGitHub();
+
+        $package = $this->package(['page_enabled' => true]);
+
+        // Not a failure: a repository with no README is a fact about the
+        // repository, and the page renders without one.
+        Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
+            ->callAction('refreshPageContent')
+            ->assertNotified('No page content found');
+    }
+
+    public function test_the_panel_action_is_offered_only_where_there_is_a_page_to_refresh(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $withoutPage = $this->package(['page_enabled' => false]);
+
+        Livewire::test(ViewPackage::class, ['record' => $withoutPage->getRouteKey()])
+            ->assertActionHidden('refreshPageContent');
+
+        $uploaded = Package::factory()->create([
+            'name' => 'acme/uploaded',
+            'repository' => null,
+            'page_enabled' => true,
+        ]);
+
+        Livewire::test(ViewPackage::class, ['record' => $uploaded->getRouteKey()])
+            ->assertActionHidden('refreshPageContent');
     }
 }

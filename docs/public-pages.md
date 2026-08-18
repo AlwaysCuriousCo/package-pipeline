@@ -80,6 +80,15 @@ GitHub rate limit or GitHub's uptime in front of the page rendering.
 
 A package with no page enabled costs nothing — the files are never looked for.
 
+**Refresh page** on a package's view page re-reads the file straight away and
+tells you which one it found. It is for the gap between syncs: somebody has just
+edited the README, usually because the published page was wrong, and the
+alternative is a full sync that re-reads every ref or an hour's wait. It reads at
+the ref of the release the page describes, which is exactly what the next sync
+would store — so the answer does not flip between the two. If a **Page content**
+body is written in the panel, the refresh still runs and says that the page goes
+on showing what you wrote.
+
 ### How the markdown is rendered
 
 The body is somebody else's file, published at your origin, so:

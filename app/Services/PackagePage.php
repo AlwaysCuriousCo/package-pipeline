@@ -37,7 +37,8 @@ class PackagePage
      * a page that shows what it had last time — or no body at all, which the
      * page renders as the package's metadata alone.
      *
-     * @param  string|null  $ref  the ref to read at, or null for the default branch
+     * @param  string|null  $ref  the ref to read at, or null to read at the
+     *                            release the package's own metadata came from
      * @return bool whether a body was found
      */
     public function refresh(Package $package, ?string $ref = null): bool
@@ -48,6 +49,13 @@ class PackagePage
 
         try {
             $client = $package->client();
+
+            // So that a refresh asked for outside a sync — the panel action,
+            // the job that runs when a page is switched on — stores what the
+            // next sync would store. Reading the default branch instead would
+            // publish a document describing a version that has not shipped,
+            // and would be reverted by the next sync anyway.
+            $ref ??= $this->describingRef($package);
 
             foreach (Package::PAGE_FILES as $path) {
                 $body = $client->file($path, $ref, (string) $package->subdirectory);
@@ -87,6 +95,30 @@ class PackagePage
 
             return false;
         }
+    }
+
+    /**
+     * The ref whose contents describe this package: the current release, or
+     * the version that arrived last for a package that has none, or null for
+     * one with no stored versions at all — where null means "the default
+     * branch", which is the only thing known about a repository that has
+     * never been synced.
+     */
+    private function describingRef(Package $package): ?string
+    {
+        if ($package->latest_version !== null) {
+            $reference = $package->versions()
+                ->where('version', $package->latest_version)
+                ->value('reference');
+
+            if (filled($reference)) {
+                return (string) $reference;
+            }
+        }
+
+        $reference = $package->versions()->orderByDesc('id')->value('reference');
+
+        return filled($reference) ? (string) $reference : null;
     }
 
     /**
