@@ -9,7 +9,9 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Validation\Rules\Unique;
 
 class RepositoryForm
@@ -51,8 +53,56 @@ class RepositoryForm
                 Textarea::make('description')
                     ->rows(3)
                     ->columnSpanFull(),
+                self::page(),
                 self::reservedVendors(),
                 self::upstreams(),
+            ]);
+    }
+
+    /**
+     * The repository's own landing page, served at the URL its Composer
+     * endpoints hang off — which for the default repository is the site root.
+     *
+     * The page an operator wants when they hand somebody a registry URL: what
+     * this is, the one line that points a project at it, and which packages
+     * it publishes pages for.
+     */
+    public static function page(): Section
+    {
+        return Section::make('Public page')
+            ->description(fn (?Repository $record): string => $record?->isDefault()
+                ? 'Served at the registry root, in place of the redirect to the admin login.'
+                : 'Served at this repository\'s own URL, the one projects are pointed at.')
+            ->icon(Heroicon::OutlinedGlobeAlt)
+            ->columnSpanFull()
+            ->schema([
+                Toggle::make('page_enabled')
+                    ->label('Publish a landing page')
+                    ->live()
+                    ->helperText(fn (?Repository $record): string => $record?->isDefault()
+                        ? 'Off, the registry root goes on redirecting to the admin login, exactly as it does today.'
+                        : 'Off, this URL answers 404 to anything but the Composer endpoints under it.'),
+                Toggle::make('page_lists_packages')
+                    ->label('List the packages served here')
+                    ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+                    // Only packages that publish a page of their own are ever
+                    // listed, whatever this says — naming a package the
+                    // registry will not describe is how a private package's
+                    // existence leaks out of a public landing page.
+                    ->helperText('Only packages that publish a page of their own are listed. Off leaves the page describing the repository alone.'),
+                TextInput::make('page_image')
+                    ->label('Social preview image')
+                    ->url()
+                    ->maxLength(255)
+                    ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+                    ->placeholder('https://example.com/registry-card.png')
+                    ->helperText('Shown when this page is linked in Slack, a post or a chat. Empty uses the registry-wide default.'),
+                Textarea::make('page_body')
+                    ->label('Page content')
+                    ->rows(8)
+                    ->columnSpanFull()
+                    ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+                    ->helperText('Markdown, shown above the package list. There is no repository to read a README from here, so this is the only body.'),
             ]);
     }
 
