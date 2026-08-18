@@ -36,6 +36,11 @@ class StubClient implements RepositoryClient, SourceClient
         throw $this->unsupported();
     }
 
+    public function file(string $path, ?string $ref = null, string $directory = ''): ?string
+    {
+        throw $this->unsupported();
+    }
+
     public function commitDate(string $ref): ?CarbonImmutable
     {
         throw $this->unsupported();

@@ -58,6 +58,53 @@ enum SourceProvider: string implements HasLabel
     }
 
     /**
+     * Where this provider serves a *view* of a file in a repository, as a
+     * base URL a path hangs off — or null when the provider has no client
+     * here and so no URL shape worth guessing at.
+     *
+     * The public page needs this because a README's links are relative to
+     * the repository it was written in: "docs/install.md" has to become a
+     * link to that file on the provider, or it becomes a 404 on this
+     * registry. @see \App\Support\PageMarkdown
+     *
+     * "HEAD" rather than a branch name on purpose. The alternative is asking
+     * the provider for the default branch, which is a request per package per
+     * sync to learn something every one of these providers already resolves
+     * for us — and which would go stale the day a project renames master.
+     */
+    public function browseUrl(string $repositoryUrl): ?string
+    {
+        $repositoryUrl = rtrim($repositoryUrl, '/');
+
+        return match ($this) {
+            self::Github => "{$repositoryUrl}/blob/HEAD",
+            self::Gitlab => "{$repositoryUrl}/-/blob/HEAD",
+            self::Bitbucket => "{$repositoryUrl}/src/HEAD",
+            // Gitea addresses a ref by type — /src/branch/{name} — so there
+            // is no "whatever the default branch is" form to build without
+            // asking it, and no client here to ask with.
+            self::Gitea => null,
+        };
+    }
+
+    /**
+     * Where this provider serves the file's *bytes*, which is what an image
+     * in a README has to point at — a link to GitHub's file viewer renders
+     * as a broken image, not as a screenshot.
+     */
+    public function rawUrl(string $repositoryUrl): ?string
+    {
+        $repositoryUrl = rtrim($repositoryUrl, '/');
+
+        return match ($this) {
+            self::Github => "{$repositoryUrl}/raw/HEAD",
+            self::Gitlab => "{$repositoryUrl}/-/raw/HEAD",
+            self::Bitbucket => "{$repositoryUrl}/raw/HEAD",
+            self::Gitea => null,
+        };
+    }
+
+    /**
      * The provider a repository host most likely belongs to. Self-hosted
      * instances follow the conventional naming often enough for this to be
      * the right default; a package under a connected source never asks.

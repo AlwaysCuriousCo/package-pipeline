@@ -74,6 +74,19 @@ class GitLabClient implements RepositoryClient
      */
     public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
+        $decoded = json_decode((string) $this->file('composer.json', $ref, $directory), true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * The raw contents of one file in the repository — the same endpoint
+     * composer.json is read through, for a file the caller names.
+     *
+     * @param  string  $directory  the package's subdirectory, empty for the root
+     */
+    public function file(string $path, ?string $ref = null, string $directory = ''): ?string
+    {
         // GitLab's raw-file endpoint requires a ref; "the default branch" has
         // to be asked for by name first.
         $ref ??= $this->defaultBranch();
@@ -85,7 +98,7 @@ class GitLabClient implements RepositoryClient
         // Unlike GitHub's, this endpoint takes the whole file path as a single
         // URL segment, so the separators are encoded along with everything
         // else — "packages/foo/composer.json" travels as one component.
-        $path = rawurlencode(ltrim("{$directory}/composer.json", '/'));
+        $path = rawurlencode(trim("{$directory}/{$path}", '/'));
 
         $response = $this->request()->get(
             "/projects/{$this->projectId()}/repository/files/{$path}/raw",
@@ -96,9 +109,7 @@ class GitLabClient implements RepositoryClient
             return null;
         }
 
-        $decoded = json_decode($this->ok($response)->body(), true);
-
-        return is_array($decoded) ? $decoded : null;
+        return $this->ok($response)->body();
     }
 
     public function commitDate(string $ref): ?CarbonImmutable
