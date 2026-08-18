@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Packages\Pages;
 use App\Filament\Resources\Packages\Actions\CreateWebhookAction;
 use App\Filament\Resources\Packages\Actions\ExportSbomAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
+use App\Filament\Resources\Packages\Actions\RefreshPageContentAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
@@ -21,6 +22,7 @@ class ViewPackage extends ViewRecord
         return [
             SyncPackageAction::make(),
             RebuildPackageAction::make(),
+            RefreshPageContentAction::make(),
             CreateWebhookAction::make(),
             ExportSbomAction::make(),
             EditAction::make(),

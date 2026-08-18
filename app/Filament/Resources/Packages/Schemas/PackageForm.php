@@ -2,18 +2,24 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\PageDownloads;
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\ReservedVendor;
 use App\Models\Source;
 use Closure;
+use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\HtmlString;
 use Illuminate\Validation\Rules\Unique;
 
 /**
@@ -42,7 +48,145 @@ class PackageForm
                 self::abandoned(),
                 self::replacementPackage(),
                 self::description(),
+                self::page(),
             ]);
+    }
+
+    /**
+     * The public page: whether this package has one, and what it shows.
+     *
+     * A section rather than a handful of toggles among the sync settings,
+     * because these are the only fields on this form that decide what a
+     * stranger can see. Grouping them is what makes "is this package
+     * published to the world" answerable at a glance rather than by reading
+     * every field.
+     *
+     * Collapsed until the page is switched on, so the form does not grow four
+     * fields for the packages — most of them — that will never have one.
+     */
+    public static function page(): Section
+    {
+        return Section::make('Public page')
+            ->description('A page anyone can read, at the package\'s own URL — no account and no token.')
+            ->icon(Heroicon::OutlinedGlobeAlt)
+            ->columnSpanFull()
+            ->schema([
+                self::pageEnabled(),
+                self::pageUrl(),
+                self::pageDownloadsSelect(),
+                self::pageInstall(),
+                self::pageVersions(),
+                self::pageImage(),
+                self::pageBody(),
+            ]);
+    }
+
+    /**
+     * The switch itself. Live, because every field under it is hidden until
+     * this is on — a page's options are not a decision until there is a page.
+     */
+    public static function pageEnabled(): Toggle
+    {
+        return Toggle::make('page_enabled')
+            ->label('Publish a public page')
+            ->live()
+            ->helperText(fn (?Package $record): string => match (true) {
+                $record?->composerRepository?->public === false => 'The page will describe this package and show its version history, '
+                    .'but not hand out archives or print install commands — this package is served from a private repository. '
+                    .'Visitors are shown how to ask for access instead.',
+                default => 'The page shows the package\'s description, its README from the repository, and whatever is switched on below.',
+            });
+    }
+
+    /**
+     * Where the page answers, as a link — the one thing an admin wants
+     * immediately after switching it on, and the thing they would otherwise
+     * have to construct by hand from the repository's mount.
+     */
+    public static function pageUrl(): Placeholder
+    {
+        return Placeholder::make('page_url')
+            ->label('Page URL')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->content(fn (?Package $record): string|HtmlString => $record instanceof Package && filled($record->name)
+                ? new HtmlString(sprintf(
+                    '<a href="%1$s" target="_blank" rel="noopener" class="underline">%1$s</a>',
+                    e($record->pageUrl()),
+                ))
+                : 'Available once the package has been saved.');
+    }
+
+    /**
+     * Which archives the page hands out. A radio rather than a select: three
+     * options whose difference is the point, each carrying the sentence that
+     * explains it.
+     */
+    public static function pageDownloadsSelect(): Radio
+    {
+        return Radio::make('page_downloads')
+            ->label('Downloads')
+            ->options(PageDownloads::class)
+            ->descriptions(collect(PageDownloads::cases())
+                ->mapWithKeys(fn (PageDownloads $case): array => [$case->value => $case->description()])
+                ->all())
+            ->default(PageDownloads::None)
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            // The setting is kept rather than disabled on a private
+            // repository, so that making the repository public restores what
+            // was chosen here — but it is said plainly that it does nothing
+            // meanwhile, rather than being discovered on the published page.
+            ->helperText(fn (?Package $record): ?string => $record?->composerRepository?->public === false
+                ? 'No effect while this package is served from a private repository: the page offers no archives to anonymous visitors.'
+                : null);
+    }
+
+    public static function pageInstall(): Toggle
+    {
+        return Toggle::make('page_install')
+            ->label('Show install commands')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->helperText('The two `composer config` and `composer require` lines, exactly as the panel shows them.');
+    }
+
+    public static function pageVersions(): Toggle
+    {
+        return Toggle::make('page_versions')
+            ->label('Show the version history')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->helperText('A table of the released versions and their dates, most recent first.');
+    }
+
+    /**
+     * The image a social platform shows when the page's URL is pasted into a
+     * post. Optional, and worth being optional: an installation that sets
+     * PAGE_IMAGE once gets a card on every page without touching this.
+     */
+    public static function pageImage(): TextInput
+    {
+        return TextInput::make('page_image')
+            ->label('Social preview image')
+            ->url()
+            ->maxLength(255)
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->placeholder('https://example.com/package-card.png')
+            ->helperText('Shown when the page is linked in Slack, a post or a chat. Around 1200×630 works everywhere. '
+                .'Empty uses the registry-wide default.');
+    }
+
+    /**
+     * The body written here, which wins over the repository's own file.
+     */
+    public static function pageBody(): Textarea
+    {
+        return Textarea::make('page_body')
+            ->label('Page content')
+            ->rows(10)
+            ->columnSpanFull()
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->helperText(fn (?Package $record): string => match (true) {
+                $record?->page_source_path !== null => "Markdown. Leave empty to publish the repository's {$record->page_source_path}, which is what the page shows now.",
+                default => 'Markdown. Leave empty to publish the repository\'s package-page.md or README.md, read on the next sync.',
+            });
     }
 
     /**

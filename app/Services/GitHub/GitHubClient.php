@@ -84,11 +84,28 @@ class GitHubClient implements RepositoryClient
      */
     public function composerJson(?string $ref = null, string $directory = ''): ?array
     {
+        $decoded = json_decode((string) $this->file('composer.json', $ref, $directory), true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * The raw contents of one file in the repository.
+     *
+     * The same contents endpoint composer.json is read through, asked for a
+     * file the caller names — which is what the public page needs, and what
+     * makes the two callers share one idea of how a path is built and what a
+     * missing file looks like.
+     *
+     * @param  string  $directory  the package's subdirectory, empty for the root
+     */
+    public function file(string $path, ?string $ref = null, string $directory = ''): ?string
+    {
         // The contents endpoint takes the file path in the URL, so the
         // segments are encoded individually — a path is not one component.
         $path = implode('/', array_map(rawurlencode(...), array_filter([
             ...explode('/', $directory),
-            'composer.json',
+            ...explode('/', $path),
         ], fn (string $segment): bool => $segment !== '')));
 
         $response = $this->request()
@@ -99,9 +116,7 @@ class GitHubClient implements RepositoryClient
             return null;
         }
 
-        $decoded = json_decode($this->ok($response)->body(), true);
-
-        return is_array($decoded) ? $decoded : null;
+        return $this->ok($response)->body();
     }
 
     /**

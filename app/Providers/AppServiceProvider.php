@@ -299,6 +299,15 @@ class AppServiceProvider extends ServiceProvider
         // Per address rather than per credential because the token is optional
         // and there is nothing else to key on.
         RateLimiter::for('metrics', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
+
+        // The public pages, which are the only surface here that anonymous
+        // traffic is *invited* to — a link in a chat, a search result, a
+        // social card being generated. Generous enough that a person clicking
+        // through a repository's package list never meets it, and low enough
+        // that a scraper walking every page and every download link is
+        // bounded. Keyed by address alone, because there is no credential on
+        // this surface to key by.
+        RateLimiter::for('pages', fn (Request $request) => Limit::perMinute(120)->by($request->ip()));
     }
 
     /**

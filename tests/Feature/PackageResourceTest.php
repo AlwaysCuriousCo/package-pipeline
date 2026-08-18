@@ -2,10 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Enums\PageDownloads;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Pages\CreatePackage;
 use App\Filament\Resources\Packages\Pages\EditPackage;
 use App\Filament\Resources\Packages\Pages\ListPackages;
+use App\Jobs\RefreshPackagePage;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Source;
@@ -293,5 +295,49 @@ class PackageResourceTest extends TestCase
         auth()->logout();
 
         $this->get('/admin/packages')->assertRedirect('/admin/login');
+    }
+
+    public function test_an_admin_can_publish_a_public_page_from_the_edit_form(): void
+    {
+        Queue::fake();
+
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->fillForm([
+                'page_enabled' => true,
+                'page_downloads' => 'latest',
+                'page_install' => true,
+                'page_versions' => false,
+            ])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $package->refresh();
+
+        $this->assertTrue($package->hasPage());
+        $this->assertSame(PageDownloads::Latest, $package->page_downloads);
+        $this->assertFalse($package->page_versions);
+
+        // Enabling a page reads the repository's README straight away rather
+        // than leaving the page blank until the next hourly sync.
+        Queue::assertPushed(RefreshPackagePage::class);
+    }
+
+    public function test_publishing_a_page_is_recorded_in_the_audit_log(): void
+    {
+        Queue::fake();
+
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->fillForm(['page_enabled' => true])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertDatabaseHas('activity_log', [
+            'subject_type' => Package::class,
+            'subject_id' => $package->id,
+        ]);
     }
 }

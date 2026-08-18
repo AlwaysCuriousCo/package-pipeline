@@ -44,6 +44,20 @@ interface RepositoryClient
     public function composerJson(?string $ref = null, string $directory = ''): ?array;
 
     /**
+     * The raw contents of a text file in the repository, at the given ref or
+     * at the default branch when none is given. Null when the file is
+     * missing, out of reach, or is not text this app can render.
+     *
+     * Added for the public page, which reads a package-page.md or a README
+     * out of the repository — so unlike composerJson() the caller names the
+     * file, and unlike a zipball it wants one file rather than the tree.
+     *
+     * @param  string  $path  the file's path relative to $directory, e.g. "README.md"
+     * @param  string  $directory  the package's subdirectory, empty for the root
+     */
+    public function file(string $path, ?string $ref = null, string $directory = ''): ?string;
+
+    /**
      * The commit date of the given ref, or null when the provider does not
      * report one.
      */

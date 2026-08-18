@@ -3,17 +3,68 @@
 use App\Http\Controllers\DownloadExportController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
+use App\Http\Controllers\Pages\PackageArchiveController;
+use App\Http\Controllers\Pages\PackagePageController;
+use App\Http\Controllers\Pages\RepositoryPageController;
+use App\Http\Controllers\Pages\SitemapController;
 use App\Http\Controllers\PasswordSetupController;
 use App\Http\Controllers\SbomExportController;
 use App\Http\Controllers\SourceConnectionController;
 use App\Http\Controllers\SsoController;
 use App\Http\Controllers\VersionArchiveController;
+use App\Http\Middleware\ResolveComposerRepository;
 use Illuminate\Support\Facades\Route;
 
-// The app is administered entirely through Filament, so the root URL lands on
-// the panel's login page. Keep this in sync with the admin panel's path()
-// in App\Providers\Filament\AdminPanelProvider.
-Route::redirect('/', '/admin/login')->name('home');
+/*
+ * The public pages: what this registry publishes to somebody with no account
+ * and no token. Nothing is published until an admin enables a page on a
+ * package or a repository, and the root goes on redirecting to the panel's
+ * login page until one is — see RepositoryPageController.
+ *
+ * Mounted twice for the same reason the Composer API is, and at the same
+ * pair of prefixes: package names are unique per repository, so /p/acme/x
+ * and /r/internal/p/acme/x are allowed to be different packages and must
+ * never resolve to each other's. ResolveComposerRepository is the same
+ * middleware, doing the same job for the same reason.
+ *
+ * Inside the `web` group, unlike the Composer endpoints: these are pages, a
+ * browser is the client, and a session is what it already expects to hold.
+ *
+ * Throttled because every one of them is anonymous and none is cheap — a page
+ * renders markdown and a download moves an archive.
+ */
+$pages = function (): void {
+    Route::get('/', RepositoryPageController::class)->name('repository');
+
+    Route::get('/p/{vendor}/{package}', PackagePageController::class)
+        // Greedy, as the metadata route is: a package name may contain dots.
+        ->where('package', '[^/]+')
+        ->name('package');
+
+    // The archive a page's download button points at. No version segment
+    // means the current release, which is the link worth pasting anywhere:
+    // it goes on meaning "the latest" as releases come and go.
+    Route::get('/p/{vendor}/{package}/download/{version?}', PackageArchiveController::class)
+        ->where('package', '[^/]+')
+        ->where('version', '[^/]+')
+        ->name('download');
+};
+
+Route::middleware(['throttle:pages', ResolveComposerRepository::class])
+    ->name('pages.')
+    ->group($pages);
+
+Route::middleware(['throttle:pages', ResolveComposerRepository::class])
+    ->prefix('r/{repositoryPath}')
+    ->where(['repositoryPath' => '[a-z0-9-]+'])
+    ->name('pages.repository.')
+    ->group($pages);
+
+// Where the pages get found. Both answer whether or not the sitemap is
+// enabled — a 404 on robots.txt is read by some crawlers as permission to
+// crawl everything. See SitemapController.
+Route::get('/sitemap.xml', [SitemapController::class, 'sitemap'])->name('sitemap');
+Route::get('/robots.txt', [SitemapController::class, 'robots'])->name('robots');
 
 // The landing point for the password link `admin:create`, `user:add` and
 // `user:reset-password` print. One opaque segment and no query string, so the

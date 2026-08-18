@@ -39,6 +39,7 @@ class PackageSynchronizer
         private readonly ArchiveStore $archives,
         private readonly ArchiveSubtree $subtrees = new ArchiveSubtree,
         private readonly VersionNormalizer $normalizer = new VersionNormalizer,
+        private readonly PackagePage $pages = new PackagePage,
     ) {}
 
     /**
@@ -298,8 +299,9 @@ class PackageSynchronizer
         // metadata is read, so only that one is fetched.
         $describes = $latest ?? (string) $versions->last()->version;
 
-        $newest = $package->versions()->where('version', $describes)->value('metadata');
-        $newest = is_array($newest) ? $newest : [];
+        $describing = $package->versions()->where('version', $describes)->first(['metadata', 'reference']);
+
+        $newest = is_array($describing?->metadata) ? $describing->metadata : [];
 
         $declared = $newest['name'] ?? null;
 
@@ -327,6 +329,18 @@ class PackageSynchronizer
         $package->isClean(self::PUBLISHED_COLUMNS)
             ? $package->recordBookkeeping($bookkeeping)
             : $package->forceFill($bookkeeping)->save();
+
+        // The public page's body, read at the same ref that described the
+        // package above — so the page and the metadata beside it are the same
+        // release talking, rather than a README from the default branch
+        // describing a version that has not shipped.
+        //
+        // Only for a package that publishes a page: this is up to five
+        // provider requests per package per sync, and a registry serving
+        // thousands of packages with no pages should spend none of them.
+        if ($package->page_enabled) {
+            $this->pages->refresh($package, $describing?->reference);
+        }
 
         return $this->outcome($known, $versions->pluck('is_dev', 'version')->all());
     }

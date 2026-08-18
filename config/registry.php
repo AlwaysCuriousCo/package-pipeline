@@ -267,6 +267,48 @@ return [
         'cache_seconds' => (int) env('METRICS_CACHE_SECONDS', 10),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Public Package Pages
+    |--------------------------------------------------------------------------
+    |
+    | Nothing here publishes anything. A page exists because an admin switched
+    | one on for a package or a repository; these are the numbers and the
+    | defaults that apply once one has.
+    |
+    | `page_image` is the social preview image used for every page that has not
+    | set one of its own — an absolute URL, or a path relative to this app's
+    | root. It is what appears when a page's URL is pasted into Slack, a post
+    | or a chat, so an installation that sets nothing else should set this: a
+    | link with no card beside it is a link most people do not click.
+    |
+    | `pages.markdown_cache_minutes` is how long a rendered README is reused.
+    | Rendering is CommonMark over a document nobody edits between syncs, so
+    | this is pure repetition avoided; entries are keyed by a hash of the
+    | markdown itself, so a sync that changes the file changes the key and
+    | nothing has to remember to clear anything. Zero turns the cache off.
+    |
+    | `pages.max_body_kilobytes` refuses to store or render a page body past
+    | this size. The body comes out of somebody else's repository, and a
+    | README is prose — a file orders of magnitude past that is a generated
+    | artifact, a vendored document or a mistake, and rendering it costs this
+    | app's memory per visitor rather than per sync.
+    |
+    | `pages.sitemap` publishes /sitemap.xml and /robots.txt listing every
+    | enabled page, which is what gets them indexed. Off leaves the pages
+    | reachable and unlisted — the right answer for a registry whose pages are
+    | for people who were sent the link rather than for search.
+    |
+    */
+
+    'page_image' => env('PAGE_IMAGE'),
+
+    'pages' => [
+        'markdown_cache_minutes' => (int) env('PAGE_MARKDOWN_CACHE_MINUTES', 1440),
+        'max_body_kilobytes' => (int) env('PAGE_MAX_BODY_KB', 512),
+        'sitemap' => (bool) env('PAGE_SITEMAP', true),
+    ],
+
     'mirror' => [
         'metadata_ttl_minutes' => (int) env('MIRROR_METADATA_TTL_MINUTES', 60),
         'missing_ttl_minutes' => (int) env('MIRROR_MISSING_TTL_MINUTES', 10),

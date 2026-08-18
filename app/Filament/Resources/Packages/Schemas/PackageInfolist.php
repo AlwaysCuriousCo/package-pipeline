@@ -96,6 +96,31 @@ class PackageInfolist
                     ->placeholder(fn (Package $record): string => $record->webhookCoverage()->isActive()
                         ? 'Nothing pushed yet'
                         : 'Never'),
+                TextEntry::make('page_enabled')
+                    ->label('Public page')
+                    // The URL rather than the boolean: "on" is not the answer
+                    // an admin wants here, "here is the page, go and look at
+                    // it" is. Off, the answer is the state.
+                    ->state(fn (Package $record): string => $record->hasPage() ? $record->pageUrl() : 'Not published')
+                    ->url(fn (Package $record): ?string => $record->hasPage() ? $record->pageUrl() : null)
+                    ->openUrlInNewTab()
+                    ->color(fn (Package $record): string => $record->hasPage() ? 'primary' : 'gray')
+                    ->helperText(fn (Package $record): ?string => match (true) {
+                        ! $record->hasPage() => null,
+                        $record->pageRequiresAccess() => 'Readable by anyone. Archives and install commands are withheld — this package is served from a private repository.',
+                        default => 'Readable by anyone, with '.mb_strtolower($record->pageDownloads()->getLabel()).'.',
+                    }),
+                TextEntry::make('page_source_path')
+                    ->label('Page content')
+                    ->visible(fn (Package $record): bool => $record->hasPage())
+                    ->state(fn (Package $record): string => match ($record->pageContent()['source']) {
+                        'panel' => 'Written here, in the package\'s edit form',
+                        'none' => 'None yet — no package-page.md or README.md found in the repository',
+                        default => $record->page_source_path.', read from the repository',
+                    })
+                    ->helperText(fn (Package $record): ?string => $record->page_source_synced_at === null
+                        ? null
+                        : 'Last read '.$record->page_source_synced_at->diffForHumans()),
                 TextEntry::make('description')
                     ->placeholder('-')
                     ->columnSpanFull(),

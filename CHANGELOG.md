@@ -14,6 +14,21 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Public pages.** A package or a repository can publish a page anyone can read
+  — no account, no token, no Composer. A package page shows the description, the
+  repository's `package-page.md` or `README.md`, the install commands, the
+  version history and, when switched on, a download for the latest release or
+  for every version; a repository's landing page is served at the same URL its
+  Composer endpoints hang off (`/` for the default repository) and lists the
+  packages publishing pages of their own. Off until enabled, per package and per
+  repository. A page on a private repository still describes the package but
+  withholds the archives and the install commands, showing an access notice in
+  their place. Markdown from a repository is rendered with raw HTML escaped and
+  relative links resolved against the repository it came from. Every page
+  carries Open Graph and Twitter card tags, JSON-LD and a canonical URL, and
+  `/sitemap.xml` and `/robots.txt` list them (`PAGE_SITEMAP=false` to publish
+  neither). See [docs/public-pages.md](docs/public-pages.md).
+
 - The [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer):
   `packages.json`, `search.json`, `list.json`, per-package `p2` metadata, and
   `dist` zipballs. A consuming project needs one `repositories` entry and no
@@ -348,7 +363,7 @@ release looks after itself.
   change, but a rollback that reaches it has already unwound the migrations
   after it. Restoring the backup is the recovery path; plan the upgrade that
   way.
-- **Run `php artisan migrate`.** Twenty migrations, all safe on a populated
+- **Run `php artisan migrate`.** Twenty-one migrations, all safe on a populated
   database, and none of them rewrites a row except the name normalization
   below. Two are worth knowing about: `notifications.data` becomes a json
   column, which is what stops the panel answering `500` on every page under
@@ -388,8 +403,15 @@ release looks after itself.
   generated from `app/Filament` and `resources/views/filament` — registered with
   `->viteTheme()`. `composer run setup` runs the build; CI and deploy pipelines
   need `npm ci && npm run build` added.
-- Nothing new is enabled by default. Upstream mirroring, the Prometheus
-  endpoint, outgoing webhooks and vendor reservations all start off, and a
-  registry that ignores them behaves as it did before.
+- **`public/robots.txt` has been removed**, so that `/robots.txt` can be
+  answered by the app — it now points crawlers at `/sitemap.xml` and keeps them
+  off `/admin`, `/p2/` and `/dist/`, or answers a blanket disallow when
+  `PAGE_SITEMAP=false`. A deployment that restores the static file shadows the
+  route, and the setting then does nothing.
+- Nothing new is enabled by default. Public pages, upstream mirroring, the
+  Prometheus endpoint, outgoing webhooks and vendor reservations all start off,
+  and a registry that ignores them behaves as it did before. In particular the
+  registry root goes on redirecting to `/admin/login` until a page is published
+  for the default repository.
 
 [Unreleased]: https://github.com/AlwaysCuriousCo/package-pipeline/compare/v0.9.4...HEAD

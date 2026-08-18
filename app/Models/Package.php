@@ -2,9 +2,11 @@
 
 namespace App\Models;
 
+use App\Enums\PageDownloads;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Exceptions\VendorReserved;
+use App\Jobs\RefreshPackagePage;
 use App\Models\Concerns\LogsAuditableChanges;
 use App\Notifications\PackageAbandoned;
 use App\Services\AdminNotifier;
@@ -28,7 +30,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_install', 'page_versions', 'page_body', 'page_image'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -49,6 +51,14 @@ class Package extends Model
     protected $attributes = [
         'webhook_enabled' => true,
         'abandoned' => false,
+        // The page columns, restated for the same reason `abandoned` is: the
+        // form reads them off a record it has just built, and a null where
+        // the column says false is a toggle that renders indeterminate and an
+        // audit entry for a change nobody made.
+        'page_enabled' => false,
+        'page_downloads' => PageDownloads::None,
+        'page_install' => true,
+        'page_versions' => true,
         // The column's default, restated for the same reason: a package built
         // in memory is asked where in its repository it lives — by the wizard
         // reading a composer.json, by the client factories — before it has
@@ -68,6 +78,13 @@ class Package extends Model
         return [
             'name', 'repository', 'subdirectory', 'repository_id', 'source_id', 'type',
             'abandoned', 'replacement_package', 'webhook_enabled',
+            // Publishing a page is a publishing decision like any other, and
+            // the one on this list a reader can see without a token — so an
+            // audit that recorded who made this package private again, and
+            // when, is worth more here than anywhere else on the row. The
+            // bodies are left off: they are content, and the log is a record
+            // of decisions, not a revision history for markdown.
+            'page_enabled', 'page_downloads', 'page_install', 'page_versions',
         ];
     }
 
@@ -83,6 +100,11 @@ class Package extends Model
             'abandoned' => 'boolean',
             'last_synced_at' => 'datetime',
             'webhook_received_at' => 'datetime',
+            'page_enabled' => 'boolean',
+            'page_install' => 'boolean',
+            'page_versions' => 'boolean',
+            'page_downloads' => PageDownloads::class,
+            'page_source_synced_at' => 'datetime',
         ];
     }
 
@@ -153,6 +175,17 @@ class Package extends Model
         static::saved(function (self $package): void {
             if ($package->wasChanged('abandoned') && $package->abandoned) {
                 app(AdminNotifier::class)->send(new PackageAbandoned($package));
+            }
+
+            // A page switched on has nothing to show until the repository's
+            // README has been read, and the next sync may be an hour away —
+            // so the read is queued the moment the switch is saved. Only in
+            // the off → on direction, and only when the body has never been
+            // read: syncs keep it current afterwards, and re-reading it every
+            // time an admin saves an unrelated field would spend a provider
+            // request per edit.
+            if ($package->wasChanged('page_enabled') && $package->page_enabled && $package->page_source_synced_at === null) {
+                RefreshPackagePage::dispatch($package);
             }
         });
 
@@ -847,27 +880,6 @@ class Package extends Model
      */
     public function installCommands(): array
     {
-        $repository = $this->composerRepository;
-
-        // A configured key is used exactly as it was typed: whoever set it has
-        // decided what the entry in the consumer's composer.json is called, and
-        // that includes taking on the collision below.
-        $repositoryKey = (string) config('registry.composer_repository_key');
-
-        if ($repositoryKey === '') {
-            // Otherwise it is derived. A package in a named repository is
-            // reached through that mount, and the derived key carries the path
-            // so two repositories on the same registry never fight over one
-            // entry in the consumer's composer.json.
-            $repositoryKey = Str::slug(config('app.name')) ?: 'private';
-
-            if (! $repository->isDefault()) {
-                $repositoryKey .= "-{$repository->path}";
-            }
-        }
-
-        $repositoryUrl = rtrim($repository->url(), '/');
-
         $require = $this->name;
 
         if ($constraint = $this->suggestedConstraint()) {
@@ -875,7 +887,10 @@ class Package extends Model
         }
 
         return [
-            'repository' => "composer config repositories.{$repositoryKey} composer {$repositoryUrl}",
+            // Which entry in the consumer's composer.json this repository
+            // claims, and what it is pointed at, is the repository's own
+            // decision — the same line its landing page prints.
+            'repository' => $this->composerRepository->configureCommand(),
             'require' => "composer require {$require}",
         ];
     }
@@ -920,6 +935,308 @@ class Package extends Model
             ->last();
 
         $this->forceFill(['latest_version' => $latest])->save();
+    }
+
+    /**
+     * The filenames a package page's body is looked for in, in order.
+     *
+     * `package-page.md` first, because a project that has written one has
+     * written it for this: a README is addressed to contributors — how to run
+     * the test suite, how to open a pull request — where a registry page is
+     * addressed to whoever is deciding whether to install the thing. The
+     * README is the fallback because almost every repository has one and
+     * almost none has the other.
+     *
+     * The case variants are not decoration: a case-sensitive provider serves
+     * "Readme.md" and "README.md" as different files, and which one a project
+     * committed is not something an admin should have to find out by
+     * publishing a blank page.
+     *
+     * @var list<string>
+     */
+    public const PAGE_FILES = [
+        'package-page.md',
+        'PACKAGE-PAGE.md',
+        'README.md',
+        'readme.md',
+        'Readme.md',
+    ];
+
+    /**
+     * Whether this package answers at a public URL.
+     *
+     * The switch alone decides it. A package in a private repository still
+     * gets a page when one is enabled — it just cannot hand out archives (see
+     * pageDownloads()) — because "here is what this is, ask us for access" is
+     * exactly the page a private package wants, and because a registry that
+     * refused to publish anything about a private package would have nowhere
+     * to put the access request that follows.
+     */
+    public function hasPage(): bool
+    {
+        return (bool) $this->page_enabled;
+    }
+
+    /**
+     * The public URL of this package's page.
+     *
+     * Inside the repository's own mount, exactly as its Composer endpoints
+     * are — "/p/vendor/name" at the root, "/r/internal/p/vendor/name" for a
+     * named repository. Package names are unique per repository rather than
+     * per registry, so a single rooted /p/ namespace would be ambiguous the
+     * first time two repositories on one installation published the same
+     * name, which is a thing repositories exist to allow.
+     *
+     * Absolute, and built from the configured application URL rather than
+     * from the request, because this is what goes in a canonical link, a
+     * sitemap and an og:url — all three read by machines that will not be
+     * visiting from the host that generated them.
+     */
+    public function pageUrl(): string
+    {
+        [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
+
+        return $this->composerRepository->url('/p/'.$vendor.'/'.$name);
+    }
+
+    /**
+     * The markdown this page renders, and where it came from.
+     *
+     * The panel's own body wins outright: an admin who has written one has
+     * said what this page should say, and a sync that then overwrote it with
+     * the repository's README would be the app arguing with its operator.
+     *
+     * @return array{body: ?string, source: string}
+     */
+    public function pageContent(): array
+    {
+        if (filled($this->page_body)) {
+            return ['body' => (string) $this->page_body, 'source' => 'panel'];
+        }
+
+        return filled($this->page_source_body)
+            ? ['body' => (string) $this->page_source_body, 'source' => (string) $this->page_source_path]
+            : ['body' => null, 'source' => 'none'];
+    }
+
+    /**
+     * What the page may actually offer, as against what it was configured to.
+     *
+     * The configured value is capped by the repository's own public flag,
+     * because an archive is the package's content and handing it to an
+     * anonymous visitor is precisely what a private repository exists to
+     * refuse. A page on a private repository therefore reads as "no
+     * downloads" however it was set — and the setting is kept rather than
+     * cleared, so making the repository public again restores what the admin
+     * chose rather than silently leaving it off.
+     */
+    public function pageDownloads(): PageDownloads
+    {
+        if (! $this->composerRepository->public) {
+            return PageDownloads::None;
+        }
+
+        return $this->page_downloads ?? PageDownloads::None;
+    }
+
+    /**
+     * Whether the page prints install commands a visitor can run as they
+     * stand.
+     *
+     * The same cap, for the same reason with a smaller consequence: the two
+     * lines a private package needs are the ones with a token in them, and
+     * printing the tokenless pair to an anonymous visitor sends them to a 401
+     * that reads as the registry being broken. The page shows the access
+     * notice in their place instead.
+     */
+    public function pageShowsInstall(): bool
+    {
+        return (bool) $this->page_install && $this->composerRepository->public;
+    }
+
+    /**
+     * Whether this page is one where the visitor has to ask for access before
+     * anything on it is usable — the notice that stands in for the download
+     * buttons and the install commands, and where a token request will go.
+     */
+    public function pageRequiresAccess(): bool
+    {
+        return ! $this->composerRepository->public;
+    }
+
+    /**
+     * Where a relative link in the page's markdown points: the repository's
+     * file browser, or null for a package with no repository to point at —
+     * one published entirely by artifact upload.
+     */
+    public function pageLinkBase(): ?string
+    {
+        return $this->pageRepositoryBase($this->browseResolver());
+    }
+
+    /**
+     * Where a relative image points: the same file, served as bytes.
+     */
+    public function pageImageBase(): ?string
+    {
+        return $this->pageRepositoryBase($this->rawResolver());
+    }
+
+    /**
+     * The same two, without the package's subdirectory — the repository root.
+     *
+     * Where a link written with a leading slash points: in a README, and so
+     * on every provider that renders one, `/docs/install.md` means the
+     * repository root rather than the directory the file sits in. For a
+     * package that is the whole repository the two bases are identical; for a
+     * monorepo package they are not, and resolving a root-relative link
+     * against the subdirectory base produces a link to a path that does not
+     * exist.
+     */
+    public function pageLinkRootBase(): ?string
+    {
+        return $this->pageRepositoryBase($this->browseResolver(), subdirectory: false);
+    }
+
+    public function pageImageRootBase(): ?string
+    {
+        return $this->pageRepositoryBase($this->rawResolver(), subdirectory: false);
+    }
+
+    /**
+     * @return callable(SourceProvider, string): ?string
+     */
+    private function browseResolver(): callable
+    {
+        return fn (SourceProvider $provider, string $url): ?string => $provider->browseUrl($url);
+    }
+
+    /**
+     * @return callable(SourceProvider, string): ?string
+     */
+    private function rawResolver(): callable
+    {
+        return fn (SourceProvider $provider, string $url): ?string => $provider->rawUrl($url);
+    }
+
+    /**
+     * The subdirectory-aware base for either of the two above. A monorepo
+     * package's README lives in its own directory, and its relative links are
+     * relative to that directory rather than to the repository root — except
+     * for the root-relative ones, which is what $subdirectory: false is for.
+     *
+     * @param  callable(SourceProvider, string): ?string  $resolve
+     */
+    private function pageRepositoryBase(callable $resolve, bool $subdirectory = true): ?string
+    {
+        if (blank($this->repository)) {
+            return null;
+        }
+
+        $base = $resolve($this->provider(), (string) $this->repository);
+
+        if ($base === null) {
+            return null;
+        }
+
+        return $subdirectory && $this->hasSubdirectory()
+            ? $base.'/'.trim((string) $this->subdirectory, '/')
+            : $base;
+    }
+
+    /**
+     * The image a social platform shows when this page's URL is pasted into a
+     * post: the package's own, or the registry-wide default, or none.
+     *
+     * Absolute, because that is what og:image requires — a relative one is
+     * dropped by every platform that reads it.
+     */
+    public function pageImageUrl(): ?string
+    {
+        $image = filled($this->page_image)
+            ? (string) $this->page_image
+            : (string) config('registry.page_image', '');
+
+        if ($image === '') {
+            return null;
+        }
+
+        return str_starts_with($image, 'http://') || str_starts_with($image, 'https://')
+            ? $image
+            : $this->composerRepository->pageRootUrl().'/'.ltrim($image, '/');
+    }
+
+    /**
+     * The one-line summary the page's <meta name="description"> and its
+     * og:description carry.
+     *
+     * Composed rather than taken from the description column alone, because
+     * a third of packages describe themselves in three words and a preview
+     * card with three words in it tells a reader nothing. The name and the
+     * current version are facts this app always has.
+     */
+    public function pageSummary(): string
+    {
+        $described = trim((string) $this->description);
+
+        $summary = $described !== ''
+            ? $described
+            : "The {$this->name} package.";
+
+        if ($this->latest_version !== null) {
+            $summary .= " Latest release: {$this->latest_version}.";
+        }
+
+        // Search engines truncate around 160 characters and social cards
+        // sooner; cut on a word so the result reads as a sentence that ended
+        // rather than one that was severed.
+        return Str::limit($summary, 155, preserveWords: true);
+    }
+
+    /**
+     * The versions this page lists, newest first.
+     *
+     * Capped, because a package that has been released weekly for five years
+     * has several hundred and a page is not an API — the whole history is
+     * what /p2 is for, and what the version table exists to summarize.
+     *
+     * @return Collection<int, PackageVersion>
+     */
+    public function pageVersions(int $limit = 50): Collection
+    {
+        return $this->versions()
+            ->orderByDesc('order')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
+     * The release this page's "latest" download hands over: the stable
+     * version the package names as current, and nothing when it has none.
+     * A page will not quietly offer a dev branch as though it were a release.
+     */
+    public function pageLatestVersion(): ?PackageVersion
+    {
+        if ($this->latest_version === null) {
+            return null;
+        }
+
+        return $this->versions()
+            ->where('version', $this->latest_version)
+            ->whereNotNull('archive_path')
+            ->first();
+    }
+
+    /**
+     * The packages with pages, for the sitemap and a repository's own page.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeWithPage(Builder $query): Builder
+    {
+        return $query->where('page_enabled', true);
     }
 
     /**

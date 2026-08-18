@@ -218,6 +218,16 @@ Two things to know before enabling it. The disk grows without a ceiling of its o
 
 **[docs/mirroring.md](docs/mirroring.md)** covers all of it: what consumers see, the freshness and failure behaviour, the access-control rule and its sharp edges, and what it costs in disk.
 
+### Public pages
+
+A package or a repository can publish a page anyone can read — no account, no token, no Composer. It shows what the package is, its `README.md` (or a `package-page.md` written for the purpose) out of the repository, the install commands, and — if you switch it on — a download for the latest release or for every version.
+
+The URL you hand a project is the first thing somebody pastes into a browser, and before this it answered a redirect to a login form for an account they do not have. Now the default repository can answer a landing page there instead, and each package can answer one at `/p/vendor/name`.
+
+Off until you enable one, per package and per repository. A page on a **private** repository still describes the package and shows its version history, but withholds the archives and the install commands and shows an access notice in their place. Every page carries Open Graph and Twitter card tags, JSON-LD and a canonical URL, and `/sitemap.xml` lists them.
+
+**[docs/public-pages.md](docs/public-pages.md)** covers all of it: enabling a page, where its content comes from, how untrusted markdown is rendered, what private packages withhold, and the SEO and social-preview tags.
+
 ## Configuration reference
 
 Everything lives in `.env`, and `.env.example` carries the same notes in situ. Below are the knobs that belong to this app rather than to a stock Laravel one; the stock ones that matter most in production — `QUEUE_CONNECTION`, `CACHE_STORE`, `FILESYSTEM_DISK`, `AWS_*` — are covered under [Recommended drivers](docs/deployment.md#recommended-drivers).
@@ -254,6 +264,17 @@ None of these turns mirroring on — that is a per-repository decision made in t
 | `MIRROR_ADVISORY_TTL_MINUTES` | How long an upstream's `composer audit` answer is reused (default `10`). |
 | `MIRROR_FAILURE_BACKOFF_MINUTES` | How long an upstream that has just failed is left alone, serving only what is already cached (default `5`). Without it an outage costs every lookup a connect timeout. |
 | `MIRROR_MAX_ARCHIVE_MB` / `MIRROR_MAX_METADATA_KB` | Ceilings on what will be cached from an upstream (default `256` / `8192`). `ARTIFACT_UPLOAD_MAX_MB` bounds what one of your own tokens may spend; these bound what a stranger's published package can. |
+
+**Public pages**
+
+None of these publishes anything — a page is a per-package or per-repository decision made in the panel. These apply once one is enabled. Full explanations in [docs/public-pages.md](docs/public-pages.md#configuration).
+
+| Variable | Purpose |
+| --- | --- |
+| `PAGE_IMAGE` | Social preview image used by every page that has not set one of its own — an absolute URL or a path relative to the app root, around 1200×630. Worth setting: a link with no card beside it is a link most people do not click. |
+| `PAGE_SITEMAP` | Publish `/sitemap.xml` and an indexing `/robots.txt` (default `true`). `false` leaves pages reachable and unlisted, and answers robots.txt with a blanket disallow. |
+| `PAGE_MARKDOWN_CACHE_MINUTES` | How long a rendered page body is reused (default `1440`). Keyed by a hash of the markdown itself, so a sync that changes the file changes the key. `0` turns it off. |
+| `PAGE_MAX_BODY_KB` | Largest page body stored or rendered (default `512`). The body comes out of somebody else's repository; a file orders of magnitude past this is a generated artifact or a mistake. |
 
 **Queue timing**
 
@@ -420,6 +441,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/monorepos.md](docs/monorepos.md) — publishing several packages from one repository: the subdirectory field, how a dist for part of a repository is built, and what a push to a monorepo syncs.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
+- [docs/public-pages.md](docs/public-pages.md) — publishing a readable page for a package or a repository: the toggles, where the content comes from, what a private package withholds, and the social-preview and search tags.
 - [docs/teams.md](docs/teams.md) — granting access to a group rather than a person: what a team holds, how effective access composes, and what it costs on the Composer hot path.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.
