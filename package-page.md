@@ -2,27 +2,27 @@
 
 Sharing private PHP packages across projects is a chore: every consuming app
 needs its own `repositories` entries, its own GitHub or GitLab credentials, and
-Composer crawls the provider's API repository by repository just to resolve
-versions. Package Pipeline replaces all of that with one registry you run
-yourself — the one serving this page. Point it at your repositories once, and
-every project can `composer require` your packages as if they were on
-Packagist: one repository URL to configure, no per-repo wiring, and your code
-never leaves your infrastructure.
+its own slow crawl through the provider's API, repository by repository, just
+to resolve versions. Package Pipeline replaces all of that with one registry
+you run yourself: the one serving this page. Point it at your repositories
+once, and every project can `composer require` your packages as if they were on
+Packagist, with a single repository URL to configure and no per-repo wiring.
+Your code never leaves your infrastructure.
 
 ## What you get
 
-- **The full [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer)** — `packages.json`, `search.json`, `list.json`, per-package metadata and `dist` zipballs. Consuming projects need one `repositories` entry and nothing else.
+- **The full [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer).** `packages.json`, `search.json`, `list.json`, per-package metadata and `dist` zipballs. A consuming project adds one `repositories` entry and nothing else.
 - **Syncing from GitHub and GitLab.** Tags and branches become versions; each version's zipball is stored on your own disk or S3 with its checksum, so installs are served entirely from your storage.
-- **Auto-sync on push**, through a GitHub App webhook covering every repository at once, or per-repository hooks on either provider.
-- **Several repositories in one installation** — a public one and an internal one, say, with independent access rules and independent tokens.
-- **Access tokens with abilities**, so the token in every developer's `auth.json` can install packages without also being able to delete one.
-- **Monorepo support**: several packages from one repository, each published from its own subdirectory with a re-rooted dist archive.
-- **Upstream mirroring** of packagist.org or another registry, so one URL resolves a project's whole dependency graph and a build stops depending on somebody else's uptime.
-- **Reserved vendor prefixes**, the server half of a dependency-confusion defence.
-- **Artifact uploads** for packages built in CI rather than synced from a repository.
-- **Public pages** like this one, for any package or repository you choose to describe.
-- **Download analytics, a license report and a CycloneDX SBOM export.**
-- **An audit log, teams, SSO, outgoing webhooks and a Prometheus endpoint** for the operational side.
+- **Auto-sync on push.** A GitHub App webhook covers every repository at once, or use per-repository hooks on either provider.
+- **Several repositories in one installation.** A public one and an internal one, say, with independent access rules and independent tokens.
+- **Access tokens with abilities.** The token in every developer's `auth.json` can install packages without also being able to delete one.
+- **Monorepo support.** Several packages from one repository, each published from its own subdirectory with a re-rooted dist archive.
+- **Upstream mirroring.** Serve packagist.org or another registry through your own, so one URL resolves a project's whole dependency graph and a build stops depending on somebody else's uptime.
+- **Reserved vendor prefixes.** The server half of a dependency-confusion defence.
+- **Artifact uploads.** Publish packages built in CI rather than synced from a repository.
+- **Public pages.** A page like this one for any package or repository you choose to describe.
+- **Reporting.** Download analytics, a license report and a CycloneDX SBOM export.
+- **Operational tooling.** An audit log, teams, SSO, outgoing webhooks and a Prometheus endpoint.
 
 ## Running your own
 
