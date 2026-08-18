@@ -2,10 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Models\Package;
 use App\Models\Repository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -104,7 +106,10 @@ class PublicPackagePageTest extends TestCase
 
     public function test_a_page_carries_the_tags_a_social_platform_and_a_crawler_read(): void
     {
-        $this->package(['page_image' => 'https://cdn.example.com/card.png']);
+        $this->package([
+            'page_image' => 'https://cdn.example.com/card.png',
+            'page_source' => true,
+        ]);
 
         $response = $this->get('/p/acme/widgets');
 
@@ -267,8 +272,11 @@ class PublicPackagePageTest extends TestCase
         $response->assertDontSee('<script>alert', false);
         // Relative links resolve against the repository they were written in.
         $response->assertSee('https://github.com/acme/widgets/blob/HEAD/docs/install.md', false);
-        // Images resolve to the bytes rather than to the provider's viewer.
-        $response->assertSee('https://github.com/acme/widgets/raw/HEAD/art/logo.png', false);
+        // Images come back through this registry rather than from the
+        // provider's raw host, which answers 404 to a reader with no
+        // credential for a private repository.
+        $response->assertSee(config('app.url').'/p/acme/widgets/asset/art/logo.png', false);
+        $response->assertDontSee('raw.githubusercontent.com', false);
     }
 
     public function test_a_monorepo_readme_resolves_its_links_against_the_right_directory(): void
@@ -286,15 +294,21 @@ class PublicPackagePageTest extends TestCase
         // A leading slash means the repository root, as it does on the
         // provider that rendered this README first.
         $response->assertSee('https://github.com/acme/widgets/blob/HEAD/LICENSE.md', false);
-        $response->assertSee('https://github.com/acme/widgets/raw/HEAD/art/logo.png', false);
+        // A root-relative image is the asset route with no subdirectory in
+        // the path; the path travels repository-root-relative either way.
+        $response->assertSee(config('app.url').'/p/acme/widgets/asset/art/logo.png', false);
         $response->assertDontSee('packages/widgets/LICENSE.md', false);
-        $response->assertDontSee('packages/widgets/art/logo.png', false);
+        $response->assertDontSee('asset/packages/widgets/art/logo.png', false);
     }
 
-    public function test_a_body_written_in_the_panel_wins_over_the_repository(): void
+    public function test_content_written_in_the_panel_is_published_when_it_is_chosen(): void
     {
         $this->package([
+            'page_body_source' => PageBodySource::Custom,
             'page_body' => '# Written here',
+            // Still stored from an earlier sync, and deliberately not shown:
+            // which source publishes is stated on the record, not inferred
+            // from which fields happen to be filled.
             'page_source_path' => 'README.md',
             'page_source_body' => '# From the repository',
         ]);
@@ -313,7 +327,7 @@ class PublicPackagePageTest extends TestCase
         ]);
 
         $this->get('/p/acme/widgets')
-            ->assertSee('https://github.com/acme/widgets/raw/HEAD/packages/widgets/art/logo.png', false);
+            ->assertSee(config('app.url').'/p/acme/widgets/asset/packages/widgets/art/logo.png', false);
     }
 
     public function test_a_page_is_scoped_to_the_repository_it_is_served_from(): void
@@ -343,5 +357,162 @@ class PublicPackagePageTest extends TestCase
         $this->package();
 
         $this->get('/r/nowhere/p/acme/widgets')->assertNotFound();
+    }
+
+    public function test_the_type_and_source_lines_are_each_on_their_own_switch(): void
+    {
+        $this->package(['page_type' => true, 'page_source' => true]);
+
+        $this->get('/p/acme/widgets')
+            ->assertSee('Type:')
+            ->assertSee('https://github.com/acme/widgets');
+
+        Package::query()->update(['page_type' => false, 'page_source' => false]);
+
+        $this->get('/p/acme/widgets')
+            ->assertOk()
+            ->assertDontSee('Type:')
+            // Including out of the structured data, which is read by more
+            // things than the page is.
+            ->assertDontSee('https://github.com/acme/widgets');
+    }
+
+    public function test_the_source_repository_is_withheld_by_default(): void
+    {
+        $this->package();
+
+        $this->get('/p/acme/widgets')
+            ->assertOk()
+            ->assertDontSee('https://github.com/acme/widgets');
+    }
+
+    public function test_an_image_from_the_repository_is_served_through_the_registry(): void
+    {
+        $this->package();
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/art/logo.png*' => Http::response('png-bytes'),
+        ]);
+
+        $response = $this->get('/p/acme/widgets/asset/art/logo.png');
+
+        $response->assertOk();
+        $response->assertHeader('Content-Type', 'image/png');
+        // Pinned to being an image: an SVG committed to a repository would
+        // otherwise be a document running at this origin.
+        $response->assertHeader('X-Content-Type-Options', 'nosniff');
+        $this->assertSame('png-bytes', $response->getContent());
+    }
+
+    public function test_an_image_is_read_at_the_ref_the_page_describes(): void
+    {
+        $this->package();
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/*' => Http::response('png-bytes'),
+        ]);
+
+        $this->get('/p/acme/widgets/asset/art/logo.png')->assertOk();
+
+        // The release's ref, not a ref the caller chose and not the default
+        // branch: a page and the screenshots in it are one commit's.
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), 'ref='.str_repeat('b', 40)));
+    }
+
+    public function test_a_second_request_for_an_image_costs_the_provider_nothing(): void
+    {
+        $this->package();
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/*' => Http::response('png-bytes'),
+        ]);
+
+        $this->get('/p/acme/widgets/asset/art/logo.png')->assertOk();
+        $this->get('/p/acme/widgets/asset/art/logo.png')->assertOk();
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_a_missing_image_is_not_re_fetched_on_every_visit(): void
+    {
+        $this->package();
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/*' => Http::response('Not Found', 404),
+        ]);
+
+        $this->get('/p/acme/widgets/asset/art/moved.png')->assertNotFound();
+        $this->get('/p/acme/widgets/asset/art/moved.png')->assertNotFound();
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_the_asset_route_serves_images_and_nothing_else(): void
+    {
+        $this->package();
+
+        Http::fake(['api.github.com/*' => Http::response('secrets')]);
+
+        // Not a way to read a private repository's source, its .env.example
+        // or its CI configuration.
+        $this->get('/p/acme/widgets/asset/composer.json')->assertNotFound();
+        $this->get('/p/acme/widgets/asset/.env.example')->assertNotFound();
+        $this->get('/p/acme/widgets/asset/src/Widget.php')->assertNotFound();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_the_asset_route_cannot_climb_out_of_the_repository(): void
+    {
+        $this->package();
+
+        Http::fake(['api.github.com/*' => Http::response('bytes')]);
+
+        $this->get('/p/acme/widgets/asset/../../other/logo.png')->assertNotFound();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_the_asset_route_is_closed_for_a_package_with_no_page(): void
+    {
+        $this->package(['page_enabled' => false]);
+
+        Http::fake(['api.github.com/*' => Http::response('bytes')]);
+
+        $this->get('/p/acme/widgets/asset/art/logo.png')->assertNotFound();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_an_oversized_image_is_refused_rather_than_cached(): void
+    {
+        config(['registry.pages.max_asset_kilobytes' => 1]);
+
+        $this->package();
+
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/*' => Http::response(str_repeat('x', 4096)),
+        ]);
+
+        $this->get('/p/acme/widgets/asset/art/huge.png')->assertNotFound();
+    }
+
+    public function test_a_card_image_living_in_the_repository_is_served_through_the_registry(): void
+    {
+        // The case a private repository makes unavoidable: Slack and X fetch
+        // an og:image anonymously from their own infrastructure, so a raw
+        // provider URL answers them 404 and the link goes out with no card.
+        $this->package(['page_image' => 'art/social-card.png']);
+
+        $this->get('/p/acme/widgets')
+            ->assertSee('<meta property="og:image" content="'.config('app.url').'/p/acme/widgets/asset/art/social-card.png">', false);
+    }
+
+    public function test_a_card_image_may_still_be_an_absolute_url(): void
+    {
+        $this->package(['page_image' => 'https://cdn.example.com/card.png']);
+
+        $this->get('/p/acme/widgets')
+            ->assertSee('<meta property="og:image" content="https://cdn.example.com/card.png">', false);
     }
 }

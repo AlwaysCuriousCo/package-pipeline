@@ -115,7 +115,8 @@ class PackageInfolist
                     ->visible(fn (Package $record): bool => $record->hasPage())
                     ->state(fn (Package $record): string => match ($record->pageContent()['source']) {
                         'panel' => 'Written here, in the package\'s edit form',
-                        'none' => 'None yet — no package-page.md or README.md found in the repository',
+                        'empty' => 'Written here — and still empty, so the page shows the description and install commands alone',
+                        'none' => 'None yet — the repository has none of '.implode(', ', $record->pageBodyCandidates()),
                         default => $record->page_source_path.', read from the repository',
                     })
                     ->helperText(fn (Package $record): ?string => $record->page_source_synced_at === null

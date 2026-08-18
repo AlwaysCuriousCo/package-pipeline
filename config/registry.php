@@ -294,6 +294,20 @@ return [
     | artifact, a vendored document or a mistake, and rendering it costs this
     | app's memory per visitor rather than per sync.
     |
+    | `pages.asset_cache_minutes` is how long an image fetched out of a
+    | package's repository is kept. A page's screenshots are re-served by this
+    | app rather than linked to the provider — the only way a private
+    | repository's images render for a reader who has no credential for it, and
+    | the only way a link unfurler can fetch a card image — so without a cache
+    | every visitor would cost a provider request. Entries are keyed by the ref
+    | as well as the path, so a release that changes an image publishes the new
+    | one without anything being cleared. Zero turns the cache off, which means
+    | one provider request per image per visitor.
+    |
+    | `pages.max_asset_kilobytes` refuses to serve or cache an image past this
+    | size. It comes out of somebody's repository, and a repository is allowed
+    | to contain a 40MB PSD with a .png extension.
+    |
     | `pages.sitemap` publishes /sitemap.xml and /robots.txt listing every
     | enabled page, which is what gets them indexed. Off leaves the pages
     | reachable and unlisted — the right answer for a registry whose pages are
@@ -306,6 +320,8 @@ return [
     'pages' => [
         'markdown_cache_minutes' => (int) env('PAGE_MARKDOWN_CACHE_MINUTES', 1440),
         'max_body_kilobytes' => (int) env('PAGE_MAX_BODY_KB', 512),
+        'asset_cache_minutes' => (int) env('PAGE_ASSET_CACHE_MINUTES', 1440),
+        'max_asset_kilobytes' => (int) env('PAGE_MAX_ASSET_KB', 4096),
         'sitemap' => (bool) env('PAGE_SITEMAP', true),
     ],
 

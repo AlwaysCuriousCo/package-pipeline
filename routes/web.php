@@ -4,6 +4,7 @@ use App\Http\Controllers\DownloadExportController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\Pages\PackageArchiveController;
+use App\Http\Controllers\Pages\PackageAssetController;
 use App\Http\Controllers\Pages\PackagePageController;
 use App\Http\Controllers\Pages\RepositoryPageController;
 use App\Http\Controllers\Pages\SitemapController;
@@ -40,6 +41,15 @@ $pages = function (): void {
         // Greedy, as the metadata route is: a package name may contain dots.
         ->where('package', '[^/]+')
         ->name('package');
+
+    // An image from the package's repository, re-served by this registry.
+    // Wildcard, because the path is whatever the README wrote — it may be
+    // several segments deep — and the controller is where it is confined to
+    // the repository. @see PackageAssetController
+    Route::get('/p/{vendor}/{package}/asset/{path}', PackageAssetController::class)
+        ->where('package', '[^/]+')
+        ->where('path', '.*')
+        ->name('asset');
 
     // The archive a page's download button points at. No version segment
     // means the current release, which is the link worth pasting anywhere:

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\PageBodySource;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Jobs\RefreshPackagePage;
 use App\Models\Package;
@@ -282,6 +283,62 @@ class PackagePageContentTest extends TestCase
         ]);
 
         Livewire::test(ViewPackage::class, ['record' => $uploaded->getRouteKey()])
+            ->assertActionHidden('refreshPageContent');
+    }
+
+    public function test_a_named_file_is_read_instead_of_the_conventional_ones(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/docs/registry.md*' => Http::response('# From docs'),
+        ]);
+
+        $package = $this->package([
+            'page_enabled' => true,
+            'page_body_source' => PageBodySource::File,
+            'page_body_path' => 'docs/registry.md',
+        ]);
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        $package->refresh();
+
+        $this->assertSame('docs/registry.md', $package->page_source_path);
+        $this->assertSame('# From docs', $package->page_source_body);
+        // Only the named file is asked for; the conventional list is not
+        // walked behind it.
+        Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'contents/README.md'));
+    }
+
+    public function test_a_page_written_in_the_panel_reads_nothing_from_the_repository(): void
+    {
+        $this->fakeGitHub([
+            'api.github.com/repos/acme/widgets/contents/package-page.md*' => Http::response('# Widgets'),
+        ]);
+
+        $package = $this->package([
+            'page_enabled' => true,
+            'page_body_source' => PageBodySource::Custom,
+            'page_body' => '# Written here',
+        ]);
+
+        app(PackageSynchronizer::class)->sync($package);
+
+        Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'contents/package-page.md'));
+        $this->assertNull($package->fresh()->page_source_body);
+    }
+
+    public function test_the_refresh_action_is_not_offered_for_a_page_written_in_the_panel(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = $this->package([
+            'page_enabled' => true,
+            'page_body_source' => PageBodySource::Custom,
+            'page_body' => '# Written here',
+        ]);
+
+        // There is nothing to refresh: the body is not read from anywhere.
+        Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
             ->assertActionHidden('refreshPageContent');
     }
 }

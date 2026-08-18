@@ -65,7 +65,10 @@ enum SourceProvider: string implements HasLabel
      * The public page needs this because a README's links are relative to
      * the repository it was written in: "docs/install.md" has to become a
      * link to that file on the provider, or it becomes a 404 on this
-     * registry. @see \App\Support\PageMarkdown
+     * registry. Only links — an image is re-served by this app instead, which
+     * is the only form that works for a private repository.
+     *
+     * @see \App\Support\PageMarkdown, \App\Models\Package::pageImageBase()
      *
      * "HEAD" rather than a branch name on purpose. The alternative is asking
      * the provider for the default branch, which is a request per package per
@@ -83,23 +86,6 @@ enum SourceProvider: string implements HasLabel
             // Gitea addresses a ref by type — /src/branch/{name} — so there
             // is no "whatever the default branch is" form to build without
             // asking it, and no client here to ask with.
-            self::Gitea => null,
-        };
-    }
-
-    /**
-     * Where this provider serves the file's *bytes*, which is what an image
-     * in a README has to point at — a link to GitHub's file viewer renders
-     * as a broken image, not as a screenshot.
-     */
-    public function rawUrl(string $repositoryUrl): ?string
-    {
-        $repositoryUrl = rtrim($repositoryUrl, '/');
-
-        return match ($this) {
-            self::Github => "{$repositoryUrl}/raw/HEAD",
-            self::Gitlab => "{$repositoryUrl}/-/raw/HEAD",
-            self::Bitbucket => "{$repositoryUrl}/raw/HEAD",
             self::Gitea => null,
         };
     }

@@ -36,8 +36,10 @@ Three cases it covers:
 | **Downloads** | `No downloads` (default), `Latest release only`, or `Every version`. The middle one hands out the current artifact without publishing the release history with it. |
 | **Show install commands** | The `composer config` and `composer require` lines, exactly as the panel shows them. |
 | **Show the version history** | A table of released versions and their dates. |
-| **Social preview image** | The card image shown when the page is linked. Empty uses `PAGE_IMAGE`. |
-| **Page content** | Markdown written here, which wins over anything in the repository. Leave it empty to publish the repository's own file. |
+| **Show the package type** | What Composer calls it — library, project, metapackage. |
+| **Show the source repository** | A link to the repository the package is built from. **Off by default**: it is the one field on a page that names infrastructure rather than describing a package, and on a private package it publishes the organisation and repository name to anyone who opens the page. Worth switching on for anything open source. |
+| **Social preview image** | The card image shown when the page is linked — an absolute URL, or a path to a file in the repository (see [Images](#images)). Empty uses `PAGE_IMAGE`. |
+| **Page content** | Where the body comes from: the repository's page file or README, one file you name, or content written here. |
 
 The page answers at the package's own URL inside its repository's mount:
 
@@ -61,16 +63,22 @@ Turning the default repository's page off puts the root back to redirecting to
 
 ## Where the content comes from
 
-In order:
+**Page content** is a choice, not an inference — pick one of three:
 
-1. **Page content** written in the panel, if you have written any.
-2. **`package-page.md`** in the repository, at the package's subdirectory. A
-   project that has written one has written it for this — a README is addressed
-   to contributors, a registry page to whoever is deciding whether to install
-   the thing.
-3. **`README.md`** (also `readme.md`, `Readme.md`).
-4. Nothing, in which case the page is the package's metadata and install
-   commands alone.
+| Choice | What it publishes |
+| --- | --- |
+| **The repository's page file or README** (default) | The first of `package-page.md`, `PACKAGE-PAGE.md`, `README.md`, `readme.md`, `Readme.md` that the repository has, looked for in the package's own directory. |
+| **A specific file in the repository** | One file you name — `docs/registry.md`, say — for a repository whose registry page is not its README. The field offers the conventional names and takes any path. |
+| **Content written here** | Markdown written in the panel. Nothing is read from the repository, and no provider request is spent on it. The only option for a package published by artifact upload. |
+
+`package-page.md` is preferred over a README because a project that has written
+one has written it for this: a README is addressed to contributors — how to run
+the test suite, how to open a pull request — where a registry page is addressed
+to whoever is deciding whether to install the thing. There is an example in this
+repository at [`package-page.md`](../package-page.md).
+
+A package with none of them publishes a page of metadata and install commands
+alone, which is a perfectly good page.
 
 The file is read **at sync time**, at the ref of the release the package's
 metadata came from, and stored on the package. Enabling a page queues that read
@@ -85,9 +93,8 @@ tells you which one it found. It is for the gap between syncs: somebody has just
 edited the README, usually because the published page was wrong, and the
 alternative is a full sync that re-reads every ref or an hour's wait. It reads at
 the ref of the release the page describes, which is exactly what the next sync
-would store — so the answer does not flip between the two. If a **Page content**
-body is written in the panel, the refresh still runs and says that the page goes
-on showing what you wrote.
+would store — so the answer does not flip between the two. It is not offered for a page whose content is
+written in the panel, since nothing is read for one.
 
 ### How the markdown is rendered
 
@@ -97,13 +104,64 @@ The body is somebody else's file, published at your origin, so:
   `<script>`, and the origin it would run at is the one holding your panel's
   session cookie. Escaping rather than stripping is deliberate: it is visible.
 - `javascript:` and `data:` URLs are refused.
-- **Relative links and images are resolved against the repository**, so a
-  README's `docs/install.md` links to that file on GitHub and
-  `![](art/logo.png)` renders the image from the repository rather than 404ing
-  here. Monorepo packages resolve against their own subdirectory.
+- **Relative links are resolved against the repository**, so a README's
+  `docs/install.md` links to that file on GitHub. A leading slash means the
+  repository root, as it does on the provider that rendered the README first;
+  a monorepo package's other relative links resolve against its own
+  subdirectory.
+- **Relative images are re-served by the registry** — see [Images](#images).
 - External links carry `rel="nofollow noopener noreferrer"` — the content is not
   yours, and the registry should not lend its ranking to whatever it links to.
 - A body past `PAGE_MAX_BODY_KB` is cut on a line and marked as truncated.
+
+## Images
+
+A README's screenshots are relative paths, and pointing them at the provider
+works only for a repository the reader can already see. For a **private** one,
+`raw.githubusercontent.com` answers 404 to anyone without a GitHub credential —
+which is every visitor a public page exists for — so the images would be broken
+exactly where the page matters most.
+
+So relative images are rewritten to `/p/vendor/name/asset/…` and fetched by the
+registry using the package's own credentials. That is the answer for public
+repositories too: the page stops depending on the provider's raw host being
+reachable from wherever the reader is, and the bytes are cached here rather than
+fetched per visitor.
+
+Absolute URLs in a README — a shields.io badge, an image on a CDN — are left
+exactly as written.
+
+What keeps that route from being a way into a private repository:
+
+- only packages that publish a page are reachable at all, and only through the
+  repository mount that serves them;
+- **only image extensions are served** (`png`, `jpg`, `jpeg`, `gif`, `webp`,
+  `avif`, `ico`, `svg`), so it cannot be used to read source, a `.env.example`
+  or CI configuration — anything else is a 404, and no provider request is made;
+- the path is confined to the repository: no scheme, no host, no `..`;
+- the ref is the page's own, so a URL cannot be edited into reading an
+  unreleased branch;
+- responses are size-bounded and cached, misses included;
+- SVGs are served with `X-Content-Type-Options: nosniff` and a
+  `default-src 'none'; sandbox` CSP, because an SVG is a document and this
+  origin is the one holding the panel's session cookie.
+
+### The social preview image
+
+The same route is what makes a card image work for a private package. Slack, X
+and every other link unfurler fetch an `og:image` **anonymously, from their own
+infrastructure** — a raw provider URL answers them 404 and the link goes out with
+no card at all.
+
+So **Social preview image** takes either:
+
+- an absolute URL (`https://cdn.example.com/card.png`), used as written; or
+- a path to a file in the repository (`art/social-card.png`), served through the
+  asset route — relative to the package's directory, or to the repository root
+  with a leading slash.
+
+`PAGE_IMAGE`, the registry-wide fallback, is a file this app serves rather than
+one any repository holds: absolute, or a path under the app's public root.
 
 ## Private packages
 
@@ -171,6 +229,8 @@ read by some crawlers as permission to crawl everything.
 | `PAGE_SITEMAP` | Publish `/sitemap.xml` and an indexing `/robots.txt` (default `true`). |
 | `PAGE_MARKDOWN_CACHE_MINUTES` | How long a rendered body is reused (default `1440`). Keyed by a hash of the markdown, so a sync that changes the file changes the key. `0` turns it off. |
 | `PAGE_MAX_BODY_KB` | Largest body stored or rendered (default `512`). |
+| `PAGE_ASSET_CACHE_MINUTES` | How long an image fetched from a repository is kept (default `1440`). Keyed by ref and path, so a release that changes an image publishes the new one. `0` means one provider request per image per visitor. |
+| `PAGE_MAX_ASSET_KB` | Largest image served or cached (default `4096`). |
 
 Public pages are rate limited to 120 requests a minute per address.
 
@@ -180,4 +240,5 @@ Public pages are rate limited to 120 requests a minute per address.
   granted against it decide what installs; a page can only ever offer less.
 - It never lists a package that does not publish a page.
 - It never renders HTML from a repository.
-- It never fetches from a provider while answering a request.
+- It never serves anything from a repository but an image, and never a page
+  body while somebody is waiting for a page.
