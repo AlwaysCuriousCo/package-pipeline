@@ -93,6 +93,22 @@ class SharedPackageServingTest extends TestCase
         $this->assertSame(0, Repository::query()->whereKey($default)->first()->packages()->count());
     }
 
+    public function test_a_mount_that_was_not_given_the_package_does_not_serve_it(): void
+    {
+        // Public, so nothing about this is an authentication answer: the mount
+        // simply does not serve the package, and knowing the name gets a
+        // caller no closer to it.
+        $this->released(Package::factory()->create(['name' => 'acme/widgets']));
+
+        $this->getJson('/r/internal/p2/acme/widgets.json')
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Package acme/widgets is not served by this repository.');
+
+        $this->getJson('/r/internal/dist/acme/widgets/'.str_repeat('a', 40).'.zip')->assertNotFound();
+        $this->get('/r/internal/list.json')->assertOk()->assertExactJson(['packageNames' => []]);
+        $this->get('/r/internal/p/acme/widgets')->assertNotFound();
+    }
+
     public function test_a_shared_package_answers_under_both_mounts(): void
     {
         $package = $this->released(Package::factory()->create(['name' => 'acme/widgets']));
