@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Support\Str;
@@ -65,9 +66,33 @@ class Repository extends Model
     }
 
     /**
+     * The packages this repository serves — the ones that live here and the
+     * ones that were added on top.
+     *
+     * A many-to-many rather than the `hasMany` it was, because a package is
+     * served from any number of repositories now. `packages.repository_id`
+     * still says where each one *lives*, and Package::composerRepository()
+     * still reads it; this says where each one *answers*, which is what every
+     * serving path wants and the only thing that changed underneath them.
+     *
+     * @return BelongsToMany<Package, $this>
+     */
+    public function packages(): BelongsToMany
+    {
+        return $this->belongsToMany(Package::class)->withPivot('package_name');
+    }
+
+    /**
+     * The packages that live here — the ones this repository is the home of.
+     *
+     * Narrower than packages() above and used where the distinction is the
+     * point: a repository cannot be deleted while packages call it home
+     * (the foreign key says so), and the panel's own listing is a screen for
+     * administering those rather than for the copies served alongside them.
+     *
      * @return HasMany<Package, $this>
      */
-    public function packages(): HasMany
+    public function ownedPackages(): HasMany
     {
         return $this->hasMany(Package::class);
     }
@@ -328,7 +353,10 @@ class Repository extends Model
         return $this->packages()
             ->withPage()
             ->orderBy('name')
-            ->get(['id', 'repository_id', 'name', 'description', 'type', 'latest_version', 'abandoned']);
+            // Qualified, unlike the `hasMany` this used to be: the relation
+            // joins the serving pivot, and an unqualified column list would
+            // leave the engine to guess which side each one came from.
+            ->get(['packages.id', 'packages.repository_id', 'packages.name', 'packages.description', 'packages.type', 'packages.latest_version', 'packages.abandoned']);
     }
 
     /**

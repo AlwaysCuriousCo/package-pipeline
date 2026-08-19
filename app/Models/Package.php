@@ -6,6 +6,7 @@ use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
+use App\Exceptions\NameCollision;
 use App\Exceptions\VendorReserved;
 use App\Jobs\RefreshPackagePage;
 use App\Models\Concerns\LogsAuditableChanges;
@@ -18,6 +19,7 @@ use App\Services\GitLab\GitLabClient;
 use App\Services\PackageSynchronizer;
 use App\Sources\RepositoryClient;
 use App\Sources\StubClient;
+use App\Support\AuditedBelongsToMany;
 use Database\Factories\PackageFactory;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchRepository;
@@ -27,7 +29,9 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -69,6 +73,15 @@ class Package extends Model
         // ever been read back from the database.
         'subdirectory' => '',
     ];
+
+    /**
+     * The repository this package is answering as part of, when a request
+     * resolved it inside one. Not an attribute: it is a property of the
+     * request rather than of the package, and it is never stored.
+     *
+     * @see servingRepository()
+     */
+    protected ?Repository $servingRepository = null;
 
     /**
      * Publishing decisions, and who the package authenticates as. Sync
@@ -168,6 +181,13 @@ class Package extends Model
             // re-derived under the provider that now applies.
             $package->repository_path = $package->normalizedRepositoryPath();
         });
+
+        // The pivot that says where this package is served is derived from
+        // this row in one direction only — the home repository and the name
+        // are decided here, and every serving row has to agree with them.
+        // Anything else is a package reachable under a name it no longer has,
+        // or served from a repository it was moved out of.
+        static::saved(fn (self $package) => $package->reconcileServingRepositories());
 
         // Announced from `saved` rather than from the panel action that usually
         // raises the flag, because it is not the only one: the API, a console
@@ -271,6 +291,287 @@ class Package extends Model
     public function composerRepository(): BelongsTo
     {
         return $this->belongsTo(Repository::class, 'repository_id');
+    }
+
+    /**
+     * Every Composer repository this package is served from: the home
+     * repository above, plus every other one it has been added to.
+     *
+     * This is the relation the serving paths read from — `/p2`, `/dist`, the
+     * page, the upload endpoint and the API all resolve a package *within a
+     * repository*, and all of them do it through Repository::packages(),
+     * which is the other side of this. A package added to two repositories is
+     * one row, one sync, one set of archives and one download counter,
+     * answering under both mounts.
+     *
+     * Reads only. Every write goes through serveFrom()/stopServingFrom()
+     * below, because a serving row carries the name it was written with and
+     * because the checks that guard it — a name the target repository already
+     * serves, a vendor another repository has reserved — have to run before
+     * the row exists rather than as a unique-index failure afterwards.
+     *
+     * @return BelongsToMany<Repository, $this>
+     */
+    public function repositories(): BelongsToMany
+    {
+        return $this->belongsToMany(Repository::class)->withPivot('package_name');
+    }
+
+    /**
+     * The repository this package is being served through right now, which is
+     * its home unless a request said otherwise.
+     *
+     * One package can be reached under several mounts, and almost everything
+     * a page prints about it is a property of the mount rather than of the
+     * package: the URL to configure, the install commands, whether an
+     * anonymous visitor may download an archive at all. A page rendered under
+     * /r/internal that printed the public repository's `composer config` line
+     * because that is where the package happens to live would be telling the
+     * visitor to fetch it from somewhere they were not asking about.
+     *
+     * @see servedFrom() for how a request sets it
+     */
+    public function servingRepository(): Repository
+    {
+        return $this->servingRepository ?? $this->composerRepository;
+    }
+
+    /**
+     * Answer as the copy of this package that the given repository serves.
+     *
+     * Set by the controllers that resolve a package inside a mount, and by
+     * nothing else: a package read from the panel, a notification or an export
+     * has no mount to speak of and falls back to its home.
+     */
+    public function servedFrom(Repository $repository): static
+    {
+        $this->servingRepository = $repository;
+
+        return $this;
+    }
+
+    /**
+     * Add this package to the given repositories, on top of wherever it is
+     * already served.
+     *
+     * Silent about repositories it is already served from — adding a package
+     * where it already is, is not a change and not an error — and refuses the
+     * two things that would leave a repository unable to answer for a name:
+     * another package already publishing it there, and a vendor prefix some
+     * other repository has reserved.
+     *
+     * @param  iterable<int, Repository|int>  $repositories
+     *
+     * @throws VendorReserved
+     * @throws NameCollision
+     */
+    public function serveFrom(iterable $repositories): void
+    {
+        $ids = $this->repositoryKeys($repositories);
+        $added = array_values(array_diff($ids, $this->servingRepositoryIds()));
+
+        if ($added === []) {
+            return;
+        }
+
+        foreach ($added as $id) {
+            $this->guardServingIn($id);
+        }
+
+        $timestamp = $this->freshTimestamp();
+
+        DB::table('package_repository')->insert(array_map(fn (int $id): array => [
+            'package_id' => $this->getKey(),
+            'repository_id' => $id,
+            'package_name' => (string) $this->name,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ], $added));
+
+        $this->recordServingChange('serving_added', $added);
+
+        $this->unsetRelation('repositories');
+    }
+
+    /**
+     * Stop serving this package from the given repositories.
+     *
+     * The home repository is never one of them: a package is *somewhere*, and
+     * a row detached from its home would be a package with no canonical page
+     * and no repository its name is unique within. Moving a package is
+     * changing `repository_id`, which the panel offers and which carries the
+     * old home out with it.
+     *
+     * @param  iterable<int, Repository|int>  $repositories
+     */
+    public function stopServingFrom(iterable $repositories): void
+    {
+        $removed = array_values(array_diff(
+            array_intersect($this->repositoryKeys($repositories), $this->servingRepositoryIds()),
+            [(int) $this->repository_id],
+        ));
+
+        if ($removed === []) {
+            return;
+        }
+
+        DB::table('package_repository')
+            ->where('package_id', $this->getKey())
+            ->whereIn('repository_id', $removed)
+            ->delete();
+
+        $this->recordServingChange('serving_removed', $removed);
+
+        $this->unsetRelation('repositories');
+    }
+
+    /**
+     * Serve this package from exactly these repositories, adding and removing
+     * to get there — what a multi-select on a form means when it is saved.
+     *
+     * The home repository is added to whatever is asked for rather than
+     * validated against it, so a form that leaves it out cannot detach a
+     * package from the repository it lives in.
+     *
+     * @param  iterable<int, Repository|int>  $repositories
+     */
+    public function syncServingRepositories(iterable $repositories): void
+    {
+        $wanted = array_values(array_unique(array_merge(
+            [(int) $this->repository_id],
+            $this->repositoryKeys($repositories),
+        )));
+
+        $this->stopServingFrom(array_diff($this->servingRepositoryIds(), $wanted));
+        $this->serveFrom($wanted);
+    }
+
+    /**
+     * The ids of the repositories serving this package, home first.
+     *
+     * Read from the pivot rather than through the relation, because every
+     * caller here is comparing ids and loading the repository rows to compare
+     * their keys is a join for nothing.
+     *
+     * @return list<int>
+     */
+    public function servingRepositoryIds(): array
+    {
+        if ($this->getKey() === null) {
+            return [(int) $this->repository_id];
+        }
+
+        return DB::table('package_repository')
+            ->where('package_id', $this->getKey())
+            ->orderByRaw('repository_id = ? desc', [(int) $this->repository_id])
+            ->orderBy('repository_id')
+            ->pluck('repository_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
+    }
+
+    /**
+     * Whether the given repository may serve this package under its name.
+     *
+     * @throws VendorReserved
+     * @throws NameCollision
+     */
+    private function guardServingIn(int $repositoryId): void
+    {
+        $reservation = ReservedVendor::conflictFor((string) $this->name, $repositoryId);
+
+        throw_if($reservation instanceof ReservedVendor, fn (): VendorReserved => new VendorReserved($reservation, (string) $this->name));
+
+        $taken = DB::table('package_repository')
+            ->where('repository_id', $repositoryId)
+            ->where('package_name', (string) $this->name)
+            ->where('package_id', '!=', $this->getKey())
+            ->exists();
+
+        throw_if($taken, new NameCollision(
+            "The \"{$this->name}\" name is already served by that Composer repository, so this package "
+            .'cannot be added to it as well. One repository answers for one package per name.'
+        ));
+    }
+
+    /**
+     * The keys behind whatever a caller passed — models, ids, or a mix.
+     *
+     * @param  iterable<int, Repository|int>  $repositories
+     * @return list<int>
+     */
+    private function repositoryKeys(iterable $repositories): array
+    {
+        $keys = [];
+
+        foreach ($repositories as $repository) {
+            $keys[] = $repository instanceof Repository ? (int) $repository->getKey() : (int) $repository;
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * File the change where grants are filed.
+     *
+     * Where a package is served from is not a permission, but it is read the
+     * same way and asked about for the same reasons — "when did this land in
+     * the public repository, and who put it there" — and the attribute diff
+     * that catches every other change to a package cannot see a pivot row.
+     *
+     * @see AuditedBelongsToMany for the same problem one pivot over
+     *
+     * @param  list<int>  $ids
+     */
+    private function recordServingChange(string $event, array $ids): void
+    {
+        $names = Repository::query()->whereKey($ids)->pluck('name')->all();
+
+        activity('audit')
+            ->performedOn($this)
+            ->event($event)
+            ->withProperties(['repositories' => $names])
+            ->log($event);
+    }
+
+    /**
+     * Make the serving rows agree with this row, after every save.
+     *
+     * Three things can put them out of step, and all three are ordinary edits:
+     * a package created (which has no serving row yet), a package moved to
+     * another home repository, and a package renamed — including the rename a
+     * sync adopts on a package that has never been synced, which is where a
+     * stale `package_name` would go unnoticed longest.
+     */
+    private function reconcileServingRepositories(): void
+    {
+        $rows = fn (): \Illuminate\Database\Query\Builder => DB::table('package_repository')->where('package_id', $this->getKey());
+
+        // Out of the repository it left. A move is not a share: what the panel
+        // offers is one repository the package lives in, and leaving the old
+        // row behind would go on serving it from both.
+        if ($this->wasChanged('repository_id')) {
+            $rows()->where('repository_id', $this->getOriginal('repository_id'))->delete();
+        }
+
+        if ($this->wasChanged('name')) {
+            $rows()->update([
+                'package_name' => (string) $this->name,
+                'updated_at' => $this->freshTimestamp(),
+            ]);
+        }
+
+        if (! $rows()->where('repository_id', $this->repository_id)->exists()) {
+            $timestamp = $this->freshTimestamp();
+
+            DB::table('package_repository')->insert([
+                'package_id' => $this->getKey(),
+                'repository_id' => (int) $this->repository_id,
+                'package_name' => (string) $this->name,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]);
+        }
     }
 
     /**
