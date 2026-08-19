@@ -122,20 +122,26 @@ class SitemapController extends Controller
 
         Package::query()
             ->withPage()
-            ->with('composerRepository')
+            // Every repository serving the package rather than the one it
+            // lives in: a package added to two repositories has a page under
+            // each mount, and each is a distinct URL a crawler can reach.
+            ->with('repositories')
             ->orderBy('id')
             // Chunked because this is one query over a table that is allowed
             // to be enormous, answered for an anonymous request.
             ->limit(self::MAX_URLS)
             ->each(function (Package $package) use (&$urls): void {
-                $urls[] = [
-                    'loc' => $package->pageUrl(),
-                    // What a crawler asks this for is "has the thing at that
-                    // URL changed", and for a package page the answer is a
-                    // release or an edit — not the hourly sync that writes
-                    // `last_synced_at` whether or not anything moved.
-                    'lastmod' => $package->updated_at?->toAtomString(),
-                ];
+                foreach ($package->repositories as $repository) {
+                    $urls[] = [
+                        'loc' => $package->servedFrom($repository)->pageUrl(),
+                        // What a crawler asks this for is "has the thing at
+                        // that URL changed", and for a package page the answer
+                        // is a release or an edit — not the hourly sync that
+                        // writes `last_synced_at` whether or not anything
+                        // moved.
+                        'lastmod' => $package->updated_at?->toAtomString(),
+                    ];
+                }
             });
 
         return $urls;

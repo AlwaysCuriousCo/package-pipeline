@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\PageDownloads;
 use App\Enums\TokenAbility;
 use App\Exceptions\NameCollision;
 use App\Exceptions\VendorReserved;
@@ -262,6 +263,58 @@ class SharedPackageServingTest extends TestCase
         $archive->close();
 
         return $path;
+    }
+
+    public function test_a_page_prints_the_mount_it_was_asked_for(): void
+    {
+        $package = $this->released(Package::factory()->create([
+            'name' => 'acme/widgets',
+            'page_enabled' => true,
+            'page_install' => true,
+        ]));
+
+        $package->serveFrom([$this->internal]);
+
+        $this->get('/r/internal/p/acme/widgets')
+            ->assertOk()
+            ->assertSee('composer config repositories.', false)
+            ->assertSee(url('/r/internal'), false);
+
+        $this->get('/p/acme/widgets')
+            ->assertOk()
+            ->assertSee(url('/p/acme/widgets'), false);
+    }
+
+    public function test_a_page_on_a_private_mount_offers_no_downloads(): void
+    {
+        $private = Repository::factory()->create(['path' => 'closed', 'public' => false]);
+        $package = $this->released(Package::factory()->create([
+            'name' => 'acme/widgets',
+            'page_enabled' => true,
+            'page_downloads' => PageDownloads::Latest,
+        ]));
+
+        $package->serveFrom([$private]);
+
+        // Offered where the package lives, which is public...
+        $this->assertSame(PageDownloads::Latest, $package->servedFrom(Repository::default())->pageDownloads());
+
+        // ...and withheld under the private mount, whose page says instead
+        // that the visitor has to ask for access.
+        $this->get('/r/closed/p/acme/widgets/download')->assertNotFound();
+    }
+
+    public function test_the_sitemap_lists_a_page_under_every_mount_serving_it(): void
+    {
+        config(['registry.pages.sitemap' => true]);
+
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'page_enabled' => true]);
+        $package->serveFrom([$this->internal]);
+
+        $this->get('/sitemap.xml')
+            ->assertOk()
+            ->assertSee(url('/p/acme/widgets'), false)
+            ->assertSee(url('/r/internal/p/acme/widgets'), false);
     }
 
     public function test_deleting_a_package_clears_its_serving_rows(): void

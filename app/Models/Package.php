@@ -896,10 +896,16 @@ class Package extends Model
             return;
         }
 
-        $conflict = ReservedVendor::conflictFor((string) $this->name, (int) $this->repository_id);
+        // Every repository serving this package, not only the one it lives
+        // in: a rename lands the new name under every mount at once, and a
+        // vendor reserved by one of the others is refused there for exactly
+        // the reason it is refused here.
+        foreach ($this->servingRepositoryIds() as $repositoryId) {
+            $conflict = ReservedVendor::conflictFor((string) $this->name, $repositoryId);
 
-        if ($conflict instanceof ReservedVendor) {
-            throw new VendorReserved($conflict, (string) $this->name);
+            if ($conflict instanceof ReservedVendor) {
+                throw new VendorReserved($conflict, (string) $this->name);
+            }
         }
     }
 
@@ -1245,7 +1251,7 @@ class Package extends Model
             // Which entry in the consumer's composer.json this repository
             // claims, and what it is pointed at, is the repository's own
             // decision — the same line its landing page prints.
-            'repository' => $this->composerRepository->configureCommand(),
+            'repository' => $this->servingRepository()->configureCommand(),
             'require' => "composer require {$require}",
         ];
     }
@@ -1351,7 +1357,7 @@ class Package extends Model
     {
         [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
 
-        return $this->composerRepository->url('/p/'.$vendor.'/'.$name);
+        return $this->servingRepository()->url('/p/'.$vendor.'/'.$name);
     }
 
     /**
@@ -1417,7 +1423,7 @@ class Package extends Model
      */
     public function pageDownloads(): PageDownloads
     {
-        if (! $this->composerRepository->public) {
+        if (! $this->servingRepository()->public) {
             return PageDownloads::None;
         }
 
@@ -1436,7 +1442,7 @@ class Package extends Model
      */
     public function pageShowsInstall(): bool
     {
-        return (bool) $this->page_install && $this->composerRepository->public;
+        return (bool) $this->page_install && $this->servingRepository()->public;
     }
 
     /**
@@ -1446,7 +1452,7 @@ class Package extends Model
      */
     public function pageRequiresAccess(): bool
     {
-        return ! $this->composerRepository->public;
+        return ! $this->servingRepository()->public;
     }
 
     /**
@@ -1530,7 +1536,7 @@ class Package extends Model
 
         [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
 
-        return $this->composerRepository->url('/p/'.$vendor.'/'.$name.'/asset');
+        return $this->servingRepository()->url('/p/'.$vendor.'/'.$name.'/asset');
     }
 
     /**
@@ -1630,7 +1636,7 @@ class Package extends Model
 
         return str_starts_with($fallback, 'http://') || str_starts_with($fallback, 'https://')
             ? $fallback
-            : $this->composerRepository->pageRootUrl().'/'.ltrim($fallback, '/');
+            : $this->servingRepository()->pageRootUrl().'/'.ltrim($fallback, '/');
     }
 
     /**

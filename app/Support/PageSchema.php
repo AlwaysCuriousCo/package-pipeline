@@ -41,7 +41,7 @@ class PageSchema
             'publisher' => [
                 '@type' => 'Organization',
                 'name' => (string) config('app.name'),
-                'url' => $package->composerRepository->pageRootUrl(),
+                'url' => $package->servingRepository()->pageRootUrl(),
             ],
         ];
 

@@ -472,26 +472,29 @@ class PackageSynchronizer
     }
 
     /**
-     * Whether another package in the same Composer repository already
-     * publishes the given name.
+     * Whether any repository serving this package already serves the given
+     * name from another package.
      *
-     * The (repository_id, name) unique index would reject the rename with a
-     * bare query error; asked first, the conflict reads as what it is — one
-     * Composer repository cannot serve two packages under one name.
+     * The serving pivot's (repository_id, package_name) unique index would
+     * reject the rename with a bare query error; asked first, the conflict
+     * reads as what it is — one Composer repository cannot serve two packages
+     * under one name. Every repository this package answers under is checked,
+     * not only the one it lives in: a rename moves the name under all of them
+     * at once, and one of them refusing is the whole rename refused.
      */
     private function nameTaken(Package $package, string $name): bool
     {
-        return Package::query()
-            ->where('repository_id', $package->repository_id)
-            ->whereKeyNot($package->getKey())
-            ->where('name', $name)
+        return DB::table('package_repository')
+            ->whereIn('repository_id', $package->servingRepositoryIds())
+            ->where('package_name', $name)
+            ->where('package_id', '!=', $package->getKey())
             ->exists();
     }
 
     private function nameConflict(string $name): string
     {
         return "The repository's composer.json is named \"{$name}\", which another package"
-            .' in this Composer repository already publishes. Move one of them to a'
+            .' a Composer repository serving this one already publishes. Move one of them to a'
             .' different repository, or fix the composer.json name.';
     }
 

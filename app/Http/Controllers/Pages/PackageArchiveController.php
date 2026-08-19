@@ -55,7 +55,10 @@ class PackageArchiveController extends Controller
 
         abort_unless($found instanceof Package, 404, 'No package page is published at this address.');
 
-        $offered = $found->pageDownloads();
+        // Through this mount, not through wherever the package lives: a
+        // private repository serving a package that is public elsewhere still
+        // offers nothing to an anonymous visitor. @see Package::pageDownloads()
+        $offered = $found->servedFrom($repository)->pageDownloads();
 
         abort_if(
             $offered === PageDownloads::None,

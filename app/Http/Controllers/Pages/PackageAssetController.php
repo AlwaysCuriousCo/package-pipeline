@@ -72,6 +72,8 @@ class PackageAssetController extends Controller
 
         abort_unless($found instanceof Package, 404, 'No package page is published at this address.');
 
+        $found->servedFrom($repository);
+
         $type = $this->contentType($path);
 
         $contents = $this->contents($found, $this->confine($path));
