@@ -25,6 +25,8 @@ class ActivitiesTable
         'role_revoked' => 'Role revoked',
         'grant_added' => 'Access granted',
         'grant_removed' => 'Access revoked',
+        'serving_added' => 'Served from repository',
+        'serving_removed' => 'Removed from repository',
     ];
 
     public static function configure(Table $table): Table
@@ -65,7 +67,7 @@ class ActivitiesTable
                     ->color(fn (?string $state): string => match ($state) {
                         'created', 'restored' => 'success',
                         'deleted', 'role_revoked', 'grant_removed' => 'danger',
-                        'role_granted', 'grant_added' => 'warning',
+                        'role_granted', 'grant_added', 'serving_added', 'serving_removed' => 'warning',
                         default => 'gray',
                     })
                     ->sortable(),

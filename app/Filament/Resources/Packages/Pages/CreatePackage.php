@@ -55,6 +55,10 @@ class CreatePackage extends CreateRecord
         /** @var Package $package */
         $package = $this->getRecord();
 
+        // Any repositories chosen alongside the one the package lives in.
+        // @see PackageForm::servingRepositories()
+        $package->serveFrom($this->data['serving_repositories'] ?? []);
+
         $registrar = app(WebhookRegistrar::class);
 
         if ($registrar->register($package) === WebhookCoverage::Repository) {

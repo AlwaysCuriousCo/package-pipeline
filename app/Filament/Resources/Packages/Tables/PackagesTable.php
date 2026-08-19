@@ -55,11 +55,21 @@ class PackagesTable
                         : null)
                     ->placeholder('Uploaded artifacts'),
                 TextColumn::make('composerRepository.name')
-                    ->label('Served in')
+                    ->label('Lives in')
                     ->badge()
                     ->color('gray')
                     ->sortable()
                     ->toggleable(),
+                TextColumn::make('repositories.name')
+                    ->label('Served from')
+                    ->badge()
+                    ->color('gray')
+                    // Every mount that answers for the package, the one it
+                    // lives in included: this column is what a consumer would
+                    // find, and hiding the home repository from a list of
+                    // mounts would make a package served in one place look
+                    // like a package served nowhere.
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('source.name')
                     ->label('Source')
                     ->badge()
@@ -112,7 +122,11 @@ class PackagesTable
             ->filters([
                 SelectFilter::make('composerRepository')
                     ->label('Composer repository')
-                    ->relationship('composerRepository', 'name')
+                    // Through the serving relation rather than the home
+                    // column, so that filtering by a repository lists what
+                    // that repository actually serves — which is the question
+                    // this filter is asked.
+                    ->relationship('repositories', 'name')
                     ->multiple()
                     ->preload(),
                 SelectFilter::make('source')

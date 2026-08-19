@@ -78,16 +78,21 @@ class CreateVersionFromZip
 
         $version = (string) $version;
 
-        $package = Package::query()->firstOrCreate(
-            ['repository_id' => $repository->id, 'name' => $name],
-            [
+        // Whatever this repository already serves under the name, which is not
+        // necessarily a package that lives here: one added from another
+        // repository answers under this mount, and an upload addressed to that
+        // name is a version of it rather than a second package with the same
+        // name — which the serving pivot's unique index would refuse anyway.
+        $package = $repository->packages()->where('packages.name', $name)->first()
+            ?? Package::query()->create([
+                'repository_id' => $repository->id,
+                'name' => $name,
                 'description' => $composerJson['description'] ?? null,
                 'type' => $composerJson['type'] ?? null,
                 // There is no VCS repository behind an uploaded package, so
                 // there is nothing for a webhook to hear about.
                 'webhook_enabled' => false,
-            ],
-        );
+            ]);
 
         $data = [
             // Dist URLs are keyed by reference; an artifact has no commit

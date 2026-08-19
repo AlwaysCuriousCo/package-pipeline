@@ -69,6 +69,7 @@ class PackageWizard
                     PackageForm::name()
                         ->helperText('Read from the repository\'s composer.json, and overwritten by it again on every sync.'),
                     PackageForm::composerRepository(),
+                    PackageForm::servingRepositories(),
                     PackageForm::description(),
                 ]),
         ];

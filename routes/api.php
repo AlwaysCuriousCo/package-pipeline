@@ -53,6 +53,17 @@ Route::prefix('v1')
             Route::post('/packages/{package}/sync', [PackageController::class, 'sync'])
                 ->whereNumber('package')
                 ->name('packages.sync');
+
+            // Which repositories serve a package. `api:write` rather than the
+            // delete ability even for the removal: neither unpublishes
+            // anything — the package, its versions and its archives are
+            // untouched, and it goes on being served where it lives.
+            Route::post('/packages/{package}/repositories', [PackageController::class, 'serve'])
+                ->whereNumber('package')
+                ->name('packages.serve');
+            Route::delete('/packages/{package}/repositories', [PackageController::class, 'unserve'])
+                ->whereNumber('package')
+                ->name('packages.unserve');
         });
 
         // Its own ability, not `api:write`. Creating a package and syncing one

@@ -191,7 +191,7 @@ Failed authentications are rate limited per address (30 a minute), and the 429 t
 
 ### Repositories, and the public default
 
-A **repository** here is a Composer repository this registry serves. Every package belongs to exactly one. The default repository answers at the site root; every other one you create is mounted under `/r/{path}`, so a single installation can serve independent registries — a public one and an internal one, say — with independent access rules.
+A **repository** here is a Composer repository this registry serves. Every package lives in one, and can be served from any number of others. The default repository answers at the site root; every other one you create is mounted under `/r/{path}`, so a single installation can serve independent registries — a public one and an internal one, say — with independent access rules.
 
 Whether a repository can be read without a token is the `public` flag on it. Repositories you create are private.
 
@@ -199,6 +199,14 @@ Whether a repository can be read without a token is the `public` flag on it. Rep
 > The **default repository is created public**. It stands in for the whole registry as it behaved before repositories and tokens existed, and packages created without choosing a repository land in it — so on a fresh installation, anyone who can reach the app can list and install everything in it. Open **Repositories → Default** and turn **Public** off (or move the packages to a repository of your own) before the app is reachable from anywhere you don't control.
 
 A presented token is always checked, public repository or not. A CI system holding a revoked token hears about it as a `401` rather than continuing to work by accident until someone makes the repository private.
+
+### Serving one package from several repositories
+
+A package lives in one repository and can be added to as many others as you like — the same package, one sync, one set of archives, answering under every mount that serves it. Use **Also served from** on the package's form, **Serve an existing package** on a repository's, `POST /api/v1/packages/{id}/repositories`, or `php artisan package:serve acme/widgets internal`.
+
+Access is decided by the mount rather than by the package: a package added to a private repository is private there even if it is public where it lives — and, the edge worth knowing before you use this, **adding a package to a public repository publishes it**. Publishing stays with the repository the package lives in; a share serves what a package publishes and confers no right to publish into it. Two packages cannot share a name in one repository, so a repository already answering for the name refuses.
+
+See **[docs/shared-packages.md](docs/shared-packages.md)**.
 
 ### Reserved vendors
 
@@ -306,6 +314,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | `packages:sync [name]` | Sync versions from their sources. Takes a composer name or `owner/repo`; `--source=` narrows to one source, `--queue` dispatches instead of running inline. The scheduler runs `--queue` hourly. |
 | `package:rebuild [name]` | Re-import every version, trusting nothing already stored. The recovery path for corrupted archives or metadata drift — reach for it when a sync says everything is current but the output isn't. |
 | `package:add <url>` | Create a package from a VCS repository URL and queue its first sync. `--name=`, `--repo=` (which Composer repository to serve it from), `--subdirectory=` (for a monorepo), `--token=`, `--no-webhook`, `--no-sync`. The scriptable equivalent of the create wizard. |
+| `package:serve <name> <repo>` | Serve an existing package from another Composer repository — `root` names the registry root. `--remove` stops serving it there; `--home=` disambiguates a name that lives in more than one repository. See [docs/shared-packages.md](docs/shared-packages.md). |
 | `package:delete <name>` | Delete a package, its versions and its stored archives. `--repo=` disambiguates a name served in more than one repository; `--force` skips the confirmation. |
 
 **Archives**
@@ -446,6 +455,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
 - [docs/public-pages.md](docs/public-pages.md) — publishing a readable page for a package or a repository: the toggles, where the content comes from, what a private package withholds, and the social-preview and search tags.
+- [docs/shared-packages.md](docs/shared-packages.md) — serving one package from several Composer repositories: how to, what decides access under each mount, and what stays with the repository the package lives in.
 - [docs/teams.md](docs/teams.md) — granting access to a group rather than a person: what a team holds, how effective access composes, and what it costs on the Composer hot path.
 - [docs/webhooks.md](docs/webhooks.md) — auto-syncing on push: the two GitHub delivery paths, GitLab's per-project hooks, and how to tell whether a package is actually covered.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release and what it asks of the operator.

@@ -25,10 +25,11 @@ class DeletePackage extends Command
     {
         $candidates = Package::query()
             ->where('name', $this->argument('name'))
-            ->when($this->option('repo'), fn ($query, string $path) => $query->whereHas(
-                'composerRepository',
-                fn ($repositories) => $repositories->where('path', $path),
-            ))
+            // Present but empty is the registry root; see Package::livingIn().
+            ->when(
+                $this->option('repo') !== null,
+                fn ($query) => $query->livingIn((string) $this->option('repo')),
+            )
             ->with('composerRepository')
             ->get();
 

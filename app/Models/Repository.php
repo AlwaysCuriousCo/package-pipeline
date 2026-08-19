@@ -9,14 +9,18 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
  * A named Composer repository this registry serves.
  *
- * Every package belongs to exactly one repository. The default repository
+ * Every package lives in exactly one repository and can be served from any
+ * number of others; @see Package::repositories(). The default repository
  * (path null) answers at the site root, exactly as the registry did before
  * repositories existed; every other repository is mounted under /r/{path},
  * so one installation can serve independent registries — a public one and an
@@ -65,9 +69,33 @@ class Repository extends Model
     }
 
     /**
+     * The packages this repository serves — the ones that live here and the
+     * ones that were added on top.
+     *
+     * A many-to-many rather than the `hasMany` it was, because a package is
+     * served from any number of repositories now. `packages.repository_id`
+     * still says where each one *lives*, and Package::composerRepository()
+     * still reads it; this says where each one *answers*, which is what every
+     * serving path wants and the only thing that changed underneath them.
+     *
+     * @return BelongsToMany<Package, $this>
+     */
+    public function packages(): BelongsToMany
+    {
+        return $this->belongsToMany(Package::class)->withPivot('package_name');
+    }
+
+    /**
+     * The packages that live here — the ones this repository is the home of.
+     *
+     * Narrower than packages() above and used where the distinction is the
+     * point: a repository cannot be deleted while packages call it home
+     * (the foreign key says so), and the panel's own listing is a screen for
+     * administering those rather than for the copies served alongside them.
+     *
      * @return HasMany<Package, $this>
      */
-    public function packages(): HasMany
+    public function ownedPackages(): HasMany
     {
         return $this->hasMany(Package::class);
     }
@@ -177,7 +205,7 @@ class Repository extends Model
             if ($principal instanceof DeployToken) {
                 $query
                     ->orWhereIn('repositories.id', $principal->repositories()->select('repositories.id'))
-                    ->orWhereIn('repositories.id', $principal->packages()->select('packages.repository_id'));
+                    ->orWhereIn('repositories.id', self::servingIds($principal->packages()->select('packages.id')->getQuery()));
             }
         });
     }
@@ -211,11 +239,27 @@ class Repository extends Model
         return $query->where(function (Builder $query) use ($user): void {
             $query->where('public', true)
                 ->orWhereIn('repositories.id', $user->repositoryGrants())
-                // Through the packages rather than the pivot, because what is
-                // wanted is the repository each granted package is served
-                // from, and only the package row knows that.
-                ->orWhereIn('repositories.id', $user->grantedPackages()->select('packages.repository_id'));
+                // Every repository serving a granted package, which since a
+                // package can be served from several is a question for the
+                // serving pivot rather than for a column on the package.
+                ->orWhereIn('repositories.id', self::servingIds($user->packageGrants()));
         });
+    }
+
+    /**
+     * The repositories serving any of the given packages.
+     *
+     * Takes the ids as a query rather than as a list, so the whole thing stays
+     * one statement — the callers hand it a union of grant pivots, which is a
+     * shape that must be used whole. @see User::packageGrants()
+     *
+     * @param  QueryBuilder|Builder<Package>  $packages
+     */
+    private static function servingIds(QueryBuilder|Builder $packages): QueryBuilder
+    {
+        return DB::table('package_repository')
+            ->select('package_repository.repository_id')
+            ->whereIn('package_repository.package_id', $packages);
     }
 
     /**
@@ -328,7 +372,10 @@ class Repository extends Model
         return $this->packages()
             ->withPage()
             ->orderBy('name')
-            ->get(['id', 'repository_id', 'name', 'description', 'type', 'latest_version', 'abandoned']);
+            // Qualified, unlike the `hasMany` this used to be: the relation
+            // joins the serving pivot, and an unqualified column list would
+            // leave the engine to guess which side each one came from.
+            ->get(['packages.id', 'packages.repository_id', 'packages.name', 'packages.description', 'packages.type', 'packages.latest_version', 'packages.abandoned']);
     }
 
     /**

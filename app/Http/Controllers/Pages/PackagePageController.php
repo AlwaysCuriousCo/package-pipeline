@@ -73,6 +73,11 @@ class PackagePageController extends Controller
 
         abort_unless($found instanceof Package, 404, 'No package page is published at this address.');
 
-        return $found;
+        // The package may be served from several repositories, and everything
+        // this page prints that is about a *mount* rather than about the
+        // package — the URL to configure, the install commands, whether an
+        // anonymous visitor may download anything — belongs to the one that
+        // was asked for. @see Package::servingRepository()
+        return $found->servedFrom($repository);
     }
 }

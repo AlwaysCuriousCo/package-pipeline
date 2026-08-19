@@ -159,7 +159,7 @@ on every delete. `GET /packages?name=…` resolves a name to an id in one call.
 | `name` | Exact Composer name |
 | `q` | Name prefix — `acme/` lists one vendor |
 | `type` | Composer package type, e.g. `library` |
-| `repository` | The Composer repository's URL path. Pass it empty (`?repository=`) for the root repository, which has no path |
+| `repository` | The Composer repository's URL path — what it *serves*, which includes packages living elsewhere and served from it. Pass it empty (`?repository=`) for the root repository, which has no path |
 | `per_page` | 1–100, default 25 |
 
 ```bash
@@ -207,9 +207,14 @@ curl -H "Authorization: Bearer $PP_TOKEN" \
 ```
 
 `url` is the VCS repository the package syncs from — `null` for one published
-by artifact upload. `repository` is the Composer repository serving it. The
-model carries the same collision and names the relation `composerRepository()`
-for the same reason.
+by artifact upload. `repository` is the Composer repository the package *lives
+in*. The model carries the same collision and names the relation
+`composerRepository()` for the same reason.
+
+`repositories` is every Composer repository serving the package, the one above
+included — a package can be
+[served from more than one](shared-packages.md), and this is the list a
+consuming project could point at.
 
 `sync.error` is what the last sync had to say, in the provider's own words, and
 is **absent** — not `null` — for a package the token reaches only because its
@@ -319,6 +324,33 @@ one would have.
 
 A package published by artifact upload has no source to sync from and is
 refused with `422`.
+
+### `POST /packages/{id}/repositories`, `DELETE /packages/{id}/repositories`
+
+Adds a package to another Composer repository, which then serves the same
+package under its own mount — or takes it back out. Requires `api:write`;
+neither unpublishes anything, so neither is behind `api:delete`. Answers `200`
+with the package and its `repositories`. See
+[shared-packages.md](shared-packages.md).
+
+| Field | | |
+| --- | --- | --- |
+| `repository` | optional | The Composer repository's URL path; the root repository when omitted |
+
+```bash
+curl -X POST -H "Authorization: Bearer $PP_TOKEN" \
+  -d 'repository=internal' \
+  https://registry.example.com/api/v1/packages/12/repositories
+```
+
+Two grants, because it is two decisions: the token must be able to change the
+package *and* to publish into the target repository. Either one missing is a
+`403`.
+
+`422` on `repository` for a repository that already serves the name, for one
+whose vendor is [reserved elsewhere](dependency-confusion.md), and for the
+repository the package lives in — removing it from there is a move, and moving
+a package changes the URL Composer resolves it at.
 
 ### `DELETE /packages/{id}`
 

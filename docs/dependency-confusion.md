@@ -26,7 +26,10 @@ Open **Composer repositories → (a repository) → Reserved vendors** and add t
 vendor prefixes that repository owns — `acme`, not `acme/widgets`.
 
 From then on, no other repository in this installation may introduce a package
-name under that vendor. The rule is enforced everywhere a name is decided: the
+name under that vendor — including by
+[being added as a second repository serving a package](shared-packages.md),
+which introduces the name there like any other publish. The rule is enforced
+everywhere a name is decided: the
 create wizard, `POST /api/v1/packages`, `php artisan package:add`, an artifact
 upload to `POST /upload/{vendor}/{package}`, and a sync adopting the name a
 repository's `composer.json` declares. A vendor may be reserved by one

@@ -19,7 +19,8 @@ use Illuminate\Support\Str;
  * here, then a mistake — or a compromised credential — can put a package under
  * a vendor prefix that a whole organisation trusts. Reserving `acme` says: this
  * registry serves that vendor from exactly one repository, and nothing else may
- * introduce a name under it.
+ * introduce a name under it — including a package added to a second repository,
+ * which is introducing the name there. @see Package::serveFrom()
  *
  * It bounds *where* a name may appear, not *who* may publish. Who is still the
  * grant system's answer — a principal has to be able to write into the owning
