@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * Stripe object finds the local row it is about. One local row can be known
  * to several merchants at once — that is the portability story in one table.
  */
-#[Fillable(['merchant', 'external_id', 'synced_at'])]
+#[Fillable(['referenceable_type', 'referenceable_id', 'merchant', 'external_id', 'synced_at'])]
 class MerchantReference extends Model
 {
     /**

@@ -30,7 +30,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @see SubscriptionProjector
  * @see EntitlementProjector
  */
-#[Fillable(['plan_id', 'plan_price_id', 'merchant', 'status', 'quantity', 'coupon_code'])]
+#[Fillable(['billing_customer_id', 'plan_id', 'plan_price_id', 'merchant', 'status', 'quantity', 'coupon_code'])]
 class Subscription extends Model
 {
     /** @use HasFactory<SubscriptionFactory> */
