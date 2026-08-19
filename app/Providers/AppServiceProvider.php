@@ -218,6 +218,19 @@ class AppServiceProvider extends ServiceProvider
         // on every request. The GitHub App's own hook names no package in its
         // path — it delivers for every installed repository at once — so the
         // address budget is the only one that applies to it.
+        // Self-serve signup: the cheapest endpoint on the site to abuse
+        // and the least legitimate reason to hit it twice in a minute.
+        RateLimiter::for('registration', function (Request $request): array {
+            return [Limit::perMinute(5)->by('address:'.$request->ip())];
+        });
+
+        // The payment merchant's deliveries. Rarer than the git providers'
+        // by orders of magnitude, and each unverified request still costs a
+        // signature check — so a tight per-address limit loses nothing.
+        RateLimiter::for('merchant-webhooks', function (Request $request): array {
+            return [Limit::perMinute(120)->by('address:'.$request->ip())];
+        });
+
         RateLimiter::for('webhooks', function (Request $request): array {
             $limits = [Limit::perMinute(300)->by('address:'.$request->ip())];
 

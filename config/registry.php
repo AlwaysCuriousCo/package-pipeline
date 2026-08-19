@@ -343,4 +343,37 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Billing
+    |--------------------------------------------------------------------------
+    |
+    | The commercial layer: plans that grant packages, subscriptions that
+    | project into the grant system, and a merchant (Stripe, or Manual for
+    | admin-created subscriptions) behind the money. Off by default — a
+    | registry that has not turned this on serves exactly what it always
+    | served, and none of the billing routes answer.
+    |
+    | `merchant` names the driver checkout sells through; Manual subscriptions
+    | are always available to administrators regardless. `public_signup` opens
+    | /register to strangers so they can buy without an administrator creating
+    | their account first — it is separate from `enabled` because plenty of
+    | registries will sell to accounts that already exist (SSO users,
+    | admin-created customers) without wanting an open registration form.
+    |
+    | `reconcile_lookback_hours` is how far past its last movement a
+    | subscription can be and still get re-pulled by billing:reconcile — the
+    | safety net for webhooks lost during a deploy.
+    |
+    */
+
+    'billing' => [
+        'enabled' => (bool) env('BILLING_ENABLED', false),
+        'merchant' => env('BILLING_MERCHANT', 'stripe'),
+        'public_signup' => (bool) env('BILLING_PUBLIC_SIGNUP', false),
+        'currency' => strtolower((string) env('BILLING_CURRENCY', 'usd')),
+        'terms_url' => env('BILLING_TERMS_URL'),
+        'reconcile_lookback_hours' => (int) env('BILLING_RECONCILE_LOOKBACK_HOURS', 48),
+    ],
+
 ];
