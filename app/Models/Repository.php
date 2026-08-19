@@ -19,7 +19,8 @@ use Illuminate\Support\Str;
 /**
  * A named Composer repository this registry serves.
  *
- * Every package belongs to exactly one repository. The default repository
+ * Every package lives in exactly one repository and can be served from any
+ * number of others; @see Package::repositories(). The default repository
  * (path null) answers at the site root, exactly as the registry did before
  * repositories existed; every other repository is mounted under /r/{path},
  * so one installation can serve independent registries — a public one and an

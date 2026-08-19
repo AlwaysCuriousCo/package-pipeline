@@ -32,6 +32,20 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   list them (`PAGE_SITEMAP=false` to publish neither). See
   [docs/public-pages.md](docs/public-pages.md).
 
+- **One package, several repositories.** A package lives in one Composer
+  repository and can be served from any number of others — the same package, one
+  sync, one set of versions and archives, one download counter, answering under
+  every mount that serves it. Add it from the package's form (**Also served
+  from**), from a repository's package list (**Serve an existing package**),
+  through `POST /api/v1/packages/{id}/repositories`, or with
+  `php artisan package:serve acme/widgets internal`. Access is decided by the
+  mount rather than by the package, so a package added to a private repository
+  is private there and one added to a public repository is readable there —
+  publishing it, which is the edge to know before using this. Publishing itself
+  stays with the repository the package lives in, and no repository can serve
+  two packages under one name. See
+  [docs/shared-packages.md](docs/shared-packages.md).
+
 - The [Composer v2 repository API](https://getcomposer.org/doc/05-repositories.md#composer):
   `packages.json`, `search.json`, `list.json`, per-package `p2` metadata, and
   `dist` zipballs. A consuming project needs one `repositories` entry and no
