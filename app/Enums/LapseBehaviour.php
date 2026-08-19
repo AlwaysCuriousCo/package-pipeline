@@ -2,6 +2,7 @@
 
 namespace App\Enums;
 
+use App\Services\Billing\EntitlementProjector;
 use Filament\Support\Contracts\HasDescription;
 use Filament\Support\Contracts\HasLabel;
 
@@ -19,7 +20,7 @@ use Filament\Support\Contracts\HasLabel;
  * un-deleted, because its plain text is long gone; the customer issues a new
  * one and the old row stays in the audit log.
  *
- * @see \App\Services\Billing\EntitlementProjector
+ * @see EntitlementProjector
  */
 enum LapseBehaviour: string implements HasDescription, HasLabel
 {

@@ -2,6 +2,7 @@
 
 namespace App\Enums;
 
+use App\Services\Billing\SubscriptionProjector;
 use Filament\Support\Contracts\HasLabel;
 
 /**
@@ -20,7 +21,7 @@ use Filament\Support\Contracts\HasLabel;
  * suspension — do not pass through PastDue; they go straight to Suspended or
  * Canceled, which is what makes them immediate.
  *
- * @see \App\Services\Billing\SubscriptionProjector
+ * @see SubscriptionProjector
  */
 enum SubscriptionStatus: string implements HasLabel
 {
@@ -94,6 +95,8 @@ enum SubscriptionStatus: string implements HasLabel
     /**
      * The statuses the nightly reconciler re-pulls from the merchant: those
      * that grant access now, and those the merchant might still move.
+     *
+     * @return list<self>
      */
     public static function reconcilable(): array
     {

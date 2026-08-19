@@ -7,6 +7,7 @@ use App\Merchants\UnsupportedMerchantException;
 use App\Merchants\Values\CheckoutRequest;
 use App\Merchants\Values\CheckoutSession;
 use App\Merchants\Values\NormalisedEvent;
+use App\Merchants\Values\RemoteInvoice;
 use App\Merchants\Values\RemoteSubscription;
 use App\Models\BillingCustomer;
 use App\Models\Plan;
@@ -84,7 +85,10 @@ class ManualClient implements MerchantClient
         return [];
     }
 
-    public function invoiceFromPayload(array $payload): \App\Merchants\Values\RemoteInvoice
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function invoiceFromPayload(array $payload): RemoteInvoice
     {
         throw new UnsupportedMerchantException(
             'Manual has no invoices to translate: nothing bills its customers.'

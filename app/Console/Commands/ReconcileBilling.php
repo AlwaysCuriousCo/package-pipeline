@@ -12,6 +12,7 @@ use App\Notifications\Billing\TrialEnding;
 use App\Services\Billing\EntitlementProjector;
 use App\Services\Billing\SubscriptionProjector;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
 use Throwable;
 
 /**
@@ -135,7 +136,11 @@ class ReconcileBilling extends Command
         }
     }
 
-    private function move($query, array $to, EntitlementProjector $entitlements, bool $notify): int
+    /**
+     * @param  Builder<Subscription>  $query
+     * @param  array<string, mixed>  $to
+     */
+    private function move(Builder $query, array $to, EntitlementProjector $entitlements, bool $notify): int
     {
         $count = 0;
 

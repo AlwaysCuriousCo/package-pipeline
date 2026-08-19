@@ -2,6 +2,7 @@
 
 namespace App\Enums;
 
+use App\Services\Billing\VersionCeiling;
 use Filament\Support\Contracts\HasDescription;
 use Filament\Support\Contracts\HasLabel;
 
@@ -16,7 +17,7 @@ use Filament\Support\Contracts\HasLabel;
  * version ceiling exist.
  *
  * @see LapseBehaviour
- * @see \App\Services\Billing\VersionCeiling
+ * @see VersionCeiling
  */
 enum BillingModel: string implements HasDescription, HasLabel
 {

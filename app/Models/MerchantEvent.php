@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\MerchantProvider;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Prunable;
 
@@ -49,8 +50,10 @@ class MerchantEvent extends Model
      * `model:prune`. Failed and unprocessed rows are kept indefinitely —
      * they are the queue of things still owed an action, and pruning one
      * would be silently dropping a payment event.
+     *
+     * @return Builder<static>
      */
-    public function prunable()
+    public function prunable(): Builder
     {
         return static::query()
             ->whereNotNull('processed_at')

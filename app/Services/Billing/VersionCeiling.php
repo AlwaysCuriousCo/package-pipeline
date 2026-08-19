@@ -11,6 +11,7 @@ use App\Models\Team;
 use App\Models\Token;
 use App\Models\User;
 use App\Support\VersionNormalizer;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -135,8 +136,10 @@ final class VersionCeiling
      * The billing customers whose entitlements reach this user: their own,
      * and every team's they belong to. A subquery rather than a fetched
      * list, so the whole resolution stays one round trip.
+     *
+     * @return Builder<BillingCustomer>
      */
-    private function customerIdsFor(User $user)
+    private function customerIdsFor(User $user): Builder
     {
         return BillingCustomer::query()
             ->select('id')

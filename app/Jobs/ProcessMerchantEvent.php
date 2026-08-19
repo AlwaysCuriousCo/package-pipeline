@@ -9,7 +9,6 @@ use App\Models\BillingCustomer;
 use App\Models\Invoice;
 use App\Models\MerchantEvent;
 use App\Models\MerchantReference;
-use App\Models\Plan;
 use App\Models\PlanPrice;
 use App\Models\Subscription;
 use App\Notifications\Billing\BillingAlert;

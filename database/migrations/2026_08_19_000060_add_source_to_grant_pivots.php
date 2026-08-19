@@ -1,7 +1,10 @@
 <?php
 
+use App\Enums\GrantSource;
+use App\Services\Billing\EntitlementProjector;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -26,8 +29,8 @@ use Illuminate\Support\Facades\Schema;
  * The reader-direction indexes from 2026_08_10_220000 are untouched: they
  * serve membership tests, which do not care who wrote the row.
  *
- * @see \App\Enums\GrantSource
- * @see \App\Services\Billing\EntitlementProjector
+ * @see GrantSource
+ * @see EntitlementProjector
  */
 return new class extends Migration
 {
@@ -70,7 +73,7 @@ return new class extends Migration
         // exists under both sources; drop the projector's rows first, which
         // is also the honest meaning of rolling this feature back.
         foreach (['package_user', 'repository_user', 'package_team', 'repository_team'] as $pivot) {
-            \Illuminate\Support\Facades\DB::table($pivot)->where('source', 'subscription')->delete();
+            DB::table($pivot)->where('source', 'subscription')->delete();
         }
 
         Schema::table('package_user', function (Blueprint $table) {

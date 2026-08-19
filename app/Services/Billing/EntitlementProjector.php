@@ -35,7 +35,7 @@ use Illuminate\Support\Facades\DB;
  * what, and up to which version. The pivots answer "who sees what" on the
  * hot path; the ledger answers the questions only billing asks.
  *
- * @see \App\Enums\GrantSource for the two-writers contract
+ * @see GrantSource for the two-writers contract
  * @see docs/plans/ecommerce-subscriptions.md
  */
 final class EntitlementProjector
@@ -137,7 +137,7 @@ final class EntitlementProjector
                     'starts_at' => $subscription->entitlements
                         ->first(fn (Entitlement $row): bool => $row->grantable_type === $planned->grantable_type
                             && $row->grantable_id === $planned->grantable_id)
-                        ?->starts_at ?? now(),
+                        ->starts_at ?? now(),
                     'ends_at' => null,
                 ],
             );

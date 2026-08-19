@@ -33,7 +33,7 @@ use Tests\TestCase;
  * never disturbed in either direction; and running the projector twice is
  * running it once.
  *
- * @see \App\Services\Billing\EntitlementProjector
+ * @see EntitlementProjector
  * @see docs/plans/ecommerce-subscriptions.md
  */
 class BillingEntitlementScopingTest extends TestCase
@@ -68,6 +68,9 @@ class BillingEntitlementScopingTest extends TestCase
         ]);
     }
 
+    /**
+     * @param  list<string>  $versions
+     */
     private function makePackage(string $name, Repository $repository, array $versions): Package
     {
         $package = Package::factory()->create(['name' => $name, 'repository_id' => $repository->id]);

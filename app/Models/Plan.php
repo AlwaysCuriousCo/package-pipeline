@@ -129,7 +129,12 @@ class Plan extends Model
         return $this->prices()->where('active', true)->orderByDesc('default')->orderBy('amount');
     }
 
-    /** Plans the public pricing page lists, in their configured order. */
+    /**
+     * Plans the public pricing page lists, in their configured order.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
     public function scopeListed(Builder $query): Builder
     {
         return $query->where('active', true)->where('listed', true)->orderBy('sort');

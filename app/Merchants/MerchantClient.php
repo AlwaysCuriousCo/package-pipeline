@@ -2,6 +2,7 @@
 
 namespace App\Merchants;
 
+use App\Enums\MerchantProvider;
 use App\Merchants\Values\CheckoutRequest;
 use App\Merchants\Values\CheckoutSession;
 use App\Merchants\Values\NormalisedEvent;
@@ -29,7 +30,7 @@ use Illuminate\Http\Request;
  * remembered in MerchantReference rather than as columns, so one row can be
  * known to several merchants.
  *
- * @see \App\Enums\MerchantProvider
+ * @see MerchantProvider
  * @see docs/plans/ecommerce-subscriptions.md
  */
 interface MerchantClient
@@ -94,6 +95,8 @@ interface MerchantClient
     /**
      * Translate one of this merchant's own invoice payloads — the object a
      * webhook carried — into the canonical shape, without fetching anything.
+     *
+     * @param  array<string, mixed>  $payload
      */
     public function invoiceFromPayload(array $payload): RemoteInvoice;
 

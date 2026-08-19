@@ -2,6 +2,8 @@
 
 namespace App\Enums;
 
+use App\Models\User;
+use App\Services\Billing\EntitlementProjector;
 use Filament\Support\Contracts\HasLabel;
 
 /**
@@ -25,8 +27,8 @@ use Filament\Support\Contracts\HasLabel;
  * duplicates — the caller only ever tests membership. That is what lets the
  * whole billing layer land without touching the hot path.
  *
- * @see \App\Services\Billing\EntitlementProjector
- * @see \App\Models\User::packageGrants()
+ * @see EntitlementProjector
+ * @see User::packageGrants()
  */
 enum GrantSource: string implements HasLabel
 {

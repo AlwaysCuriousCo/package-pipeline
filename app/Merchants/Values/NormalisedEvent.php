@@ -28,6 +28,9 @@ final readonly class NormalisedEvent
 
     public const string IGNORE = 'ignore';
 
+    /**
+     * @param  array<string, mixed>  $payload
+     */
     public function __construct(
         public string $externalId,
         public string $type,

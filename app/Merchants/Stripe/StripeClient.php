@@ -3,6 +3,7 @@
 namespace App\Merchants\Stripe;
 
 use App\Enums\BillingInterval;
+use App\Enums\MerchantProvider;
 use App\Enums\SubscriptionStatus;
 use App\Merchants\MerchantClient;
 use App\Merchants\UnsupportedMerchantException;
@@ -19,6 +20,8 @@ use App\Models\Subscription;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Stripe\Exception\SignatureVerificationException;
+use Stripe\Invoice;
+use Stripe\Price;
 use Stripe\StripeClient as StripeSdk;
 use Stripe\Webhook;
 
@@ -69,7 +72,7 @@ class StripeClient implements MerchantClient
 
     public function syncProduct(Plan $plan): string
     {
-        $existing = MerchantReference::externalId($plan, \App\Enums\MerchantProvider::Stripe);
+        $existing = MerchantReference::externalId($plan, MerchantProvider::Stripe);
 
         $payload = [
             'name' => $plan->name,
@@ -90,7 +93,7 @@ class StripeClient implements MerchantClient
     public function syncPrice(PlanPrice $price): string
     {
         $product = $this->syncProduct($price->plan);
-        $existing = MerchantReference::externalId($price, \App\Enums\MerchantProvider::Stripe);
+        $existing = MerchantReference::externalId($price, MerchantProvider::Stripe);
 
         if ($existing !== null) {
             $remote = $this->stripe->prices->retrieve($existing);
@@ -296,6 +299,9 @@ class StripeClient implements MerchantClient
         );
     }
 
+    /**
+     * @param  array<string, mixed>  $payload
+     */
     public function invoiceFromPayload(array $payload): RemoteInvoice
     {
         return $this->normaliseInvoice(json_decode((string) json_encode($payload)));
@@ -376,7 +382,7 @@ class StripeClient implements MerchantClient
     }
 
     /**
-     * @param  \Stripe\Invoice  $remote
+     * @param  Invoice  $remote
      */
     public function normaliseInvoice(object $remote): RemoteInvoice
     {
@@ -405,12 +411,12 @@ class StripeClient implements MerchantClient
      */
     private function invoiceSubscriptionId(object $remote): ?string
     {
-        if (isset($remote->subscription) && $remote->subscription !== null) {
+        if (isset($remote->subscription)) {
             return (string) $remote->subscription;
         }
 
         foreach ($remote->lines->data ?? [] as $line) {
-            $id = $line->parent?->subscription_item_details?->subscription ?? null;
+            $id = $line->parent?->subscription_item_details?->subscription;
 
             if ($id !== null) {
                 return (string) $id;
@@ -441,7 +447,7 @@ class StripeClient implements MerchantClient
     }
 
     /**
-     * @param  \Stripe\Price  $remote
+     * @param  Price  $remote
      */
     private function matches(object $remote, PlanPrice $price, string $product): bool
     {
@@ -459,7 +465,7 @@ class StripeClient implements MerchantClient
 
     private function subscriptionExternalId(Subscription $subscription): string
     {
-        $id = MerchantReference::externalId($subscription, \App\Enums\MerchantProvider::Stripe);
+        $id = MerchantReference::externalId($subscription, MerchantProvider::Stripe);
 
         if ($id === null) {
             throw new UnsupportedMerchantException(

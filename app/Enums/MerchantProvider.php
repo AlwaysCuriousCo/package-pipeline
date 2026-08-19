@@ -5,6 +5,7 @@ namespace App\Enums;
 use App\Merchants\Manual\ManualClient;
 use App\Merchants\MerchantClient;
 use App\Merchants\Stripe\StripeClient;
+use App\Sources\StubClient;
 use Filament\Support\Contracts\HasLabel;
 
 /**
@@ -22,7 +23,7 @@ use Filament\Support\Contracts\HasLabel;
  * "none" is spelled Manual.
  *
  * @see MerchantClient
- * @see \App\Sources\StubClient for the pattern this follows
+ * @see StubClient for the pattern this follows
  */
 enum MerchantProvider: string implements HasLabel
 {

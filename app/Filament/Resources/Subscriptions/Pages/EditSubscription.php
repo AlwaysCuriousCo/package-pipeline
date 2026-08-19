@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Subscriptions\Pages;
 use App\Filament\Resources\Subscriptions\Actions\CancelSubscriptionAction;
 use App\Filament\Resources\Subscriptions\Actions\SuspendSubscriptionAction;
 use App\Filament\Resources\Subscriptions\SubscriptionResource;
+use App\Models\Subscription;
 use App\Services\Billing\EntitlementProjector;
 use Filament\Resources\Pages\EditRecord;
 
@@ -28,6 +29,10 @@ class EditSubscription extends EditRecord
 
     protected function afterSave(): void
     {
-        app(EntitlementProjector::class)->project($this->record->fresh());
+        $record = $this->record;
+
+        if ($record instanceof Subscription) {
+            app(EntitlementProjector::class)->project($record->refresh());
+        }
     }
 }

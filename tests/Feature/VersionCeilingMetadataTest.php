@@ -13,6 +13,7 @@ use App\Models\Subscription;
 use App\Models\Token;
 use App\Models\User;
 use App\Services\Billing\EntitlementProjector;
+use App\Services\Billing\VersionCeiling;
 use App\Support\VersionNormalizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -26,7 +27,7 @@ use Tests\TestCase;
  * else's response — body, ETag, cache entry — is byte-identical to what it
  * was before billing existed.
  *
- * @see \App\Services\Billing\VersionCeiling
+ * @see VersionCeiling
  */
 class VersionCeilingMetadataTest extends TestCase
 {

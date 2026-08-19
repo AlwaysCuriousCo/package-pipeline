@@ -1,18 +1,18 @@
 <?php
 
-use App\Http\Controllers\DownloadExportController;
-use App\Http\Controllers\GitHubWebhookController;
-use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\Billing\BillingController;
 use App\Http\Controllers\Billing\CheckoutController;
 use App\Http\Controllers\Billing\RegisterController;
 use App\Http\Controllers\Billing\SubscriptionTokenController;
 use App\Http\Controllers\Billing\WelcomeController;
+use App\Http\Controllers\DownloadExportController;
+use App\Http\Controllers\GitHubWebhookController;
+use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\MerchantWebhookController;
-use App\Http\Controllers\Pages\PricingController;
 use App\Http\Controllers\Pages\PackageArchiveController;
 use App\Http\Controllers\Pages\PackageAssetController;
 use App\Http\Controllers\Pages\PackagePageController;
+use App\Http\Controllers\Pages\PricingController;
 use App\Http\Controllers\Pages\RepositoryPageController;
 use App\Http\Controllers\Pages\SitemapController;
 use App\Http\Controllers\PasswordSetupController;

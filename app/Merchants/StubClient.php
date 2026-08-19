@@ -6,6 +6,7 @@ use App\Enums\MerchantProvider;
 use App\Merchants\Values\CheckoutRequest;
 use App\Merchants\Values\CheckoutSession;
 use App\Merchants\Values\NormalisedEvent;
+use App\Merchants\Values\RemoteInvoice;
 use App\Merchants\Values\RemoteSubscription;
 use App\Models\BillingCustomer;
 use App\Models\Plan;
@@ -69,7 +70,10 @@ class StubClient implements MerchantClient
         throw $this->unsupported();
     }
 
-    public function invoiceFromPayload(array $payload): \App\Merchants\Values\RemoteInvoice
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function invoiceFromPayload(array $payload): RemoteInvoice
     {
         throw $this->unsupported();
     }

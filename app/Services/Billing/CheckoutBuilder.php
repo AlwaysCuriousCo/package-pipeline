@@ -65,7 +65,7 @@ final class CheckoutBuilder
 
         $customer = new BillingCustomer([
             'name' => $billable->name,
-            'email' => $contact?->email ?? '',
+            'email' => (string) $contact?->email,
             'merchant' => $merchant,
             'billing_contact_user_id' => $billable instanceof Team ? $contact?->getKey() : null,
         ]);

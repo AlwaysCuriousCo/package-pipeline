@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Billing;
 use App\Http\Controllers\Controller;
 use App\Models\Repository;
 use App\Models\User;
+use App\Notifications\Billing\VerifyBillingEmail;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -59,7 +60,7 @@ class RegisterController extends Controller
             'password' => Hash::make($data['password']),
         ]);
 
-        $user->notify(new \App\Notifications\Billing\VerifyBillingEmail(
+        $user->notify(new VerifyBillingEmail(
             URL::temporarySignedRoute('billing.verify', now()->addDay(), ['user' => $user->getKey()]),
         ));
 
@@ -86,7 +87,7 @@ class RegisterController extends Controller
         $user = $request->user();
 
         if ($user !== null && $user->email_verified_at === null) {
-            $user->notify(new \App\Notifications\Billing\VerifyBillingEmail(
+            $user->notify(new VerifyBillingEmail(
                 URL::temporarySignedRoute('billing.verify', now()->addDay(), ['user' => $user->getKey()]),
             ));
         }

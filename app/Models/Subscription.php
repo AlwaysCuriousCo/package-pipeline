@@ -6,6 +6,8 @@ use App\Enums\MerchantProvider;
 use App\Enums\SubscriptionStatus;
 use App\Merchants\MerchantClient;
 use App\Models\Concerns\LogsAuditableChanges;
+use App\Services\Billing\EntitlementProjector;
+use App\Services\Billing\SubscriptionProjector;
 use Database\Factories\SubscriptionFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -25,8 +27,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * this row's status into grants, and the plan's lapse behaviour into their
  * withdrawal.
  *
- * @see \App\Services\Billing\SubscriptionProjector
- * @see \App\Services\Billing\EntitlementProjector
+ * @see SubscriptionProjector
+ * @see EntitlementProjector
  */
 #[Fillable(['plan_id', 'plan_price_id', 'merchant', 'status', 'quantity', 'coupon_code'])]
 class Subscription extends Model
@@ -142,7 +144,12 @@ class Subscription extends Model
         return $this->grace_ends_at !== null && $this->grace_ends_at->isFuture();
     }
 
-    /** The subscriptions the nightly reconciler re-pulls from the merchant. */
+    /**
+     * The subscriptions the nightly reconciler re-pulls from the merchant.
+     *
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
     public function scopeReconcilable(Builder $query): Builder
     {
         return $query

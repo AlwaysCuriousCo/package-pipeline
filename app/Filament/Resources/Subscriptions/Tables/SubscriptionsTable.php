@@ -20,7 +20,7 @@ class SubscriptionsTable
                     ->label('Customer')
                     ->searchable()
                     ->sortable()
-                    ->description(fn (Subscription $record): string => $record->customer?->email ?? ''),
+                    ->description(fn (Subscription $record): string => (string) $record->customer?->email),
                 TextColumn::make('plan.name')
                     ->label('Plan')
                     ->sortable(),
