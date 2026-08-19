@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -92,6 +93,20 @@ class User extends Authenticatable implements FilamentUser
     public function teams(): BelongsToMany
     {
         return $this->belongsToMany(Team::class);
+    }
+
+    /**
+     * The billing identity behind this account, when it has bought anything.
+     *
+     * MorphOne rather than a column here: a customer is a different thing
+     * from an account, most accounts never have one, and everything commercial
+     * hangs off the customer row rather than the user.
+     *
+     * @return MorphOne<BillingCustomer, $this>
+     */
+    public function billingCustomer(): MorphOne
+    {
+        return $this->morphOne(BillingCustomer::class, 'billable');
     }
 
     /**

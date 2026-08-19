@@ -10,6 +10,7 @@ use DateTimeInterface;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Gate;
@@ -72,6 +73,22 @@ class Token extends Model
     }
 
     /**
+     * The subscription this token was issued under, when it was.
+     *
+     * Set for the activation token a purchase mints and for any token counted
+     * against a plan's token_limit; null for every token that predates
+     * billing or was issued outside it. What LapseBehaviour::RevokeTokens
+     * revokes is exactly the tokens carrying its subscription's id — never a
+     * personal token the same user issued for something else.
+     *
+     * @return BelongsTo<Subscription, $this>
+     */
+    public function subscription(): BelongsTo
+    {
+        return $this->belongsTo(Subscription::class);
+    }
+
+    /**
      * Issue a token for a principal, returning the only copy of its plain
      * text that will ever exist.
      *
@@ -82,6 +99,7 @@ class Token extends Model
         string $name,
         array $abilities,
         ?DateTimeInterface $expiresAt = null,
+        ?Subscription $subscription = null,
     ): NewToken {
         $plain = 'pp_'.Str::random(40);
 
@@ -98,6 +116,7 @@ class Token extends Model
             'token_prefix' => substr($plain, 0, 8),
             'token' => hash('sha256', $plain),
             'expires_at' => $expiresAt,
+            'subscription_id' => $subscription?->getKey(),
         ])->save();
 
         return new NewToken($token, $plain);
