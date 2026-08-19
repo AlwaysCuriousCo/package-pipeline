@@ -10,6 +10,7 @@ use App\Models\DeployToken;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
+use App\Models\User;
 use App\Services\CreateVersionFromZip;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -315,6 +316,91 @@ class SharedPackageServingTest extends TestCase
             ->assertOk()
             ->assertSee(url('/p/acme/widgets'), false)
             ->assertSee(url('/r/internal/p/acme/widgets'), false);
+    }
+
+    public function test_the_api_serves_a_package_from_another_repository_and_stops_again(): void
+    {
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+
+        $plain = Token::issue(
+            User::factory()->superAdmin()->create(),
+            'provisioning',
+            [TokenAbility::ApiRead, TokenAbility::ApiWrite],
+        )->plainText;
+
+        $this->withToken($plain)
+            ->postJson("/api/v1/packages/{$package->id}/repositories", ['repository' => 'internal'])
+            ->assertOk()
+            ->assertJsonPath('data.repository.path', null)
+            ->assertJsonCount(2, 'data.repositories');
+
+        $this->assertContains((int) $this->internal->id, $package->fresh()->servingRepositoryIds());
+
+        // And the listing filter follows what a repository serves rather than
+        // what lives in it.
+        $this->withToken($plain)->getJson('/api/v1/packages?repository=internal')
+            ->assertOk()
+            ->assertJsonPath('data.0.name', 'acme/widgets');
+
+        $this->withToken($plain)
+            ->deleteJson("/api/v1/packages/{$package->id}/repositories", ['repository' => 'internal'])
+            ->assertOk()
+            ->assertJsonCount(1, 'data.repositories');
+
+        $this->assertSame([(int) $package->repository_id], $package->fresh()->servingRepositoryIds());
+    }
+
+    public function test_the_api_refuses_to_remove_a_package_from_where_it_lives(): void
+    {
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $this->internal->id]);
+
+        $plain = Token::issue(
+            User::factory()->superAdmin()->create(),
+            'provisioning',
+            [TokenAbility::ApiRead, TokenAbility::ApiWrite],
+        )->plainText;
+
+        $this->withToken($plain)
+            ->deleteJson("/api/v1/packages/{$package->id}/repositories", ['repository' => 'internal'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('repository');
+    }
+
+    public function test_the_api_refuses_a_repository_that_already_serves_the_name(): void
+    {
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+        Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $this->internal->id]);
+
+        $plain = Token::issue(
+            User::factory()->superAdmin()->create(),
+            'provisioning',
+            [TokenAbility::ApiRead, TokenAbility::ApiWrite],
+        )->plainText;
+
+        $this->withToken($plain)
+            ->postJson("/api/v1/packages/{$package->id}/repositories", ['repository' => 'internal'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('repository');
+    }
+
+    public function test_the_console_serves_a_package_from_another_repository(): void
+    {
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+
+        $this->artisan('package:serve acme/widgets internal')->assertSuccessful();
+
+        $this->assertContains((int) $this->internal->id, $package->fresh()->servingRepositoryIds());
+
+        $this->artisan('package:serve acme/widgets internal --remove')->assertSuccessful();
+
+        $this->assertSame([(int) $package->repository_id], $package->fresh()->servingRepositoryIds());
+    }
+
+    public function test_the_console_refuses_to_remove_a_package_from_where_it_lives(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $this->internal->id]);
+
+        $this->artisan('package:serve acme/widgets internal --remove')->assertFailed();
     }
 
     public function test_deleting_a_package_clears_its_serving_rows(): void

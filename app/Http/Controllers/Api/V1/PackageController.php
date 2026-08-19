@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Exceptions\NameCollision;
+use App\Exceptions\VendorReserved;
 use App\Http\Resources\Api\V1\PackageDetailResource;
 use App\Http\Resources\Api\V1\PackageResource;
 use App\Jobs\SyncPackageJob;
@@ -61,11 +63,14 @@ class PackageController extends ApiController
             // Present but empty is the root repository, whose path is null —
             // the one repository that cannot be named by a path because it is
             // not mounted under one.
+            // Through the serving relation, not the home column: what a caller
+            // filtering by a repository is asking is what that repository
+            // serves, and a package added to it answers there like any other.
             ->when($request->has('repository'), fn (Builder $query) => $query->whereHas(
-                'composerRepository',
+                'repositories',
                 fn (Builder $repositories) => $repositories->where('path', $validated['repository'] ?? null),
             ))
-            ->with('composerRepository')
+            ->with(['composerRepository', 'repositories'])
             ->withCount('versions')
             ->orderBy('name')
             ->paginate($this->perPage($request));
@@ -79,7 +84,7 @@ class PackageController extends ApiController
 
         // Newest first, the order /p2 serves and the order a caller checking
         // "has my release landed yet" reads.
-        $record->load('composerRepository')->loadCount('versions');
+        $record->load(['composerRepository', 'repositories'])->loadCount('versions');
         $record->setRelation('versions', $record->versions()->orderedByVersion()->get());
 
         return new PackageDetailResource($record);
@@ -168,7 +173,7 @@ class PackageController extends ApiController
 
         $queued = $request->boolean('sync', true) && SyncPackageJob::dispatchUnlessPending($package);
 
-        $package->load('composerRepository')->loadCount('versions');
+        $package->load(['composerRepository', 'repositories'])->loadCount('versions');
 
         return (new PackageDetailResource($package))
             ->additional([
@@ -236,7 +241,7 @@ class PackageController extends ApiController
         // polling for completion knows which run it is watching.
         $queued = SyncPackageJob::dispatchUnlessPending($record, force: $request->boolean('force'));
 
-        $record->load('composerRepository')->loadCount('versions');
+        $record->load(['composerRepository', 'repositories'])->loadCount('versions');
 
         return (new PackageDetailResource($record))
             ->additional(['sync_queued' => $queued])
@@ -244,6 +249,92 @@ class PackageController extends ApiController
             // Accepted, not OK: the versions are imported by a worker, and the
             // package in this body is the one from before that ran.
             ->setStatusCode(202);
+    }
+
+    /**
+     * Add a package to another Composer repository, which then serves the same
+     * package under its own mount — the panel's "Also served from", scriptable.
+     *
+     * Two grants, because it is two decisions: a change to the package, and a
+     * change to what the target repository publishes. A credential that may
+     * publish into a repository cannot pull somebody else's package into it,
+     * and one that may change a package cannot publish it somewhere it has no
+     * standing.
+     */
+    public function serve(Request $request, string $package): JsonResponse
+    {
+        $record = $this->find($request, $package);
+        $repository = $this->targetRepository($request);
+
+        $this->authorizeServing($request, $record, $repository);
+
+        try {
+            $record->serveFrom([$repository]);
+        } catch (NameCollision|VendorReserved $exception) {
+            // Both are refusals about the *name* under the target mount, and
+            // both read as a 422 on the field that has to change — the same
+            // treatment store() gives a reserved vendor.
+            throw ValidationException::withMessages(['repository' => $exception->getMessage()]);
+        }
+
+        return $this->served($record);
+    }
+
+    /**
+     * Stop a repository serving a package that lives somewhere else.
+     *
+     * Never the repository it lives in: that is a move, and moving a package
+     * changes the URL Composer resolves it at. A repository that does not
+     * serve it is not an error either — the request asked for a state that
+     * already holds.
+     */
+    public function unserve(Request $request, string $package): JsonResponse
+    {
+        $record = $this->find($request, $package);
+        $repository = $this->targetRepository($request);
+
+        $this->authorizeServing($request, $record, $repository);
+
+        if ($repository->getKey() === $record->repository_id) {
+            throw ValidationException::withMessages([
+                'repository' => "\"{$record->name}\" lives in this Composer repository. Move it to another one instead.",
+            ]);
+        }
+
+        $record->stopServingFrom([$repository]);
+
+        return $this->served($record);
+    }
+
+    /**
+     * The two grants a serving change asks for. @see serve()
+     */
+    private function authorizeServing(Request $request, Package $package, Repository $repository): void
+    {
+        $token = $this->token($request);
+
+        abort_unless(
+            $token->mayWriteToPackage($package),
+            403,
+            'This token may not change this package.',
+        );
+
+        abort_unless(
+            $token->mayWriteTo($repository),
+            403,
+            'This token may not publish into that repository.',
+        );
+    }
+
+    /**
+     * The package as it now stands, with the repositories serving it — which
+     * is the whole of what either endpoint above changed.
+     */
+    private function served(Package $package): JsonResponse
+    {
+        $package->load(['composerRepository', 'repositories'])->loadCount('versions');
+
+        return (new PackageDetailResource($package))->response();
     }
 
     /**

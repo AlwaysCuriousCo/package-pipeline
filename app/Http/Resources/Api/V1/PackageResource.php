@@ -45,7 +45,14 @@ class PackageResource extends JsonResource
             'abandoned' => $this->abandoned,
             'replacement_package' => $this->replacement_package,
             'downloads' => $this->total_downloads,
+            // Where the package lives — the repository it is published into,
+            // and the mount its page URL is cut from.
             'repository' => new RepositoryResource($this->whenLoaded('composerRepository')),
+            // Every repository serving it, the one above included. A package
+            // can be added to any number of them, each with its own mount and
+            // its own access rules, and this is the list a consumer's
+            // composer.json could point at.
+            'repositories' => RepositoryResource::collection($this->whenLoaded('repositories')),
             'sync' => $this->syncState($request),
             'versions_count' => $this->whenCounted('versions'),
             'created_at' => $this->created_at?->toIso8601String(),
