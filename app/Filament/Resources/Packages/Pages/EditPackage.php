@@ -26,7 +26,7 @@ class EditPackage extends EditRecord
     }
 
     /**
-     * Carry the auto-sync toggle through to GitHub.
+     * Carry the serving repositories and the auto-sync toggle through.
      *
      * Only when it was the thing that changed: every other save — a renamed
      * package, a corrected description — must not cost an API call, and must
@@ -36,6 +36,12 @@ class EditPackage extends EditRecord
     {
         /** @var Package $package */
         $package = $this->getRecord();
+
+        // Where the package is served from has no column behind it, so it is
+        // written here rather than with the rest of the form. After the save,
+        // because the home repository may have moved in the same submit and
+        // the serving rows are settled against where it has landed.
+        $package->syncServingRepositories($this->data['serving_repositories'] ?? []);
 
         if (! $package->wasChanged('webhook_enabled')) {
             return;

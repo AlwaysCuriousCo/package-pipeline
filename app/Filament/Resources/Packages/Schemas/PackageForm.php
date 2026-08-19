@@ -41,6 +41,7 @@ class PackageForm
                 self::repository(),
                 self::subdirectory(),
                 self::composerRepository(),
+                self::servingRepositories(),
                 self::source(),
                 self::token(),
                 self::latestVersion(),
@@ -313,7 +314,63 @@ class PackageForm
             ->default(fn (): int => Repository::default()->id)
             ->required()
             ->selectablePlaceholder(false)
-            ->helperText('Which of this registry\'s repositories serves the package.');
+            // Live so that the repositories offered below are the ones this
+            // package is not already homed in.
+            ->live()
+            ->helperText('Where the package lives: the repository it is published into, and the mount its page URL is cut from.');
+    }
+
+    /**
+     * The other repositories this package answers under.
+     *
+     * A package lives in one repository and can be served from any number of
+     * others — the same row, the same versions and archives, under another
+     * mount with its own access rules. This is the whole of that decision;
+     * everything else about the package is unchanged by it.
+     *
+     * Not a `relationship()` select, though `repositories` is one: a serving
+     * row carries the package's name for the per-repository unique index, and
+     * Filament's sync would write neither that nor the two refusals below.
+     * The pages hand the chosen ids to Package::syncServingRepositories()
+     * instead. @see \App\Filament\Resources\Packages\Pages\EditPackage
+     */
+    public static function servingRepositories(): Select
+    {
+        return Select::make('serving_repositories')
+            ->label('Also served from')
+            ->multiple()
+            ->options(fn (Get $get): array => Repository::query()
+                ->whereKeyNot((int) ($get('repository_id') ?? Repository::default()->id))
+                ->orderBy('name')
+                ->pluck('name', 'id')
+                ->all())
+            ->afterStateHydrated(fn (Select $component, ?Package $record) => $component->state(
+                $record === null ? [] : array_values(array_diff(
+                    $record->servingRepositoryIds(),
+                    [(int) $record->repository_id],
+                )),
+            ))
+            // Written by the page after the save rather than with it, since
+            // there is no column behind this.
+            ->dehydrated(false)
+            ->rules([
+                fn (Get $get, ?Package $record): Closure => function (string $attribute, mixed $value, Closure $fail) use ($get, $record): void {
+                    foreach ((array) $value as $repositoryId) {
+                        $refusal = Package::servingRefusal(
+                            mb_strtolower((string) $get('name')),
+                            (int) $repositoryId,
+                            $record?->getKey(),
+                        );
+
+                        if ($refusal !== null) {
+                            $fail($refusal);
+
+                            return;
+                        }
+                    }
+                },
+            ])
+            ->helperText('Optional. Every repository chosen here serves this same package under its own mount, with its own access rules.');
     }
 
     /**

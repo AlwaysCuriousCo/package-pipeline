@@ -6,6 +6,7 @@ use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
+use App\Models\Repository;
 use App\Services\GitHub\WebhookRegistrar;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
@@ -44,12 +45,25 @@ class PackageInfolist
                     ->badge()
                     ->placeholder('-'),
                 TextEntry::make('composerRepository.name')
-                    ->label('Served in')
+                    ->label('Lives in')
                     ->badge()
                     ->color('gray')
                     ->helperText(fn (Package $record): string => $record->composerRepository->public
                         ? 'Public repository — readable without a token.'
                         : 'Private repository — consumers need an access token.'),
+                TextEntry::make('serving_repositories')
+                    ->label('Also served from')
+                    ->badge()
+                    ->color('gray')
+                    // The same package under other mounts, each with its own
+                    // access rules — which is why the repository it lives in
+                    // says nothing about how readable it is over there.
+                    ->state(fn (Package $record): array => Repository::query()
+                        ->whereKey(array_diff($record->servingRepositoryIds(), [(int) $record->repository_id]))
+                        ->orderBy('name')
+                        ->pluck('name')
+                        ->all())
+                    ->placeholder('Nowhere else'),
                 TextEntry::make('source.name')
                     ->label('Source')
                     ->badge()

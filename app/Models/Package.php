@@ -482,16 +482,50 @@ class Package extends Model
 
         throw_if($reservation instanceof ReservedVendor, fn (): VendorReserved => new VendorReserved($reservation, (string) $this->name));
 
-        $taken = DB::table('package_repository')
-            ->where('repository_id', $repositoryId)
-            ->where('package_name', (string) $this->name)
-            ->where('package_id', '!=', $this->getKey())
-            ->exists();
+        throw_if(
+            self::nameServedElsewhere((string) $this->name, $repositoryId, $this->getKey()),
+            new NameCollision(self::collisionRefusal((string) $this->name)),
+        );
+    }
 
-        throw_if($taken, new NameCollision(
-            "The \"{$this->name}\" name is already served by that Composer repository, so this package "
-            .'cannot be added to it as well. One repository answers for one package per name.'
-        ));
+    /**
+     * Why a repository cannot serve this name, in the words a form field and
+     * an action's error notification both show — or null when it can.
+     *
+     * The same two questions serveFrom() throws over, asked where an answer is
+     * still useful: a select that greys nothing out and then fails on save is
+     * a worse screen than one that says why while the admin is looking at it.
+     */
+    public static function servingRefusal(string $name, int $repositoryId, ?int $except = null): ?string
+    {
+        $reservation = ReservedVendor::conflictFor($name, $repositoryId);
+
+        if ($reservation instanceof ReservedVendor) {
+            return $reservation->refusal($name);
+        }
+
+        return self::nameServedElsewhere($name, $repositoryId, $except)
+            ? self::collisionRefusal($name)
+            : null;
+    }
+
+    /**
+     * Whether some other package already answers for this name in the given
+     * repository.
+     */
+    private static function nameServedElsewhere(string $name, int $repositoryId, ?int $except): bool
+    {
+        return DB::table('package_repository')
+            ->where('repository_id', $repositoryId)
+            ->where('package_name', $name)
+            ->when($except !== null, fn ($query) => $query->where('package_id', '!=', $except))
+            ->exists();
+    }
+
+    private static function collisionRefusal(string $name): string
+    {
+        return "The \"{$name}\" name is already served by that Composer repository, so this package "
+            .'cannot be added to it as well. One repository answers for one package per name.';
     }
 
     /**
