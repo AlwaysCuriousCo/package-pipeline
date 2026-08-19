@@ -106,10 +106,13 @@ class ServePackage extends Command
     {
         $candidates = Package::query()
             ->where('name', mb_strtolower((string) $this->argument('name')))
-            ->when($this->option('home'), fn ($query, string $path) => $query->whereHas(
-                'composerRepository',
-                fn ($repositories) => $repositories->where('path', $path),
-            ))
+            // Present but empty is the registry root, exactly as the repo
+            // argument reads it — so `!== null` rather than truthiness, which
+            // would drop the filter for the most common home of all.
+            ->when(
+                $this->option('home') !== null,
+                fn ($query) => $query->livingIn((string) $this->option('home')),
+            )
             ->with('composerRepository')
             ->get();
 

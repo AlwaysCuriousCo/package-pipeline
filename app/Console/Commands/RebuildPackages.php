@@ -28,10 +28,11 @@ class RebuildPackages extends Command
             // Uploaded artifacts have no source to rebuild from.
             ->whereNotNull('repository')
             ->when($this->argument('name'), fn ($query, string $name) => $query->where('name', $name))
-            ->when($this->option('repo'), fn ($query, string $path) => $query->whereHas(
-                'composerRepository',
-                fn ($repositories) => $repositories->where('path', $path),
-            ))
+            // Present but empty is the registry root; see Package::livingIn().
+            ->when(
+                $this->option('repo') !== null,
+                fn ($query) => $query->livingIn((string) $this->option('repo')),
+            )
             ->get();
 
         if ($packages->isEmpty()) {

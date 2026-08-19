@@ -7,7 +7,6 @@ use App\Enums\PageDownloads;
 use App\Enums\WebhookCoverage;
 use App\Models\Package;
 use App\Models\Repository;
-use App\Models\ReservedVendor;
 use App\Models\Source;
 use Closure;
 use Filament\Forms\Components\Placeholder;
@@ -424,18 +423,22 @@ class PackageForm
                 ignoreRecord: true,
                 modifyRuleUsing: fn (Unique $rule, Get $get): Unique => self::uniquePerRepository($rule, $get),
             )
-            // Package's own saving hook refuses this too, but by throwing —
-            // which from a form is a 500 where the admin wanted a field error
-            // naming the repository that owns the vendor.
+            // Package's own saving hook refuses both of these too, but by
+            // throwing — which from a form is a 500 where the admin wanted a
+            // field error saying what stands in the way: a vendor another
+            // repository has reserved, or a name the chosen repository already
+            // serves from a package that merely lives elsewhere, which the
+            // unique rule above cannot see because shares live on the pivot.
             ->rules([
-                fn (Get $get): Closure => function (string $attribute, mixed $value, Closure $fail) use ($get): void {
-                    $conflict = ReservedVendor::conflictFor(
-                        (string) $value,
+                fn (Get $get, ?Package $record): Closure => function (string $attribute, mixed $value, Closure $fail) use ($get, $record): void {
+                    $refusal = Package::servingRefusal(
+                        mb_strtolower((string) $value),
                         (int) ($get('repository_id') ?? Repository::default()->id),
+                        $record?->getKey(),
                     );
 
-                    if ($conflict instanceof ReservedVendor) {
-                        $fail($conflict->refusal((string) $value));
+                    if ($refusal !== null) {
+                        $fail($refusal);
                     }
                 },
             ])

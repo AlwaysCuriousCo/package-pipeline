@@ -9,7 +9,6 @@ use App\Http\Resources\Api\V1\PackageResource;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Repository;
-use App\Models\ReservedVendor;
 use App\Services\GitHub\WebhookRegistrar;
 use App\Support\ComposerName;
 use Illuminate\Database\Eloquent\Builder;
@@ -157,13 +156,17 @@ class PackageController extends ApiController
 
         $package->name = mb_strtolower($name);
 
-        // The model refuses this on save too, by throwing; asked here it is a
-        // 422 on the field that has to change, like every other name problem
-        // this endpoint reports.
-        $conflict = ReservedVendor::conflictFor($package->name, $repository->id);
+        // The model refuses these on save too, by throwing; asked here they
+        // are a 422 on the field that has to change, like every other name
+        // problem this endpoint reports. Both of a serving refusal's questions
+        // apply: a reserved vendor, and a name the repository already serves
+        // from a package that lives elsewhere — which the unique rule above
+        // cannot see, because shares live on the pivot rather than in
+        // packages.repository_id.
+        $refusal = Package::servingRefusal($package->name, $repository->id);
 
-        if ($conflict instanceof ReservedVendor) {
-            throw ValidationException::withMessages(['name' => $conflict->refusal($package->name)]);
+        if ($refusal !== null) {
+            throw ValidationException::withMessages(['name' => $refusal]);
         }
 
         $package->save();

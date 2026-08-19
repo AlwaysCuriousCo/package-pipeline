@@ -192,6 +192,11 @@ class PackagesRelationManager extends RelationManager
     /**
      * The packages this repository could serve and does not, as options.
      *
+     * Labelled with where each one lives, not the composer name alone: the
+     * same name may live in several repositories, and two options reading
+     * "acme/widgets" are a coin toss on which package this mount ends up
+     * serving.
+     *
      * Bounded rather than exhaustive: a registry is allowed to hold more
      * packages than a select can render, which is what the search is for.
      *
@@ -204,9 +209,13 @@ class PackagesRelationManager extends RelationManager
         return Package::query()
             ->whereDoesntHave('repositories', fn (Builder $query) => $query->whereKey($repository->getKey()))
             ->when($search !== null, fn (Builder $query) => $query->where('name', 'like', '%'.$search.'%'))
+            ->with('composerRepository')
             ->orderBy('name')
             ->limit(50)
-            ->pluck('name', 'id')
+            ->get()
+            ->mapWithKeys(fn (Package $package): array => [
+                $package->id => "{$package->name} — lives in {$package->composerRepository->name}",
+            ])
             ->all();
     }
 }

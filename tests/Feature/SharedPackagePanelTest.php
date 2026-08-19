@@ -85,6 +85,23 @@ class SharedPackagePanelTest extends TestCase
         $this->assertSame([(int) $package->repository_id], $package->fresh()->servingRepositoryIds());
     }
 
+    public function test_the_form_refuses_a_rename_to_a_name_the_home_mount_already_serves(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets'])->serveFrom([$this->internal]);
+
+        $package = Package::factory()->create(['name' => 'acme/gadgets', 'repository_id' => $this->internal->id]);
+
+        // A field error, not the 500 the model's own refusal would be — and
+        // one the name's unique rule cannot raise, since the other package
+        // merely serves here rather than living here.
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->fillForm(['name' => 'acme/widgets'])
+            ->call('save')
+            ->assertHasFormErrors(['name']);
+
+        $this->assertSame('acme/gadgets', $package->fresh()->name);
+    }
+
     public function test_a_package_can_be_created_into_several_repositories_at_once(): void
     {
         Queue::fake([SyncPackageJob::class]);
@@ -117,6 +134,22 @@ class SharedPackagePanelTest extends TestCase
         $this->assertContains((int) $this->internal->id, $package->fresh()->servingRepositoryIds());
 
         $this->relationManager()->assertCanSeeTableRecords([$package]);
+    }
+
+    public function test_the_serve_picker_says_where_each_package_lives(): void
+    {
+        $other = Repository::factory()->create(['path' => 'other', 'name' => 'Other']);
+
+        Package::factory()->create(['name' => 'acme/widgets']);
+        Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $other->id]);
+
+        $manager = $this->relationManager()->instance();
+        $options = (fn (): array => $this->servableOptions())->call($manager);
+
+        // The same composer name twice; the labels are what tells them apart.
+        $this->assertCount(2, $options);
+        $this->assertCount(2, array_unique($options));
+        $this->assertContains('acme/widgets — lives in Other', $options);
     }
 
     public function test_a_repository_can_stop_serving_a_package_it_does_not_own(): void

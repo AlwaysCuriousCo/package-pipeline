@@ -172,6 +172,8 @@ class Package extends Model
             // package lands in is half of the question this asks.
             $package->guardReservedVendor();
 
+            $package->guardServedName();
+
             $package->linkSource();
 
             // Derived after the source is linked, not before: the parse is
@@ -315,6 +317,25 @@ class Package extends Model
     public function repositories(): BelongsToMany
     {
         return $this->belongsToMany(Repository::class)->withPivot('package_name');
+    }
+
+    /**
+     * Narrow to the packages that live in the repository mounted at the given
+     * path — the console commands' disambiguator, so it reads a path the way
+     * their repo arguments do: "root" and the empty string name the registry
+     * root, whose path is null and could otherwise not be picked at all.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeLivingIn(Builder $query, string $path): Builder
+    {
+        $path = trim($path);
+
+        return $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where(
+            'path',
+            $path === '' || $path === 'root' ? null : $path,
+        ));
     }
 
     /**
@@ -940,6 +961,39 @@ class Package extends Model
             if ($conflict instanceof ReservedVendor) {
                 throw new VendorReserved($conflict, (string) $this->name);
             }
+        }
+    }
+
+    /**
+     * Refuse a name that some other package already publishes on a mount this
+     * one will be served from — the guarantee the packages table's
+     * (repository_id, name) unique index cannot see, because a share lives on
+     * the pivot alone.
+     *
+     * The same shape as guardReservedVendor() above, for the same reasons:
+     * only when the name or the home is actually moving, and a throw rather
+     * than a silent correction. Every serving row is rewritten from these two
+     * columns the moment the save lands (see reconcileServingRepositories),
+     * so a collision left unasked here surfaces there as a bare unique-index
+     * error instead of a refusal anybody can act on.
+     *
+     * Checked against every repository the save will write a row into: the
+     * current mounts, which a rename lands the new name on all at once, plus
+     * the home being moved into, which is not on the pivot yet.
+     *
+     * @throws NameCollision
+     */
+    public function guardServedName(): void
+    {
+        if (! $this->isDirty('name') && ! $this->isDirty('repository_id')) {
+            return;
+        }
+
+        foreach (array_unique([...$this->servingRepositoryIds(), (int) $this->repository_id]) as $repositoryId) {
+            throw_if(
+                self::nameServedElsewhere((string) $this->name, $repositoryId, $this->getKey()),
+                new NameCollision(self::collisionRefusal((string) $this->name)),
+            );
         }
     }
 

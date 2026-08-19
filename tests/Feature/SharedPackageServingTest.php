@@ -160,6 +160,40 @@ class SharedPackageServingTest extends TestCase
         $package->serveFrom([$this->internal]);
     }
 
+    public function test_a_created_package_refuses_a_name_its_home_serves_from_a_share(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets'])->serveFrom([$this->internal]);
+
+        $this->expectException(NameCollision::class);
+
+        // The packages table's (repository_id, name) index cannot refuse this
+        // — the other package merely serves here, it does not live here.
+        Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $this->internal->id]);
+    }
+
+    public function test_a_rename_refuses_a_name_a_serving_row_already_occupies(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets'])->serveFrom([$this->internal]);
+
+        $package = Package::factory()->create(['name' => 'acme/gadgets', 'repository_id' => $this->internal->id]);
+
+        $this->expectException(NameCollision::class);
+
+        $package->update(['name' => 'acme/widgets']);
+    }
+
+    public function test_a_move_refuses_a_home_whose_mount_already_serves_the_name(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets'])->serveFrom([$this->internal]);
+
+        $other = Repository::factory()->create(['path' => 'other']);
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $other->id]);
+
+        $this->expectException(NameCollision::class);
+
+        $package->update(['repository_id' => $this->internal->id]);
+    }
+
     public function test_a_reserved_vendor_refuses_the_repository_that_does_not_own_it(): void
     {
         $package = Package::factory()->create(['name' => 'acme/widgets']);
@@ -399,6 +433,26 @@ class SharedPackageServingTest extends TestCase
             ->assertJsonValidationErrors('repository');
     }
 
+    public function test_the_api_refuses_creating_a_name_the_repository_serves_from_a_share(): void
+    {
+        Package::factory()->create(['name' => 'acme/widgets'])->serveFrom([$this->internal]);
+
+        $plain = Token::issue(
+            User::factory()->superAdmin()->create(),
+            'provisioning',
+            [TokenAbility::ApiRead, TokenAbility::ApiWrite],
+        )->plainText;
+
+        $this->withToken($plain)
+            ->postJson('/api/v1/packages', [
+                'url' => 'https://github.com/acme/widgets',
+                'name' => 'acme/widgets',
+                'repository' => 'internal',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('name');
+    }
+
     public function test_the_console_serves_a_package_from_another_repository(): void
     {
         $package = Package::factory()->create(['name' => 'acme/widgets']);
@@ -410,6 +464,20 @@ class SharedPackageServingTest extends TestCase
         $this->artisan('package:serve acme/widgets internal --remove')->assertSuccessful();
 
         $this->assertSame([(int) $package->repository_id], $package->fresh()->servingRepositoryIds());
+    }
+
+    public function test_the_console_picks_the_root_home_with_home_root(): void
+    {
+        $other = Repository::factory()->create(['path' => 'other']);
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+        Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $this->internal->id]);
+
+        // Ambiguous without --home, and the root home has no path to name —
+        // "root" (or an empty string) is how it is picked.
+        $this->artisan('package:serve acme/widgets other')->assertFailed();
+        $this->artisan('package:serve', ['name' => 'acme/widgets', 'repo' => 'other', '--home' => 'root'])->assertSuccessful();
+
+        $this->assertContains((int) $other->id, $package->fresh()->servingRepositoryIds());
     }
 
     public function test_the_console_refuses_to_remove_a_package_from_where_it_lives(): void
