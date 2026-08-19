@@ -582,30 +582,63 @@ class Package extends Model
      * exactly what its owner does. A deploy token sees public repositories
      * plus whatever it was granted — or everything, when it holds no grants.
      *
+     * `$through` is the repository the request is addressed to, and it is what
+     * a package served from several of them is judged by. A package is
+     * readable *through a mount*, never in the abstract: one added to both a
+     * public repository and a private one is public under the first and
+     * private under the second, and asking whether any repository serving it
+     * is public would publish the private mount's copy to anyone who found the
+     * URL. The Composer endpoints and the pages therefore always pass their
+     * mount; the panel-wide readers pass nothing, where the question really is
+     * "may this person see this package at all".
+     *
      * @param  Builder<self>  $query
      * @return Builder<self>
      */
-    public function scopeVisibleTo(Builder $query, ?Token $token): Builder
+    public function scopeVisibleTo(Builder $query, ?Token $token, ?Repository $through = null): Builder
     {
         $principal = $token?->tokenable;
 
         if ($principal instanceof User) {
-            return $query->visibleToUser($principal);
+            return $query->visibleToUser($principal, $through);
         }
 
         if ($principal instanceof DeployToken && ! $principal->isScoped()) {
             return $query;
         }
 
-        return $query->where(function (Builder $query) use ($principal): void {
-            $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true));
+        // A mount everything on it may be read from asks nothing of the
+        // database — which is the common case, and cheaper than the subquery
+        // this scope ran before there was anything to be through.
+        if ($through instanceof Repository && $this->readableWholesale($principal, $through)) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($principal, $through): void {
+            $query->whereHas('repositories', fn (Builder $repositories) => $repositories
+                ->when($through instanceof Repository, fn (Builder $one) => $one->whereKey($through->getKey()))
+                ->where(function (Builder $readable) use ($principal): void {
+                    $readable->where('public', true);
+
+                    if ($principal instanceof DeployToken) {
+                        $readable->orWhereIn('repositories.id', $principal->repositories()->select('repositories.id'));
+                    }
+                }));
 
             if ($principal instanceof DeployToken) {
-                $query
-                    ->orWhereIn('packages.id', $principal->packages()->select('packages.id'))
-                    ->orWhereIn('packages.repository_id', $principal->repositories()->select('repositories.id'));
+                $query->orWhereIn('packages.id', $principal->packages()->select('packages.id'));
             }
         });
+    }
+
+    /**
+     * Whether this mount is readable in full by the principal, whatever it
+     * happens to serve.
+     */
+    private function readableWholesale(mixed $principal, Repository $through): bool
+    {
+        return $through->public
+            || ($principal instanceof DeployToken && $principal->repositories()->whereKey($through->getKey())->exists());
     }
 
     /**
@@ -630,16 +663,26 @@ class Package extends Model
      * @param  Builder<self>  $query
      * @return Builder<self>
      */
-    public function scopeVisibleToUser(Builder $query, User $user): Builder
+    public function scopeVisibleToUser(Builder $query, User $user, ?Repository $through = null): Builder
     {
         if ($user->hasUnscopedAccess()) {
             return $query;
         }
 
-        return $query->where(function (Builder $query) use ($user): void {
-            $query->whereHas('composerRepository', fn (Builder $repositories) => $repositories->where('public', true))
-                ->orWhereIn('packages.id', $user->packageGrants())
-                ->orWhereIn('packages.repository_id', $user->repositoryGrants());
+        // As in visibleTo(): a mount this person reaches wholesale settles the
+        // question without a subquery, and the grant is asked for as one
+        // indexed existence check rather than as a union per row.
+        if ($through instanceof Repository && ($through->public || $user->isGrantedRepository($through))) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $query) use ($user, $through): void {
+            $query->whereHas('repositories', fn (Builder $repositories) => $repositories
+                ->when($through instanceof Repository, fn (Builder $one) => $one->whereKey($through->getKey()))
+                ->where(fn (Builder $readable) => $readable
+                    ->where('public', true)
+                    ->orWhereIn('repositories.id', $user->repositoryGrants())))
+                ->orWhereIn('packages.id', $user->packageGrants());
         });
     }
 

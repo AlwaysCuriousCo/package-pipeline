@@ -2,13 +2,18 @@
 
 namespace Tests\Feature;
 
+use App\Enums\TokenAbility;
 use App\Exceptions\NameCollision;
 use App\Exceptions\VendorReserved;
+use App\Models\DeployToken;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\Token;
+use App\Services\CreateVersionFromZip;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
+use ZipArchive;
 
 /**
  * One package, several Composer repositories.
@@ -170,6 +175,93 @@ class SharedPackageServingTest extends TestCase
             [(int) $package->repository_id, (int) $other->id],
             $this->servingRows($package),
         );
+    }
+
+    public function test_a_private_mount_does_not_publish_a_package_its_home_publishes(): void
+    {
+        $private = Repository::factory()->create(['path' => 'closed', 'public' => false]);
+        $package = $this->released(Package::factory()->create(['name' => 'acme/widgets']));
+
+        $package->serveFrom([$private]);
+
+        // Readable where it lives, which is public...
+        $this->get('/p2/acme/widgets.json')->assertOk();
+
+        // ...and behind the private mount's own door everywhere else. A
+        // package is readable through a mount, never in the abstract.
+        $this->getJson('/r/closed/p2/acme/widgets.json')->assertUnauthorized();
+    }
+
+    public function test_a_public_mount_serves_a_package_that_lives_somewhere_private(): void
+    {
+        $private = Repository::factory()->create(['path' => 'closed', 'public' => false]);
+        $package = $this->released(Package::factory()->create([
+            'name' => 'acme/widgets',
+            'repository_id' => $private->id,
+        ]));
+
+        $package->serveFrom([$this->internal]);
+
+        $this->get('/r/internal/p2/acme/widgets.json')->assertOk();
+        $this->getJson('/r/closed/p2/acme/widgets.json')->assertUnauthorized();
+    }
+
+    public function test_a_deploy_token_granted_a_mount_reads_what_that_mount_serves(): void
+    {
+        $private = Repository::factory()->create(['path' => 'closed', 'public' => false]);
+        $package = $this->released(Package::factory()->create([
+            'name' => 'acme/widgets',
+            'repository_id' => Repository::factory()->create(['path' => 'elsewhere', 'public' => false])->id,
+        ]));
+
+        $package->serveFrom([$private]);
+
+        $deploy = DeployToken::query()->create(['name' => 'ci']);
+        $deploy->repositories()->attach($private);
+        $token = Token::issue($deploy, 'ci', [TokenAbility::RepositoryRead]);
+
+        $this->withToken($token->plainText)
+            ->getJson('/r/closed/p2/acme/widgets.json')
+            ->assertOk();
+
+        // The grant is on the mount, not on the package: through the mount
+        // where the package lives, this token is told nothing — a 404 rather
+        // than a 403, which is how every unreadable package answers here.
+        $this->withToken($token->plainText)
+            ->getJson('/r/elsewhere/p2/acme/widgets.json')
+            ->assertNotFound();
+    }
+
+    public function test_an_upload_through_a_shared_mount_publishes_to_the_package_it_serves(): void
+    {
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+        $package->serveFrom([$this->internal]);
+
+        app(CreateVersionFromZip::class)->create(
+            $this->internal,
+            'acme/widgets',
+            $this->zip('acme/widgets', 'v2.0.0'),
+            'v2.0.0',
+        );
+
+        $this->assertSame(1, Package::query()->where('name', 'acme/widgets')->count());
+        $this->assertSame('v2.0.0', $package->versions()->sole()->version);
+    }
+
+    /**
+     * A zip holding nothing but a composer.json, which is all the creator
+     * reads out of it.
+     */
+    private function zip(string $name, string $version): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'pkg').'.zip';
+
+        $archive = new ZipArchive;
+        $archive->open($path, ZipArchive::CREATE);
+        $archive->addFromString('composer.json', json_encode(['name' => $name, 'version' => $version]));
+        $archive->close();
+
+        return $path;
     }
 
     public function test_deleting_a_package_clears_its_serving_rows(): void

@@ -556,7 +556,7 @@ class ComposerRepositoryController extends Controller
         $name = mb_strtolower("{$vendor}/".($dev ? substr($package, 0, -4) : $package));
 
         $record = $repository->packages()
-            ->visibleTo($this->token($request))
+            ->visibleTo($this->token($request), $repository)
             ->where('name', $name)
             ->first();
 
@@ -924,7 +924,7 @@ class ComposerRepositoryController extends Controller
         $repository = $this->repository($request);
 
         $record = $repository->packages()
-            ->visibleTo($this->token($request))
+            ->visibleTo($this->token($request), $repository)
             ->where('name', $name)
             ->first();
 
@@ -1174,8 +1174,10 @@ class ComposerRepositoryController extends Controller
      */
     private function servedPackages(Request $request): Builder
     {
-        return $this->repository($request)->packages()
-            ->visibleTo($this->token($request))
+        $repository = $this->repository($request);
+
+        return $repository->packages()
+            ->visibleTo($this->token($request), $repository)
             ->has('versions')
             ->getQuery();
     }

@@ -12,6 +12,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -202,7 +204,7 @@ class Repository extends Model
             if ($principal instanceof DeployToken) {
                 $query
                     ->orWhereIn('repositories.id', $principal->repositories()->select('repositories.id'))
-                    ->orWhereIn('repositories.id', $principal->packages()->select('packages.repository_id'));
+                    ->orWhereIn('repositories.id', self::servingIds($principal->packages()->select('packages.id')->getQuery()));
             }
         });
     }
@@ -236,11 +238,27 @@ class Repository extends Model
         return $query->where(function (Builder $query) use ($user): void {
             $query->where('public', true)
                 ->orWhereIn('repositories.id', $user->repositoryGrants())
-                // Through the packages rather than the pivot, because what is
-                // wanted is the repository each granted package is served
-                // from, and only the package row knows that.
-                ->orWhereIn('repositories.id', $user->grantedPackages()->select('packages.repository_id'));
+                // Every repository serving a granted package, which since a
+                // package can be served from several is a question for the
+                // serving pivot rather than for a column on the package.
+                ->orWhereIn('repositories.id', self::servingIds($user->packageGrants()));
         });
+    }
+
+    /**
+     * The repositories serving any of the given packages.
+     *
+     * Takes the ids as a query rather than as a list, so the whole thing stays
+     * one statement — the callers hand it a union of grant pivots, which is a
+     * shape that must be used whole. @see User::packageGrants()
+     *
+     * @param  QueryBuilder|Builder<Package>  $packages
+     */
+    private static function servingIds(QueryBuilder|Builder $packages): QueryBuilder
+    {
+        return DB::table('package_repository')
+            ->select('package_repository.repository_id')
+            ->whereIn('package_repository.package_id', $packages);
     }
 
     /**
