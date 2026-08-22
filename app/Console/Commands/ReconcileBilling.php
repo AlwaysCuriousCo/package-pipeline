@@ -127,10 +127,17 @@ class ReconcileBilling extends Command
             ->with('customer')
             ->chunkById(100, function ($subscriptions) use ($entitlements, &$moved): void {
                 foreach ($subscriptions as $subscription) {
-                    $subscription->forceFill(['grace_notified_at' => now()])->save();
-                    $entitlements->project($subscription);
-                    $subscription->customer?->contact()?->notify(new SubscriptionLapsed($subscription));
-                    $moved++;
+                    // Work first, stamp last: a row whose projection or
+                    // notice failed stays eligible next run. The worst a
+                    // stamp failure can repeat is one extra email.
+                    try {
+                        $entitlements->project($subscription);
+                        $subscription->customer?->contact()?->notify(new SubscriptionLapsed($subscription));
+                        $subscription->forceFill(['grace_notified_at' => now()])->save();
+                        $moved++;
+                    } catch (Throwable $e) {
+                        $this->warn("Could not cross grace for subscription {$subscription->getKey()}: {$e->getMessage()}");
+                    }
                 }
             });
 
