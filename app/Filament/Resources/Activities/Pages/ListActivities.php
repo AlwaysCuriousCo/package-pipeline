@@ -31,6 +31,6 @@ class ListActivities extends ListRecords
      */
     public function getSubheading(): string
     {
-        return 'Every change recorded anywhere in the registry, including records you cannot reach elsewhere.';
+        return 'A complete history of every change in the registry.';
     }
 }
