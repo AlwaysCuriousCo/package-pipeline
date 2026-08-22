@@ -13,6 +13,7 @@ use App\Services\Billing\EntitlementProjector;
 use App\Services\Billing\SubscriptionProjector;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /**
@@ -156,14 +157,24 @@ class ReconcileBilling extends Command
 
         $query->with(['plan', 'customer'])->chunkById(100, function ($subscriptions) use ($to, $entitlements, $notify, &$count): void {
             foreach ($subscriptions as $subscription) {
-                $subscription->forceFill([...$to, 'last_event_at' => now()])->save();
-                $entitlements->project($subscription);
+                // The projector re-reads status from the DB, so the move must
+                // be saved before projecting — a transaction makes that save
+                // revocable: any failure rolls the status back and the row is
+                // picked up again next run. The worst a commit failure can
+                // repeat is one extra email.
+                try {
+                    DB::transaction(function () use ($subscription, $to, $entitlements, $notify): void {
+                        $subscription->forceFill([...$to, 'last_event_at' => now()])->save();
+                        $entitlements->project($subscription);
 
-                if ($notify) {
-                    $subscription->customer?->contact()?->notify(new SubscriptionLapsed($subscription));
+                        if ($notify) {
+                            $subscription->customer?->contact()?->notify(new SubscriptionLapsed($subscription));
+                        }
+                    });
+                    $count++;
+                } catch (Throwable $e) {
+                    $this->warn("Could not move subscription {$subscription->getKey()}: {$e->getMessage()}");
                 }
-
-                $count++;
             }
         });
 
