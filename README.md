@@ -445,10 +445,12 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 ## Further reading
 
 - [docs/api.md](docs/api.md) — the `/api/v1` management API: authentication, abilities, every endpoint, and a release pipeline end to end.
+- [docs/billing.md](docs/billing.md) — selling subscriptions that grant package access: plans, Stripe checkout, the public pricing page, the customer area, lapse behaviours and version ceilings, and the Manual merchant for comps and purchase orders.
 - [docs/dependency-confusion.md](docs/dependency-confusion.md) — reserving vendor prefixes here, and the Composer configuration each consuming project needs so a public package cannot win a private name.
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
+- [docs/merchant-drivers.md](docs/merchant-drivers.md) — adding a payment merchant other than Stripe: the driver contract, the rules a translation must keep, and what shared machinery a driver inherits.
 - [docs/licensing.md](docs/licensing.md) — the license report, what a version declaring none means, and the CycloneDX SBOM export: its shape, the choices behind it, and what was verified against the spec.
 - [docs/metrics.md](docs/metrics.md) — the Prometheus endpoint: what it exposes, why it is off by default, what to alert on, and what a scrape costs.
 - [docs/monorepos.md](docs/monorepos.md) — publishing several packages from one repository: the subdirectory field, how a dist for part of a repository is built, and what a push to a monorepo syncs.

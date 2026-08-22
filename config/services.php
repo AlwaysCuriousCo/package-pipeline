@@ -60,4 +60,19 @@ return [
         ],
     ],
 
+    'stripe' => [
+        'secret' => env('STRIPE_SECRET'),
+        'publishable' => env('STRIPE_PUBLISHABLE'),
+
+        // The signing secret of the app's webhook endpoint at Stripe. Setting
+        // it is what turns the /billing/stripe/webhook route on; without it
+        // every delivery is refused unverified.
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+
+        // Whether checkout asks Stripe Tax to compute and collect tax.
+        // Requires Stripe Tax to be enabled on the Stripe account first, or
+        // every checkout session will fail to create.
+        'tax_enabled' => (bool) env('STRIPE_TAX_ENABLED', false),
+    ],
+
 ];

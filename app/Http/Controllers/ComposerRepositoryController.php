@@ -13,6 +13,7 @@ use App\Models\Repository;
 use App\Models\ReservedVendor;
 use App\Models\Token;
 use App\Services\ArchiveStore;
+use App\Services\Billing\VersionCeiling;
 use App\Services\CreateVersionFromZip;
 use App\Services\Mirror\MirrorService;
 use App\Support\ComposerName;
@@ -576,6 +577,14 @@ class ComposerRepositoryController extends Controller
 
         $state = $this->versionState($record, $dev);
 
+        // The one mark billing leaves on this endpoint. Null for everyone but
+        // a caller whose only path to the package is a frozen entitlement —
+        // and everything below is arranged so that null costs nothing new:
+        // the ceiling folds into the ETag, the payload cache is keyed by the
+        // ETag, so every uncapped caller shares the exact entry they always
+        // shared and each distinct ceiling gets its own.
+        $ceiling = app(VersionCeiling::class)->ceilingFor($this->token($request), $record);
+
         $response = response('', 200, [
             'Content-Type' => 'application/json',
             // `no-cache` rather than a freshness lifetime: a response carrying
@@ -589,7 +598,7 @@ class ComposerRepositoryController extends Controller
             'Vary' => 'Authorization',
         ]);
 
-        $etag = $this->etag($repository, $record, $dev, $state);
+        $etag = $this->etag($repository, $record, $dev, $state, $ceiling);
 
         $response->setLastModified($this->lastModified($repository, $record, $state));
         $response->setEtag($etag, weak: true);
@@ -598,7 +607,7 @@ class ComposerRepositoryController extends Controller
             return $response;
         }
 
-        return $response->setContent($this->payload($repository, $record, $dev, $etag));
+        return $response->setContent($this->payload($repository, $record, $dev, $etag, $ceiling));
     }
 
     /**
@@ -692,7 +701,7 @@ class ComposerRepositoryController extends Controller
      *
      * Only the payload is cached. Who may see it is decided per request, above.
      */
-    private function payload(Repository $repository, Package $package, bool $dev, string $etag): string
+    private function payload(Repository $repository, Package $package, bool $dev, string $etag, ?string $ceiling = null): string
     {
         $key = 'composer:metadata:'.$package->getKey().':'.($dev ? 'dev' : 'stable').":{$etag}";
 
@@ -702,7 +711,7 @@ class ComposerRepositoryController extends Controller
             return $cached;
         }
 
-        $json = $this->renderMetadata($repository, $package, $dev);
+        $json = $this->renderMetadata($repository, $package, $dev, $ceiling);
 
         $ceiling = (int) config('registry.metadata_cache.max_kilobytes') * 1024;
 
@@ -810,7 +819,7 @@ class ComposerRepositoryController extends Controller
      *
      * @param  array{count: int, changed: ?CarbonImmutable, newest: int}  $state
      */
-    private function etag(Repository $repository, Package $package, bool $dev, array $state): string
+    private function etag(Repository $repository, Package $package, bool $dev, array $state, ?string $ceiling = null): string
     {
         // xxh128 because this is a cache validator, not a signature: it has to
         // be collision-resistant against accident, never against an attacker.
@@ -825,6 +834,12 @@ class ComposerRepositoryController extends Controller
             $state['count'],
             $state['changed']?->getTimestamp() ?? 0,
             $state['newest'],
+            // The version ceiling a frozen entitlement pins, or '' for the
+            // one shared document everybody else reads. In the tag by value
+            // for the same reason the name is: the payload cache is keyed by
+            // this fingerprint, so folding it here is what buckets the cache
+            // by ceiling without a second mechanism.
+            $ceiling ?? '',
         ]));
     }
 
@@ -849,7 +864,7 @@ class ComposerRepositoryController extends Controller
      * otherwise two spellings of one package share a validator and differ in
      * what they answer.
      */
-    private function renderMetadata(Repository $repository, Package $package, bool $dev): string
+    private function renderMetadata(Repository $repository, Package $package, bool $dev, ?string $ceiling = null): string
     {
         $name = (string) $package->name;
 
@@ -860,6 +875,16 @@ class ComposerRepositoryController extends Controller
 
         $versions = $package->versions()
             ->where('is_dev', $dev)
+            // A pinned ceiling admits releases up to itself and nothing else.
+            // Dev flavours empty out entirely — a branch has no position on a
+            // release line, and dev-main is precisely the ongoing work a
+            // lapsed perpetual licence stopped paying for. Rows whose `order`
+            // was never backfilled are excluded too: unknown-position sorts
+            // outside the ceiling, which is the only safe reading.
+            ->when($ceiling !== null, fn (Builder $query) => $query
+                ->where('is_dev', false)
+                ->whereNotNull('order')
+                ->where('order', '<=', $ceiling))
             // Releases sort by the normalizer's order string, whose lexical
             // order is semantic order (1.10.0 above 1.9.0). Branches have no
             // release line to sort along, so dev versions keep name order.
@@ -935,6 +960,22 @@ class ComposerRepositoryController extends Controller
         $versions = $record->versions()->where('reference', $reference)->get();
 
         abort_if($versions->isEmpty(), 404, "Reference {$reference} is not a known version of {$name}.");
+
+        // A frozen entitlement's ceiling guards the archive as well as the
+        // metadata. The metadata filter means a fresh resolve never asks for
+        // an out-of-window version, so what lands here is a stale lock file —
+        // which deserves a sentence naming the real problem, not a bare 403.
+        // Any row sharing the reference being inside the ceiling is enough: a
+        // tag and a branch can share a commit, and owning the tag is owning
+        // the bytes.
+        $ceilings = app(VersionCeiling::class);
+        $ceiling = $ceilings->ceilingFor($this->token($request), $record);
+
+        abort_unless(
+            $versions->contains(fn (PackageVersion $version): bool => $ceilings->permits($version, $ceiling)),
+            403,
+            "Your subscription includes {$name} up to the versions released while it was active; {$reference} is newer. Renew to install current releases.",
+        );
 
         $disk = $this->archives->disk();
 

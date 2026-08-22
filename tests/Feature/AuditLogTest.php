@@ -493,7 +493,7 @@ class AuditLogTest extends TestCase
 
         $this->get('/admin/activities')
             ->assertOk()
-            ->assertSee('including records you cannot reach elsewhere', escape: false);
+            ->assertSee('A complete history of every change in the registry', escape: false);
     }
 
     /**

@@ -18,7 +18,8 @@
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
         "resend/resend-php": "^1.0",
-        "spatie/laravel-activitylog": "^4.12"
+        "spatie/laravel-activitylog": "^4.12",
+        "stripe/stripe-php": "^21.2"
     },
     "require-dev": {
         "brianium/paratest": "^7.20",

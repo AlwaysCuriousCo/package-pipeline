@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Activity;
+use App\Models\MerchantEvent;
 use App\Models\Notification;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -95,8 +96,18 @@ Schedule::command('mirror:prune')
 // The audit log is append-only by design — nothing in the app updates or
 // deletes an entry — so it needs the same treatment, with a much longer
 // retention: the questions it answers are asked months after the change.
-Schedule::command('model:prune', ['--model' => [Notification::class, Activity::class]])
+Schedule::command('model:prune', ['--model' => [Notification::class, Activity::class, MerchantEvent::class]])
     ->dailyAt('03:30')
+    ->onOneServer();
+
+// The safety net under the billing webhooks, and the clock for everything
+// local: re-pulls merchant-billed subscriptions, crosses the boundaries
+// nobody webhooks about (grace running out, a Manual period ending, an
+// updates window closing), and sends the trial-ending warnings. A no-op in
+// one query while billing is disabled.
+Schedule::command('billing:reconcile')
+    ->dailyAt('04:00')
+    ->withoutOverlapping(60)
     ->onOneServer();
 
 // The fastest-growing table in the schema, and the last one to get a bound:

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 
 /**
  * A group of people that holds package and repository grants.
@@ -70,5 +71,19 @@ class Team extends Model
     public function repositories(): BelongsToMany
     {
         return $this->belongsToMany(Repository::class);
+    }
+
+    /**
+     * The billing identity behind this team, when somebody pays for it.
+     *
+     * A team subscription grants to every member through the same pivots a
+     * team's manual grants use; the customer row is where the card, the
+     * invoices and the nominated billing contact live.
+     *
+     * @return MorphOne<BillingCustomer, $this>
+     */
+    public function billingCustomer(): MorphOne
+    {
+        return $this->morphOne(BillingCustomer::class, 'billable');
     }
 }

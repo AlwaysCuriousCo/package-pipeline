@@ -1,11 +1,18 @@
 <?php
 
+use App\Http\Controllers\Billing\BillingController;
+use App\Http\Controllers\Billing\CheckoutController;
+use App\Http\Controllers\Billing\RegisterController;
+use App\Http\Controllers\Billing\SubscriptionTokenController;
+use App\Http\Controllers\Billing\WelcomeController;
 use App\Http\Controllers\DownloadExportController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
+use App\Http\Controllers\MerchantWebhookController;
 use App\Http\Controllers\Pages\PackageArchiveController;
 use App\Http\Controllers\Pages\PackageAssetController;
 use App\Http\Controllers\Pages\PackagePageController;
+use App\Http\Controllers\Pages\PricingController;
 use App\Http\Controllers\Pages\RepositoryPageController;
 use App\Http\Controllers\Pages\SitemapController;
 use App\Http\Controllers\PasswordSetupController;
@@ -111,6 +118,44 @@ Route::middleware('throttle:webhooks')->group(function (): void {
     // header rather than signing the body.
     Route::post('/incoming/gitlab/{package}', [GitLabWebhookController::class, 'repository'])
         ->name('webhooks.gitlab.package');
+});
+
+// The payment merchant's webhook — Stripe's, or a future driver's, resolved
+// by the path segment. Signature verification is the whole of the
+// authentication here too, so it shares the webhook throttle's reasoning
+// with its own limiter: these deliveries are rarer and each one costs a
+// signature check plus a row.
+Route::post('/billing/{merchant}/webhook', MerchantWebhookController::class)
+    ->middleware('throttle:merchant-webhooks')
+    ->name('webhooks.merchant');
+
+// The commercial surface. Pricing is public like the package pages and on
+// their throttle; registration exists only while public signup is switched
+// on; and everything under /billing is the customer area — a signed-in
+// surface deliberately outside /admin, because buying access must never
+// grant a seat in the ops tooling.
+Route::middleware('throttle:pages')->group(function (): void {
+    Route::get('/pricing', [PricingController::class, 'index'])->name('pages.pricing');
+    Route::get('/pricing/{plan:slug}', [PricingController::class, 'show'])->name('pages.pricing.plan');
+    Route::get('/register', [RegisterController::class, 'show'])->name('billing.register');
+});
+
+Route::post('/register', [RegisterController::class, 'store'])
+    ->middleware('throttle:registration')
+    ->name('billing.register.store');
+
+Route::get('/billing/verify/{user}', [RegisterController::class, 'verify'])
+    ->middleware('throttle:pages')
+    ->name('billing.verify');
+
+Route::middleware('auth')->prefix('billing')->name('billing.')->group(function (): void {
+    Route::get('/', [BillingController::class, 'index'])->name('index');
+    Route::get('/portal', [BillingController::class, 'portal'])->name('portal');
+    Route::get('/welcome', WelcomeController::class)->name('welcome');
+    Route::post('/verify/resend', [RegisterController::class, 'resend'])->name('verify.resend');
+    Route::post('/checkout/{price}', [CheckoutController::class, 'store'])->name('checkout');
+    Route::post('/subscriptions/{subscription}/tokens', [SubscriptionTokenController::class, 'store'])->name('tokens.store');
+    Route::delete('/tokens/{token}', [SubscriptionTokenController::class, 'destroy'])->name('tokens.destroy');
 });
 
 // The SSO round trip for runtime-configured login providers. The login page
