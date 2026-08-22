@@ -32,7 +32,7 @@ class SubscriptionResource extends Resource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedArrowPathRoundedSquare;
 
-    protected static string|UnitEnum|null $navigationGroup = 'Billing';
+    protected static string|UnitEnum|null $navigationGroup = 'Commercial';
 
     protected static ?int $navigationSort = 20;
 
@@ -47,7 +47,7 @@ class SubscriptionResource extends Resource
     }
 
     /**
-     * The whole Billing group stays out of the sidebar until billing is
+     * The whole Commercial group stays out of the sidebar until billing is
      * turned on: a registry that has not enabled it shows exactly the panel
      * it always showed. The pages still answer by URL for administrators
      * setting things up ahead of the switch.

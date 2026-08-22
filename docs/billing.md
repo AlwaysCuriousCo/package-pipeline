@@ -54,7 +54,7 @@ STRIPE_TAX_ENABLED=true      # Stripe Tax at checkout (enable it at Stripe first
 
 ## Selling something
 
-1. **Billing → Plans → New plan.** Name it, price it, and pick what it
+1. **Commercial → Plans → New plan.** Name it, price it, and pick what it
    grants. The entitlement pickers are scoped to what you yourself can see,
    exactly as the team grant pickers are.
 2. The catalog is local and mirrored out: the first checkout syncs the plan
@@ -103,7 +103,7 @@ document they always shared, byte for byte.
 
 ## Manual subscriptions
 
-**Billing → Subscriptions → New manual subscription** records a
+**Commercial → Subscriptions → New manual subscription** records a
 subscription with no processor behind it — comped accounts, wire
 transfers, purchase orders. The projector treats it exactly like a paid
 one; the activation token is shown to *you* once, to hand over. "Runs
