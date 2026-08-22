@@ -39,29 +39,19 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('package_user', function (Blueprint $table) {
-            $table->string('source', 32)->default('manual');
-            $table->dropUnique(['package_id', 'user_id']);
-            $table->unique(['package_id', 'user_id', 'source']);
-        });
-
-        Schema::table('repository_user', function (Blueprint $table) {
-            $table->string('source', 32)->default('manual');
-            $table->dropUnique(['repository_id', 'user_id']);
-            $table->unique(['repository_id', 'user_id', 'source']);
-        });
-
-        Schema::table('package_team', function (Blueprint $table) {
-            $table->string('source', 32)->default('manual');
-            $table->dropUnique(['package_id', 'team_id']);
-            $table->unique(['package_id', 'team_id', 'source']);
-        });
-
-        Schema::table('repository_team', function (Blueprint $table) {
-            $table->string('source', 32)->default('manual');
-            $table->dropUnique(['repository_id', 'team_id']);
-            $table->unique(['repository_id', 'team_id', 'source']);
-        });
+        // The new unique must exist before the old one is dropped: MySQL backs
+        // the leftmost-column FK with the old index and errors (1553) if no
+        // replacement index covers it. The hasColumn guard makes the migration
+        // rerunnable after a partial failure, since each ALTER auto-commits.
+        foreach ($this->pivots() as $pivot => $cols) {
+            Schema::table($pivot, function (Blueprint $table) use ($pivot, $cols) {
+                if (! Schema::hasColumn($pivot, 'source')) {
+                    $table->string('source', 32)->default('manual');
+                }
+                $table->unique([...$cols, 'source']);
+                $table->dropUnique($cols);
+            });
+        }
     }
 
     /**
@@ -72,32 +62,29 @@ return new class extends Migration
         // Narrowing the unique back would fail on a table where a grant
         // exists under both sources; drop the projector's rows first, which
         // is also the honest meaning of rolling this feature back.
-        foreach (['package_user', 'repository_user', 'package_team', 'repository_team'] as $pivot) {
+        foreach ($this->pivots() as $pivot => $cols) {
             DB::table($pivot)->where('source', 'subscription')->delete();
+
+            // Same FK-backing rule as up(): recreate the narrow unique before
+            // dropping the wide one.
+            Schema::table($pivot, function (Blueprint $table) use ($cols) {
+                $table->unique($cols);
+                $table->dropUnique([...$cols, 'source']);
+                $table->dropColumn('source');
+            });
         }
+    }
 
-        Schema::table('package_user', function (Blueprint $table) {
-            $table->dropUnique(['package_id', 'user_id', 'source']);
-            $table->unique(['package_id', 'user_id']);
-            $table->dropColumn('source');
-        });
-
-        Schema::table('repository_user', function (Blueprint $table) {
-            $table->dropUnique(['repository_id', 'user_id', 'source']);
-            $table->unique(['repository_id', 'user_id']);
-            $table->dropColumn('source');
-        });
-
-        Schema::table('package_team', function (Blueprint $table) {
-            $table->dropUnique(['package_id', 'team_id', 'source']);
-            $table->unique(['package_id', 'team_id']);
-            $table->dropColumn('source');
-        });
-
-        Schema::table('repository_team', function (Blueprint $table) {
-            $table->dropUnique(['repository_id', 'team_id', 'source']);
-            $table->unique(['repository_id', 'team_id']);
-            $table->dropColumn('source');
-        });
+    /**
+     * @return array<string, list<string>>
+     */
+    private function pivots(): array
+    {
+        return [
+            'package_user' => ['package_id', 'user_id'],
+            'repository_user' => ['repository_id', 'user_id'],
+            'package_team' => ['package_id', 'team_id'],
+            'repository_team' => ['repository_id', 'team_id'],
+        ];
     }
 };
