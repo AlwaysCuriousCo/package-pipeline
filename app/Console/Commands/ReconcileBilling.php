@@ -116,15 +116,18 @@ class ReconcileBilling extends Command
             notify: true,
         );
 
-        // A grace window that ran out changes no column — grantsAccess()
+        // A grace window that ran out moves no clock — grantsAccess()
         // already answers differently — but the pivots do not know that
-        // until somebody re-projects.
+        // until somebody re-projects, and the lapse notice must go out
+        // exactly once, which is what the stamp records.
         Subscription::query()
             ->whereNotNull('grace_ends_at')
-            ->whereBetween('grace_ends_at', [now()->subHours((int) config('registry.billing.reconcile_lookback_hours')), now()])
+            ->where('grace_ends_at', '<=', now())
+            ->whereNull('grace_notified_at')
             ->with('customer')
             ->chunkById(100, function ($subscriptions) use ($entitlements, &$moved): void {
                 foreach ($subscriptions as $subscription) {
+                    $subscription->forceFill(['grace_notified_at' => now()])->save();
                     $entitlements->project($subscription);
                     $subscription->customer?->contact()?->notify(new SubscriptionLapsed($subscription));
                     $moved++;

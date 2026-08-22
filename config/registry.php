@@ -361,10 +361,6 @@ return [
     | registries will sell to accounts that already exist (SSO users,
     | admin-created customers) without wanting an open registration form.
     |
-    | `reconcile_lookback_hours` is how far past its last movement a
-    | subscription can be and still get re-pulled by billing:reconcile — the
-    | safety net for webhooks lost during a deploy.
-    |
     */
 
     'billing' => [
@@ -373,7 +369,6 @@ return [
         'public_signup' => (bool) env('BILLING_PUBLIC_SIGNUP', false),
         'currency' => strtolower((string) env('BILLING_CURRENCY', 'usd')),
         'terms_url' => env('BILLING_TERMS_URL'),
-        'reconcile_lookback_hours' => (int) env('BILLING_RECONCILE_LOOKBACK_HOURS', 48),
     ],
 
 ];

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\BillingModel;
 use App\Enums\LapseBehaviour;
+use App\Enums\MerchantProvider;
 use App\Enums\SubscriptionStatus;
 use App\Jobs\ProcessMerchantEvent;
 use App\Models\BillingCustomer;
@@ -203,6 +204,29 @@ class MerchantWebhookTest extends TestCase
 
         $this->actingAs($user)->get('/billing/welcome?session=cs_test_1')
             ->assertOk()->assertDontSee('pp_');
+    }
+
+    public function test_the_welcome_page_finds_a_subscription_checkout_through_the_recorded_event(): void
+    {
+        [$user, , $subscription] = $this->activeSubscription();
+
+        // What checkoutCompleted leaves behind for a subscription checkout:
+        // the one reference slot holds the subscription id every webhook
+        // resolves by, and the session id lives only in the recorded event.
+        $subscription->forceFill(['merchant' => MerchantProvider::Stripe])->save();
+        MerchantReference::remember($subscription, MerchantProvider::Stripe, 'sub_welcome');
+
+        MerchantEvent::create([
+            'merchant' => MerchantProvider::Stripe,
+            'external_id' => 'evt_welcome',
+            'type' => 'checkout.session.completed',
+            'payload' => ['id' => 'cs_welcome', 'subscription' => 'sub_welcome'],
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($user)->get('/billing/welcome?session=cs_welcome')
+            ->assertOk()
+            ->assertSee('pp_');
     }
 
     public function test_a_full_refund_withdraws_access_immediately(): void

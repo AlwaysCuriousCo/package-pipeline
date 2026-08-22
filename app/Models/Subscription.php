@@ -61,6 +61,7 @@ class Subscription extends Model
             'current_period_start' => 'datetime',
             'current_period_end' => 'datetime',
             'grace_ends_at' => 'datetime',
+            'grace_notified_at' => 'datetime',
             'cancel_at' => 'datetime',
             'canceled_at' => 'datetime',
             'ends_at' => 'datetime',

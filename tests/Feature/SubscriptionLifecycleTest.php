@@ -11,9 +11,11 @@ use App\Models\PlanPrice;
 use App\Models\Repository;
 use App\Models\Subscription;
 use App\Models\User;
+use App\Notifications\Billing\SubscriptionLapsed;
 use App\Services\Billing\SubscriptionProjector;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
 
 /**
@@ -158,5 +160,23 @@ class SubscriptionLifecycleTest extends TestCase
 
         $this->assertNull($subscription->fresh()->grace_ends_at);
         $this->assertFalse($this->reach($user));
+    }
+
+    public function test_the_grace_end_sweep_sends_the_lapse_notice_exactly_once(): void
+    {
+        config(['registry.billing.enabled' => true]);
+        Notification::fake();
+
+        [$subscription] = $this->subscription();
+        $subscription->forceFill([
+            'status' => SubscriptionStatus::PastDue,
+            'grace_ends_at' => now()->subHour(),
+        ])->save();
+
+        $this->artisan('billing:reconcile')->assertSuccessful();
+        $this->artisan('billing:reconcile')->assertSuccessful();
+
+        Notification::assertSentTimes(SubscriptionLapsed::class, 1);
+        $this->assertNotNull($subscription->fresh()->grace_notified_at);
     }
 }

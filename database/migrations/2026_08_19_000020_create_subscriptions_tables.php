@@ -57,6 +57,11 @@ return new class extends Migration
             // the plan follows the merchant's dunning alone.
             $table->timestamp('grace_ends_at')->nullable();
 
+            // When the reconciler's grace-end sweep sent the lapse notice,
+            // so a later run does not mail the customer again. Cleared with
+            // the grace clock when granting resumes.
+            $table->timestamp('grace_notified_at')->nullable();
+
             // Cancellation is two moments: when it was requested, and when it
             // takes effect. `ends_at` is the general "stopped granting" stamp
             // whatever the cause.

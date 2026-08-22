@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Billing;
 
 use App\Enums\MerchantProvider;
 use App\Http\Controllers\Controller;
+use App\Models\MerchantEvent;
 use App\Models\MerchantReference;
 use App\Models\Repository;
 use App\Models\Subscription;
@@ -58,7 +59,28 @@ class WelcomeController extends Controller
             return null;
         }
 
+        // A one-time purchase is mapped by its session id. A subscription
+        // checkout's single reference slot holds the durable subscription id
+        // instead, so the session is traced through the recorded event.
         $resolved = MerchantReference::resolve($merchant, $sessionId);
+
+        if ($resolved instanceof Subscription) {
+            return $resolved;
+        }
+
+        $payload = MerchantEvent::query()
+            ->where('merchant', $merchant)
+            ->where('payload->id', $sessionId)
+            ->first()
+            ?->payload;
+
+        $subscriptionId = $payload['subscription'] ?? null;
+
+        if (! is_string($subscriptionId)) {
+            return null;
+        }
+
+        $resolved = MerchantReference::resolve($merchant, $subscriptionId);
 
         return $resolved instanceof Subscription ? $resolved : null;
     }

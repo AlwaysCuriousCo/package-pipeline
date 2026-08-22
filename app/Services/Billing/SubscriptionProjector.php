@@ -64,6 +64,7 @@ final class SubscriptionProjector
     {
         if ($subscription->status->grantsAccess()) {
             $subscription->grace_ends_at = null;
+            $subscription->grace_notified_at = null;
 
             return;
         }

@@ -122,16 +122,19 @@ class ProcessMerchantEvent implements ShouldQueue
 
         $subscription = $this->findOrCreateSubscription($event, $customer, $price, $remoteSubscriptionId);
 
-        // Remember the session id too: the welcome page holds nothing else.
-        MerchantReference::remember($subscription, $event->merchant, (string) $payload['id']);
-
         if (is_string($remoteSubscriptionId)) {
             $remote = $event->merchant->client()->fetchSubscription($remoteSubscriptionId);
             (new SubscriptionProjector)->apply($subscription, $remote);
         } else {
-            // A one-time purchase: no remote subscription exists. Active from
-            // now; the updates window is the period, and the reconciler
-            // expires it when the window closes.
+            // A one-time purchase: no remote subscription exists, so the
+            // session id can take the row's one reference slot. A
+            // subscription checkout keeps that slot for the subscription id
+            // every later webhook resolves by; the welcome page reaches
+            // those through the recorded event instead.
+            MerchantReference::remember($subscription, $event->merchant, (string) $payload['id']);
+
+            // Active from now; the updates window is the period, and the
+            // reconciler expires it when the window closes.
             $months = $price->plan->updates_window_months;
 
             $subscription->forceFill([
