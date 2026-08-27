@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Models\Package;
 use App\Models\Repository;
+use App\Models\Token;
 use App\Models\User;
+use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 class PackageInstallCommandsTest extends TestCase
@@ -103,5 +107,55 @@ class PackageInstallCommandsTest extends TestCase
             ->assertOk()
             ->assertSee('composer require acme/widgets:^1.1.0')
             ->assertSee('composer config repositories.'.Str::slug(config('app.name')).' composer');
+    }
+
+    public function test_the_panel_install_card_switches_the_register_command_between_repositories(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $internal = Repository::factory()->public()->create(['path' => 'internal']);
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+        $package->serveFrom([$internal]);
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
+            ->assertSee($package->composerRepository->configureCommand())
+            ->assertDontSee($internal->configureCommand())
+            ->set('installRepository', $internal->id)
+            ->assertSee($internal->configureCommand())
+            ->assertDontSee($package->composerRepository->configureCommand());
+    }
+
+    public function test_the_panel_install_card_mints_a_read_token_for_a_private_repository(): void
+    {
+        $user = User::factory()->superAdmin()->create();
+        $this->actingAs($user);
+
+        $private = Repository::factory()->create(['path' => 'private', 'public' => false]);
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $private->id]);
+
+        $component = Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
+            ->assertSee('Generate a token above')
+            ->callAction(TestAction::make('generateToken')->schemaComponent('install'), ['name' => 'laptop'])
+            ->assertHasNoActionErrors()
+            ->assertNotified('Token created');
+
+        $plain = $component->get('plainTextToken');
+        $component->assertSee('http-basic.'.request()->getHost()." token {$plain}");
+
+        $token = Token::findByPlainText($plain);
+        $this->assertSame('laptop', $token->name);
+        $this->assertSame(['repository:read'], $token->abilities);
+        $this->assertTrue($token->tokenable->is($user));
+    }
+
+    public function test_the_panel_install_card_offers_no_token_for_a_public_repository(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create(['name' => 'acme/widgets']);
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
+            ->assertDontSee('Generate token')
+            ->assertDontSee('Authenticate');
     }
 }
