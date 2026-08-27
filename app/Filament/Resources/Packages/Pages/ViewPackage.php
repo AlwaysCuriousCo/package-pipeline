@@ -17,6 +17,25 @@ class ViewPackage extends ViewRecord
 {
     protected static string $resource = PackageResource::class;
 
+    /**
+     * Which of the package's repositories the Install card prints the
+     * register command for. Home by default; the card's select changes it.
+     */
+    public ?int $installRepository = null;
+
+    /**
+     * The plain text of a token the Install card issued this request — the
+     * only time it exists outside the creator's clipboard.
+     */
+    public ?string $plainTextToken = null;
+
+    public function mount(int|string $record): void
+    {
+        parent::mount($record);
+
+        $this->installRepository = $this->record->repository_id;
+    }
+
     protected function getHeaderActions(): array
     {
         return [
