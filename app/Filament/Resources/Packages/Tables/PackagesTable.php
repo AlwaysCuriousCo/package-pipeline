@@ -7,6 +7,7 @@ use App\Filament\Resources\Packages\Actions\QueueSyncsBulkAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Models\Package;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
@@ -53,7 +54,8 @@ class PackagesTable
                     ->description(fn (Package $record): ?string => $record->hasSubdirectory()
                         ? $record->subdirectory
                         : null)
-                    ->placeholder('Uploaded artifacts'),
+                    ->placeholder('Uploaded artifacts')
+                    ->toggleable(),
                 TextColumn::make('composerRepository.name')
                     ->label('Lives in')
                     ->badge()
@@ -83,16 +85,19 @@ class PackagesTable
                     ->badge()
                     ->searchable()
                     ->sortable()
-                    ->placeholder('Unreleased'),
+                    ->placeholder('Unreleased')
+                    ->toggleable(),
                 TextColumn::make('type')
                     ->badge()
                     ->searchable()
                     ->sortable()
-                    ->placeholder('-'),
+                    ->placeholder('-')
+                    ->toggleable(),
                 TextColumn::make('versions_count')
                     ->label('Versions')
                     ->counts('versions')
-                    ->sortable(),
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('total_downloads')
                     ->label('Downloads')
                     ->numeric()
@@ -159,11 +164,13 @@ class PackagesTable
                             ->orWhere('last_synced_at', '<', now()->subDay()))),
             ])
             ->recordActions([
-                SyncPackageAction::make(),
-                RebuildPackageAction::make(),
-                ExportDownloadsAction::make(),
-                ViewAction::make(),
-                EditAction::make(),
+                ActionGroup::make([
+                    ViewAction::make(),
+                    EditAction::make(),
+                    SyncPackageAction::make(),
+                    RebuildPackageAction::make(),
+                    ExportDownloadsAction::make(),
+                ]),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
