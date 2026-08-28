@@ -315,4 +315,24 @@ class UserResourceTest extends TestCase
 
         $this->assertSoftDeleted($token);
     }
+
+    /**
+     * Revoking answers to the right to edit the user, not to a token
+     * permission: the relation manager is the only place an admin who cannot
+     * delete tokens outright still needs to pull a credential.
+     */
+    public function test_whoever_may_edit_the_user_may_revoke_their_tokens(): void
+    {
+        $this->role('support')->givePermissionTo(['ViewAny:User', 'View:User', 'Update:User']);
+        $this->actingAs(tap(User::factory()->create())->assignRole('support'));
+
+        $user = User::factory()->create();
+        $token = Token::factory()->for($user, 'tokenable')->create();
+
+        Livewire::test(TokensRelationManager::class, ['ownerRecord' => $user, 'pageClass' => EditUser::class])
+            ->callAction(TestAction::make('delete')->table($token))
+            ->assertNotified('Token revoked');
+
+        $this->assertSoftDeleted($token);
+    }
 }

@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Users\RelationManagers;
 use App\Filament\Resources\AccessTokens\AccessTokenResource;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables\Table;
+use Illuminate\Auth\Access\Response;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -27,9 +28,13 @@ class TokensRelationManager extends RelationManager
         return auth()->user()?->can('update', $ownerRecord) ?? false;
     }
 
-    protected function canDelete(Model $record): bool
+    // The revoke action asks this, not canDelete(), so it is what overrides
+    // TokenPolicy — whose Delete:Token an account editor need not hold.
+    protected function getDeleteAuthorizationResponse(Model $record): Response
     {
-        return static::canViewForRecord($this->getOwnerRecord(), $this->getPageClass());
+        return static::canViewForRecord($this->getOwnerRecord(), $this->getPageClass())
+            ? Response::allow()
+            : Response::deny();
     }
 
     public function table(Table $table): Table

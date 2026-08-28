@@ -125,6 +125,20 @@ class ApiTokensPageTest extends TestCase
         $this->assertSame(['api:delete'], $this->user->tokens()->sole()->abilities);
     }
 
+    public function test_a_user_with_no_token_permission_revokes_their_own_token(): void
+    {
+        $user = $this->scopedUser();
+        $token = Token::factory()->for($user, 'tokenable')->create();
+
+        $this->actingAs($user);
+
+        Livewire::test(ApiTokens::class)
+            ->callAction(TestAction::make('delete')->table($token))
+            ->assertNotified('Token revoked');
+
+        $this->assertSoftDeleted($token);
+    }
+
     public function test_revoking_a_token_soft_deletes_it_and_stops_authentication(): void
     {
         $plain = 'pp_'.str_repeat('x', 40);
