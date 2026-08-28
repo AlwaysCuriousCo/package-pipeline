@@ -5,6 +5,8 @@ namespace App\Filament\Resources\Packages\Schemas;
 use App\Enums\SourceProvider;
 use App\Enums\TokenAbility;
 use App\Enums\WebhookCoverage;
+use App\Filament\Pages\ApiTokens;
+use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
@@ -209,8 +211,9 @@ class PackageInfolist
                             ->label('2. Authenticate (this repository is private)')
                             ->visible(fn (Package $record, ViewPackage $livewire): bool => ! self::installRepository($record, $livewire)->public)
                             ->state(fn (ViewPackage $livewire): string => $livewire->plainTextToken === null
-                                ? 'Generate a token above, or use an existing API or deploy token.'
-                                : 'composer config http-basic.'.request()->getHost()." token {$livewire->plainTextToken}")
+                                ? self::tokenPlaceholder()
+                                : e('composer config http-basic.'.request()->getHost()." token {$livewire->plainTextToken}"))
+                            ->html()
                             ->fontFamily(fn (ViewPackage $livewire): ?FontFamily => $livewire->plainTextToken === null ? null : FontFamily::Mono)
                             ->color(fn (ViewPackage $livewire): ?string => $livewire->plainTextToken === null ? 'gray' : null)
                             ->copyable(fn (ViewPackage $livewire): bool => $livewire->plainTextToken !== null)
@@ -238,5 +241,18 @@ class PackageInfolist
     private static function installRepository(Package $record, ViewPackage $livewire): Repository
     {
         return $record->repositories->find($livewire->installRepository) ?? $record->composerRepository;
+    }
+
+    /**
+     * Where to get a token when none was just minted: the user's own page,
+     * and the deploy token list for those who may see it.
+     */
+    private static function tokenPlaceholder(): string
+    {
+        $link = fn (string $url, string $text): string => '<a href="'.e($url).'" class="font-medium text-primary-600 underline dark:text-primary-400">'.$text.'</a>';
+
+        $deploy = DeployTokenResource::canViewAny() ? $link(DeployTokenResource::getUrl(), 'deploy token') : 'deploy token';
+
+        return 'Generate a token above, or use an existing '.$link(ApiTokens::getUrl(), 'API token').' or '.$deploy.'.';
     }
 }

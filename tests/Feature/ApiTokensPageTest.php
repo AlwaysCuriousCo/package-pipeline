@@ -141,4 +141,16 @@ class ApiTokensPageTest extends TestCase
         $this->assertSoftDeleted('access_tokens', ['id' => $token->id]);
         $this->assertNull(Token::findByPlainText($plain));
     }
+
+    public function test_the_page_points_at_deploy_tokens_for_those_who_may_see_them(): void
+    {
+        Livewire::test(ApiTokens::class)
+            ->assertSeeHtml('deploy token</a>');
+
+        $this->actingAs($this->scopedUser());
+
+        Livewire::test(ApiTokens::class)
+            ->assertSee('Ask an admin for a deploy token')
+            ->assertDontSeeHtml('deploy token</a>');
+    }
 }

@@ -9,6 +9,7 @@ use App\Models\Package;
 use App\Models\PackageAdvisory;
 use App\Models\Repository;
 use App\Models\Source;
+use App\Models\Token;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -62,7 +63,7 @@ class PolicyPermissionTest extends TestCase
      */
     public static function entities(): iterable
     {
-        foreach (['Package', 'Source', 'Repository', 'User', 'DeployToken', 'AuthenticationSource', 'Role'] as $entity) {
+        foreach (['Package', 'Source', 'Repository', 'User', 'DeployToken', 'Token', 'AuthenticationSource', 'Role'] as $entity) {
             yield $entity => [$entity];
         }
     }
@@ -78,6 +79,7 @@ class PolicyPermissionTest extends TestCase
             'Repository' => Repository::factory()->create(),
             'User' => User::factory()->create(),
             'DeployToken' => DeployToken::factory()->create(),
+            'Token' => Token::factory()->create(),
             'AuthenticationSource' => AuthenticationSource::factory()->create(),
             'Role' => Role::create(['name' => 'subject', 'guard_name' => 'web']),
             // An entity added to the provider without a record here would

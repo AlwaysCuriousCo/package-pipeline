@@ -6,6 +6,7 @@ use App\Auth\PasswordSetupLink;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
 use App\Filament\Resources\Users\Pages\ListUsers;
+use App\Filament\Resources\Users\RelationManagers\TokensRelationManager;
 use App\Filament\Resources\Users\Schemas\UserForm;
 use App\Filament\Resources\Users\Tables\UsersTable;
 use App\Models\User;
@@ -75,6 +76,13 @@ class UserResource extends Resource
                     // notification, so copying never round-trips the token.
                     ->alpineClickHandler('window.navigator.clipboard.writeText('.Js::from($link).')'),
             ]);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            TokensRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

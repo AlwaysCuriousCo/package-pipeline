@@ -6,6 +6,8 @@ use App\Auth\PasswordSetupLink;
 use App\Filament\Resources\Users\Pages\CreateUser;
 use App\Filament\Resources\Users\Pages\EditUser;
 use App\Filament\Resources\Users\Pages\ListUsers;
+use App\Filament\Resources\Users\RelationManagers\TokensRelationManager;
+use App\Models\Token;
 use App\Models\User;
 use App\Notifications\WelcomeUser;
 use Filament\Actions\Testing\TestAction;
@@ -297,5 +299,20 @@ class UserResourceTest extends TestCase
 
         Livewire::test(EditUser::class, ['record' => User::factory()->create()->getKey()])
             ->assertActionVisible('delete');
+    }
+
+    public function test_an_admin_revokes_a_users_token_from_their_edit_page(): void
+    {
+        $user = User::factory()->create();
+        $token = Token::factory()->for($user, 'tokenable')->create(['name' => 'laptop']);
+        $other = Token::factory()->create();
+
+        Livewire::test(TokensRelationManager::class, ['ownerRecord' => $user, 'pageClass' => EditUser::class])
+            ->assertCanSeeTableRecords([$token])
+            ->assertCanNotSeeTableRecords([$other])
+            ->callAction(TestAction::make('delete')->table($token))
+            ->assertNotified('Token revoked');
+
+        $this->assertSoftDeleted($token);
     }
 }
