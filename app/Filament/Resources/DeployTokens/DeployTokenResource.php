@@ -2,7 +2,6 @@
 
 namespace App\Filament\Resources\DeployTokens;
 
-use App\Filament\Resources\DeployTokens\Pages\CreateDeployToken;
 use App\Filament\Resources\DeployTokens\Pages\EditDeployToken;
 use App\Filament\Resources\DeployTokens\Pages\ListDeployTokens;
 use App\Filament\Resources\DeployTokens\Schemas\DeployTokenForm;
@@ -72,7 +71,6 @@ class DeployTokenResource extends Resource
     {
         return [
             'index' => ListDeployTokens::route('/'),
-            'create' => CreateDeployToken::route('/create'),
             'edit' => EditDeployToken::route('/{record}/edit'),
         ];
     }

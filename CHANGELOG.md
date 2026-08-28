@@ -255,6 +255,12 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Fixed
 
+- Creating a deploy token shows its one-time token. The create form now opens
+  in a modal on the token list instead of its own page, so the toast carrying
+  the `composer config` command arrives in the same response that issued it
+  rather than having to survive the session across a redirect — which in
+  production it did not, leaving the admin to roll the token straight after
+  creating it just to see it. ([#27](https://github.com/AlwaysCuriousCo/package-pipeline/issues/27))
 - `archives:audit` refuses at the scale of a wrong disk. It used to decline only
   when the dist disk listed *nothing*, which one file defeated: a bucket
   repointed or restored from an older snapshot, plus a single package getting a
