@@ -3,21 +3,19 @@
 namespace App\Filament\Pages;
 
 use App\Enums\TokenAbility;
+use App\Filament\Resources\AccessTokens\AccessTokenResource;
 use App\Models\Token;
 use App\Models\User;
 use BackedEnum;
 use Carbon\CarbonImmutable;
 use Closure;
 use Filament\Actions\Action;
-use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
@@ -61,34 +59,9 @@ class ApiTokens extends Page implements HasTable
     {
         return $table
             ->query(fn (): Builder => $this->user()->tokens()->getQuery())
-            ->columns([
-                TextColumn::make('name')
-                    ->searchable(),
-                TextColumn::make('token_prefix')
-                    ->label('Token')
-                    ->formatStateUsing(fn (string $state): string => "{$state}…")
-                    ->fontFamily(FontFamily::Mono),
-                TextColumn::make('abilities')
-                    ->badge()
-                    ->formatStateUsing(fn (string $state): string => TokenAbility::tryFrom($state)?->getLabel() ?? $state),
-                TextColumn::make('last_used_at')
-                    ->label('Last used')
-                    ->since()
-                    ->placeholder('Never'),
-                TextColumn::make('expires_at')
-                    ->label('Expires')
-                    ->date()
-                    ->placeholder('Never'),
-                TextColumn::make('created_at')
-                    ->label('Created')
-                    ->date(),
-            ])
+            ->columns(AccessTokenResource::tokenColumns())
             ->recordActions([
-                DeleteAction::make()
-                    ->label('Revoke')
-                    ->modalHeading('Revoke token')
-                    ->modalDescription('Composer clients using this token stop authenticating immediately.')
-                    ->successNotificationTitle('Token revoked'),
+                AccessTokenResource::revokeAction(),
             ])
             ->emptyStateHeading('No API tokens')
             ->emptyStateDescription('Create one to let a Composer client authenticate against this registry.');

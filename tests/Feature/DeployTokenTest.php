@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
-use App\Filament\Resources\DeployTokens\Pages\CreateDeployToken;
 use App\Filament\Resources\DeployTokens\Pages\ListDeployTokens;
 use App\Models\DeployToken;
 use App\Models\Package;
@@ -156,19 +155,30 @@ class DeployTokenTest extends TestCase
         $this->withBasicAuth('token', $new->plainText)->getJson('/r/internal/list.json')->assertUnauthorized();
     }
 
+    /**
+     * The toast has to ride in the response that created the token (#27):
+     * a create page would redirect, and the session hand-off between that
+     * request and the next page load is what production loses.
+     */
     public function test_creating_in_the_panel_issues_a_read_token_and_stores_the_grants(): void
     {
         $this->actingAs(User::factory()->superAdmin()->create());
 
-        Livewire::test(CreateDeployToken::class)
-            ->fillForm([
+        Livewire::test(ListDeployTokens::class)
+            ->callAction('create', data: [
                 'name' => 'production-deploys',
                 'repositories' => [$this->internal->id],
                 'packages' => [$this->secret->id],
             ])
-            ->call('create')
             ->assertHasNoFormErrors()
-            ->assertNotified();
+            ->assertNoRedirect()
+            ->assertDispatched(
+                'notificationSent',
+                fn (string $event, array $params): bool => str_contains(
+                    $params['notification']['body'] ?? '',
+                    'composer config http-basic.',
+                ),
+            );
 
         $deployToken = DeployToken::query()->where('name', 'production-deploys')->sole();
 

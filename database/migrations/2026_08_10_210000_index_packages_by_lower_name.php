@@ -30,7 +30,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        match (Schema::getConnection()->getDriverName()) {
+        match ($this->driver()) {
             // MySQL 8 wants the expression in its own parentheses; without the
             // inner pair it reads `lower(name)` as a column called `lower`.
             'mysql' => DB::statement('create index packages_lower_name_index on packages ((lower(name)))'),
@@ -41,10 +41,18 @@ return new class extends Migration
 
     public function down(): void
     {
-        match (Schema::getConnection()->getDriverName()) {
+        match ($this->driver()) {
             'mysql' => DB::statement('drop index packages_lower_name_index on packages'),
             'pgsql', 'sqlite' => DB::statement('drop index packages_lower_name_index'),
             default => null,
         };
+    }
+
+    /** MariaDB answers to the `mysql` driver but lacks functional indexes; route it to `default`. */
+    private function driver(): string
+    {
+        $connection = Schema::getConnection();
+
+        return method_exists($connection, 'isMaria') && $connection->isMaria() ? 'mariadb' : $connection->getDriverName();
     }
 };

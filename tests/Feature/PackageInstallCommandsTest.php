@@ -135,6 +135,8 @@ class PackageInstallCommandsTest extends TestCase
 
         $component = Livewire::test(ViewPackage::class, ['record' => $package->getRouteKey()])
             ->assertSee('Generate a token above')
+            ->assertSeeHtml('API token</a>')
+            ->assertSeeHtml('deploy token</a>')
             ->callAction(TestAction::make('generateToken')->schemaComponent('install'), ['name' => 'laptop'])
             ->assertHasNoActionErrors()
             ->assertNotified('Token created');

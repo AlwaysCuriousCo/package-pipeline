@@ -102,8 +102,9 @@ class AppServiceProvider extends ServiceProvider
      * the session before the first has written it, finds nothing, and then
      * saves its own stale copy over the top — so the toast is not merely late,
      * it is gone, and no later page load shows it either. An action that
-     * redirects is unaffected, which is why creating a token announced itself
-     * in production while rolling one did so only in development.
+     * redirects cannot be helped here at all — the next page load is the
+     * only place its toast can appear, so it has no response to ride in;
+     * anything whose toast must not be lost stays on the page (#27).
      *
      * So we read the notification before Filament's hook does and dispatch it
      * *with* its payload, to the `notificationSent` listener the component
