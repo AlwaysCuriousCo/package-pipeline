@@ -79,14 +79,31 @@
                 <div class="space-y-4 px-5 py-4">
                     <div>
                         <p class="mb-1 text-xs text-zinc-500 dark:text-zinc-400">1. Register this Composer repository (once per project)</p>
-                        <pre class="overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 text-sm text-zinc-100"><code>{{ $commands['repository'] }}</code></pre>
+                        <div class="relative">
+                            <pre data-copy title="Click to copy" class="cursor-pointer overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 pr-20 text-sm text-zinc-100"><code>{{ $commands['repository'] }}</code></pre>
+                            <button type="button" data-copy class="absolute top-2 right-2 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Copy</button>
+                        </div>
                     </div>
                     <div>
                         <p class="mb-1 text-xs text-zinc-500 dark:text-zinc-400">2. Require the package</p>
-                        <pre class="overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 text-sm text-zinc-100"><code>{{ $commands['require'] }}</code></pre>
+                        <div class="relative">
+                            <pre data-copy title="Click to copy" class="cursor-pointer overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 pr-20 text-sm text-zinc-100"><code>{{ $commands['require'] }}</code></pre>
+                            <button type="button" data-copy class="absolute top-2 right-2 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Copy</button>
+                        </div>
                     </div>
                 </div>
             </section>
+
+            <script>
+                document.querySelectorAll('[data-copy]').forEach((el) => el.addEventListener('click', () => {
+                    const wrapper = el.parentElement;
+                    navigator.clipboard.writeText(wrapper.querySelector('code').textContent.trim()).then(() => {
+                        const button = wrapper.querySelector('button');
+                        button.textContent = 'Copied';
+                        setTimeout(() => button.textContent = 'Copy', 1500);
+                    });
+                }));
+            </script>
         @endif
 
         @if ($latest)
