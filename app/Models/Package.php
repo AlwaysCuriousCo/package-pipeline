@@ -8,6 +8,7 @@ use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Exceptions\NameCollision;
 use App\Exceptions\VendorReserved;
+use App\Http\Controllers\Pages\PackageBadgeController;
 use App\Jobs\RefreshPackagePage;
 use App\Models\Concerns\LogsAuditableChanges;
 use App\Notifications\PackageAbandoned;
@@ -1446,6 +1447,20 @@ class Package extends Model
         [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
 
         return $this->servingRepository()->url('/p/'.$vendor.'/'.$name);
+    }
+
+    /**
+     * The markdown for pasting this package's badges into a README, one per
+     * kind, each linking back to the page.
+     */
+    public function badgeMarkdown(): string
+    {
+        $page = $this->pageUrl();
+
+        return implode(' ', array_map(
+            fn (string $kind): string => "[![{$kind}]({$page}/badge/{$kind}.svg)]({$page})",
+            PackageBadgeController::KINDS,
+        ));
     }
 
     /**

@@ -106,6 +106,13 @@ class PackageInfolist
                                 $record->pageRequiresAccess() => 'Readable by anyone. Archives and install commands are withheld — this package is served from a private repository.',
                                 default => 'Readable by anyone, with '.mb_strtolower($record->pageDownloads()->getLabel()).'.',
                             }),
+                        TextEntry::make('badges')
+                            ->label('README badges')
+                            ->visible(fn (Package $record): bool => $record->hasPage())
+                            ->state(fn (Package $record): string => $record->badgeMarkdown())
+                            ->fontFamily(FontFamily::Mono)
+                            ->copyable()
+                            ->helperText('Version, downloads, license and PHP badges as SVG. Paste into the repository\'s README.'),
                         TextEntry::make('page_source_path')
                             ->label('Page content')
                             ->visible(fn (Package $record): bool => $record->hasPage())

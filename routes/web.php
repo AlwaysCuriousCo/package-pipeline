@@ -11,6 +11,7 @@ use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\MerchantWebhookController;
 use App\Http\Controllers\Pages\PackageArchiveController;
 use App\Http\Controllers\Pages\PackageAssetController;
+use App\Http\Controllers\Pages\PackageBadgeController;
 use App\Http\Controllers\Pages\PackagePageController;
 use App\Http\Controllers\Pages\PricingController;
 use App\Http\Controllers\Pages\RepositoryPageController;
@@ -57,6 +58,12 @@ $pages = function (): void {
         ->where('package', '[^/]+')
         ->where('path', '.*')
         ->name('asset');
+
+    // A README badge: version, downloads, license or php. @see PackageBadgeController
+    Route::get('/p/{vendor}/{package}/badge/{kind}.svg', PackageBadgeController::class)
+        ->where('package', '[^/]+')
+        ->where('kind', '[a-z]+')
+        ->name('badge');
 
     // The archive a page's download button points at. No version segment
     // means the current release, which is the link worth pasting anywhere:
