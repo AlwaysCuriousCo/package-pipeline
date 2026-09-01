@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Ecosystem;
 use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
@@ -37,7 +38,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
+#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -58,6 +59,10 @@ class Package extends Model
     protected $attributes = [
         'webhook_enabled' => true,
         'abandoned' => false,
+        // Restated for the same reason: which protocol serves a package is
+        // asked of records built in memory — by the endpoints scoping their
+        // queries, by the factories — before the column default exists.
+        'ecosystem' => Ecosystem::Composer,
         // The page columns, restated for the same reason `abandoned` is: the
         // form reads them off a record it has just built, and a null where
         // the column says false is a toggle that renders indeterminate and an
@@ -118,6 +123,7 @@ class Package extends Model
     protected function casts(): array
     {
         return [
+            'ecosystem' => Ecosystem::class,
             'token' => 'encrypted',
             'webhook_secret' => 'encrypted',
             'webhook_enabled' => 'boolean',
@@ -631,6 +637,21 @@ class Package extends Model
                 'updated_at' => $timestamp,
             ]);
         }
+    }
+
+    /**
+     * Narrow to one protocol's packages — applied by every serving endpoint,
+     * so `composer` never resolves an npm package or the other way round.
+     *
+     * Qualified, because the Composer endpoints reach packages through the
+     * serving pivot and an unqualified `ecosystem` is ambiguous there.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeOfEcosystem(Builder $query, Ecosystem $ecosystem): Builder
+    {
+        return $query->where($query->qualifyColumn('ecosystem'), $ecosystem);
     }
 
     /**

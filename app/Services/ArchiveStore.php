@@ -79,11 +79,11 @@ class ArchiveStore
      * — so everything outside a conservative set becomes a hyphen rather than
      * being trusted to survive a Content-Disposition header intact.
      */
-    public static function downloadFilename(string $name, string $version): string
+    public static function downloadFilename(string $name, string $version, string $extension = 'zip'): string
     {
         $stem = preg_replace('/[^A-Za-z0-9._-]+/', '-', self::slug($name)."-{$version}") ?? 'archive';
 
-        return trim($stem, '-.').'.zip';
+        return trim($stem, '-.').".{$extension}";
     }
 
     /**
@@ -140,10 +140,15 @@ class ArchiveStore
      * The path is keyed by a fresh uuid rather than the git reference: a
      * re-stored version never overwrites a file a concurrent download may be
      * streaming — it writes a new one and leaves the old to archives:clean.
+     *
+     * $extension names what the bytes are — "zip" for Composer, "tgz" for an
+     * npm tarball. Cosmetic on the stored key (the sweeps reconcile by path,
+     * not by suffix), load-bearing nowhere, but a disk an operator browses
+     * should not lie about what its objects hold.
      */
-    public function store(PackageVersion $version, string $zip): void
+    public function store(PackageVersion $version, string $zip, string $extension = 'zip'): void
     {
-        $path = $this->under(self::PUBLISHED_PREFIX, "{$version->package->name}/".Str::uuid7().'.zip');
+        $path = $this->under(self::PUBLISHED_PREFIX, "{$version->package->name}/".Str::uuid7().".{$extension}");
 
         $this->write($path, $zip);
 

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\Ecosystem;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Models\Repository;
@@ -83,7 +84,7 @@ class CreateVersionFromZip
         // repository answers under this mount, and an upload addressed to that
         // name is a version of it rather than a second package with the same
         // name — which the serving pivot's unique index would refuse anyway.
-        $package = $repository->packages()->where('packages.name', $name)->first()
+        $package = $repository->packages()->ofEcosystem(Ecosystem::Composer)->where('packages.name', $name)->first()
             ?? Package::query()->create([
                 'repository_id' => $repository->id,
                 'name' => $name,

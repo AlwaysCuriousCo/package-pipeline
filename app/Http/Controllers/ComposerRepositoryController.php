@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\Ecosystem;
 use App\Events\PackageDownloaded;
 use App\Http\Middleware\ResolveComposerRepository;
 use App\Models\MirroredArchive;
@@ -557,6 +558,7 @@ class ComposerRepositoryController extends Controller
         $name = mb_strtolower("{$vendor}/".($dev ? substr($package, 0, -4) : $package));
 
         $record = $repository->packages()
+            ->ofEcosystem(Ecosystem::Composer)
             ->visibleTo($this->token($request), $repository)
             ->where('name', $name)
             ->first();
@@ -949,6 +951,7 @@ class ComposerRepositoryController extends Controller
         $repository = $this->repository($request);
 
         $record = $repository->packages()
+            ->ofEcosystem(Ecosystem::Composer)
             ->visibleTo($this->token($request), $repository)
             ->where('name', $name)
             ->first();
@@ -1135,7 +1138,7 @@ class ComposerRepositoryController extends Controller
         $repository = $this->repository($request);
         $name = mb_strtolower("{$vendor}/{$package}");
 
-        $existing = $repository->packages()->where('name', $name)->first();
+        $existing = $repository->packages()->ofEcosystem(Ecosystem::Composer)->where('name', $name)->first();
 
         abort_unless(
             $this->mayUploadTo($request, $repository, $existing),
@@ -1218,6 +1221,7 @@ class ComposerRepositoryController extends Controller
         $repository = $this->repository($request);
 
         return $repository->packages()
+            ->ofEcosystem(Ecosystem::Composer)
             ->visibleTo($this->token($request), $repository)
             ->has('versions')
             ->getQuery();

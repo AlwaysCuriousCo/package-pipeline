@@ -38,6 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->name('metrics');
 
             require __DIR__.'/../routes/composer.php';
+            require __DIR__.'/../routes/npm.php';
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -82,6 +83,11 @@ return Application::configure(basePath: dirname(__DIR__))
             fn (Request $request) => $request->is('api/*')
                 || $request->is('upload/*')
                 || $request->is('r/*/upload/*')
+                // The npm client reads errors out of JSON bodies the same way
+                // curl-driven CI does, and a publish failing validation must
+                // never answer with a redirect.
+                || $request->is('npm/*')
+                || $request->is('r/*/npm/*')
                 || $request->is('incoming/*')
                 // Composer sends no Accept header when it posts a package
                 // list, and a validation failure answered with a redirect
