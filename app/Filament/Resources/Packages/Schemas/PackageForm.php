@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\WebhookCoverage;
@@ -75,6 +76,7 @@ class PackageForm
                 self::pageEnabled(),
                 self::pageUrl(),
                 self::pageDownloadsSelect(),
+                self::pageBadgesSelect(),
                 self::pageInstall(),
                 self::pageVersions(),
                 self::pageType(),
@@ -143,6 +145,22 @@ class PackageForm
             ->helperText(fn (?Package $record): ?string => $record?->composerRepository?->public === false
                 ? 'No effect while this package is served from a private repository: the page offers no archives to anonymous visitors.'
                 : null);
+    }
+
+    /**
+     * Whether the page displays the package's own badges — for the README
+     * that does not embed them itself.
+     */
+    public static function pageBadgesSelect(): Radio
+    {
+        return Radio::make('page_badges')
+            ->label('Badges')
+            ->options(PageBadges::class)
+            ->descriptions(collect(PageBadges::cases())
+                ->mapWithKeys(fn (PageBadges $case): array => [$case->value => $case->description()])
+                ->all())
+            ->default(PageBadges::None)
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'));
     }
 
     public static function pageInstall(): Toggle

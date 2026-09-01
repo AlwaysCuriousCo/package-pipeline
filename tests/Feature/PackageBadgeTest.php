@@ -55,6 +55,21 @@ class PackageBadgeTest extends TestCase
         $this->get('/p/acme/widgets/badge/stars.svg')->assertNotFound();
     }
 
+    public function test_the_page_shows_badges_only_when_switched_on(): void
+    {
+        $package = $this->package();
+
+        $this->get('/p/acme/widgets')->assertDontSee('badge/version.svg');
+
+        $package->forceFill(['page_badges' => 'horizontal'])->save();
+
+        $this->get('/p/acme/widgets')->assertSee('badge/version.svg')->assertSee('badge/php.svg');
+
+        $package->forceFill(['page_badges' => 'vertical'])->save();
+
+        $this->get('/p/acme/widgets')->assertSee('badge/downloads.svg');
+    }
+
     public function test_badge_markdown_links_every_badge_to_the_page(): void
     {
         $markdown = $this->package()->badgeMarkdown();

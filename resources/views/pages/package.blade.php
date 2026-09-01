@@ -35,6 +35,14 @@
                 <p class="mt-4 text-lg text-zinc-600 dark:text-zinc-400">{{ $package->description }}</p>
             @endif
 
+            @if ($package->pageBadges() === \App\Enums\PageBadges::Horizontal)
+                <div class="mt-4 flex flex-wrap items-center gap-2">
+                    @foreach (\App\Http\Controllers\Pages\PackageBadgeController::KINDS as $kind)
+                        <img src="{{ $repository->url('/p/'.$package->name.'/badge/'.$kind.'.svg') }}" alt="{{ $kind }} badge" class="h-5">
+                    @endforeach
+                </div>
+            @endif
+
             @if (($package->page_type && $package->type) || ($package->page_source && filled($package->repository)))
                 <dl class="mt-6 flex flex-wrap gap-x-8 gap-y-3 text-sm text-zinc-500 dark:text-zinc-400">
                     @if ($package->page_type && $package->type)
@@ -53,6 +61,16 @@
                 </dl>
             @endif
         </header>
+
+        @if ($package->pageBadges() === \App\Enums\PageBadges::Vertical)
+            {{-- Floated, so the install and download sections flow beside it
+                 and share the row rather than being pushed below. --}}
+            <aside class="float-right mb-6 ml-6 flex flex-col items-start gap-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+                @foreach (\App\Http\Controllers\Pages\PackageBadgeController::KINDS as $kind)
+                    <img src="{{ $repository->url('/p/'.$package->name.'/badge/'.$kind.'.svg') }}" alt="{{ $kind }} badge" class="h-5">
+                @endforeach
+            </aside>
+        @endif
 
         @if ($package->pageRequiresAccess())
             {{-- What stands in for the install commands and the download
@@ -125,7 +143,7 @@
         @endif
 
         @if ($versions->isNotEmpty())
-            <section>
+            <section class="clear-both">
                 <h2 class="mb-3 text-sm font-semibold text-zinc-900 dark:text-white">Versions</h2>
 
                 <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">

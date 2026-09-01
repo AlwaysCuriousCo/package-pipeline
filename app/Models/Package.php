@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\SourceProvider;
@@ -36,7 +37,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
+#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -63,6 +64,7 @@ class Package extends Model
         // audit entry for a change nobody made.
         'page_enabled' => false,
         'page_downloads' => PageDownloads::None,
+        'page_badges' => PageBadges::None,
         'page_install' => true,
         'page_versions' => true,
         'page_type' => true,
@@ -102,7 +104,7 @@ class Package extends Model
             // when, is worth more here than anywhere else on the row. The
             // bodies are left off: they are content, and the log is a record
             // of decisions, not a revision history for markdown.
-            'page_enabled', 'page_downloads', 'page_install', 'page_versions',
+            'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions',
             // Audited with the rest rather than treated as cosmetic: this is
             // the switch that publishes the repository URL of a private
             // package to anonymous readers.
@@ -128,6 +130,7 @@ class Package extends Model
             'page_type' => 'boolean',
             'page_source' => 'boolean',
             'page_downloads' => PageDownloads::class,
+            'page_badges' => PageBadges::class,
             'page_body_source' => PageBodySource::class,
             'page_source_synced_at' => 'datetime',
         ];
@@ -1447,6 +1450,14 @@ class Package extends Model
         [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
 
         return $this->servingRepository()->url('/p/'.$vendor.'/'.$name);
+    }
+
+    /**
+     * How this page displays its own badges, if at all.
+     */
+    public function pageBadges(): PageBadges
+    {
+        return $this->page_badges ?? PageBadges::None;
     }
 
     /**
