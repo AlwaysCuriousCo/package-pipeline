@@ -2,9 +2,11 @@
 
 namespace App\Filament\Resources\Repositories\Schemas;
 
+use App\Enums\Ecosystem;
 use App\Models\Repository;
 use App\Models\ReservedVendor;
 use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -147,13 +149,19 @@ class RepositoryForm
                             ->maxLength(255)
                             ->placeholder('packagist.org')
                             ->helperText('A label for the admin. The URL is the identity.'),
+                        Select::make('ecosystem')
+                            ->options(Ecosystem::class)
+                            ->default(Ecosystem::Composer)
+                            ->required()
+                            ->native(false)
+                            ->helperText('Which protocol this upstream speaks — and therefore which of this repository\'s surfaces consults it.'),
                         TextInput::make('url')
                             ->label('Repository URL')
                             ->required()
                             ->url()
                             ->maxLength(255)
                             ->placeholder('https://repo.packagist.org')
-                            ->helperText('The root of a Composer v2 repository — the URL you would put in a project\'s composer.json.'),
+                            ->helperText('The root the protocol resolves from: a Composer v2 repository (https://repo.packagist.org), an npm registry (https://registry.npmjs.org), or a PEP 691 simple index (https://pypi.org/simple).'),
                         TextInput::make('token')
                             ->label('Access token')
                             ->password()

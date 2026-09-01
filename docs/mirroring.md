@@ -15,6 +15,12 @@ infrastructure you own. One URL resolves a project's whole dependency graph.
 It is **off** until you add an upstream. An installation with none behaves
 exactly as it always has, down to the last byte of every response.
 
+This document is written about Composer, which is where mirroring grew up,
+but an upstream carries an **ecosystem** and the npm and Python surfaces
+mirror through the same machinery under the same rules —
+[docs/ecosystems.md](ecosystems.md#mirroring-npmjsorg-and-pypiorg) covers
+what differs.
+
 > [!IMPORTANT]
 > Read [docs/dependency-confusion.md](dependency-confusion.md) first, and
 > reserve your vendor prefixes before you turn this on. Mirroring makes this

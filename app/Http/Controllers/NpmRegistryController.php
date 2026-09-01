@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Enums\Ecosystem;
 use App\Events\PackageDownloaded;
+use App\Models\MirroredArchive;
+use App\Models\MirroredPackage;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Models\Repository;
@@ -11,9 +13,12 @@ use App\Models\ReservedVendor;
 use App\Models\Token;
 use App\Services\ArchiveStore;
 use App\Services\CreateNpmVersion;
+use App\Services\Mirror\NpmMirror;
+use App\Support\NpmName;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -37,17 +42,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class NpmRegistryController extends Controller
 {
-    /**
-     * What this registry accepts as an npm package name: a bare lowercase
-     * segment or a scoped one. Deliberately disjoint from Composer's
-     * "vendor/name" shape — a slash only ever follows an @scope — which is
-     * what lets both ecosystems share one (repository_id, name) namespace
-     * without colliding. 214 is npm's own ceiling.
-     */
-    private const NAME_PATTERN = '/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/';
-
     public function __construct(
         private readonly ArchiveStore $archives,
+        private readonly NpmMirror $mirror,
     ) {}
 
     /**
@@ -59,11 +56,20 @@ class NpmRegistryController extends Controller
      * depend on them. ponytail: add the ETag/payload-cache pair from the
      * Composer surface when a registry serves enough npm traffic to feel it.
      */
-    public function packument(Request $request, string $name): JsonResponse
+    public function packument(Request $request, string $name): JsonResponse|Response
     {
         $repository = $this->repository($request);
+        $name = $this->resolvedName($name);
 
         $record = $this->servedPackage($request, $repository, $name);
+
+        // Only a name nothing local answers for falls through to the npm
+        // upstreams, and the mirror refuses again on its own terms — an
+        // invisible local package still 404s, and 404s without an upstream
+        // having been asked anything. @see ComposerRepositoryController
+        if (! $record instanceof Package) {
+            return $this->mirroredPackument($request, $repository, $name);
+        }
 
         $versions = [];
         $time = [];
@@ -147,8 +153,13 @@ class NpmRegistryController extends Controller
     public function tarball(Request $request, string $name, string $filename): StreamedResponse|RedirectResponse
     {
         $repository = $this->repository($request);
+        $name = $this->resolvedName($name);
 
         $record = $this->servedPackage($request, $repository, $name);
+
+        if (! $record instanceof Package) {
+            return $this->mirroredTarball($request, $repository, $name, $filename);
+        }
 
         // The filename is {basename}-{version}.tgz; the basename is known, so
         // what is left between it and the suffix is the version asked for.
@@ -204,19 +215,15 @@ class NpmRegistryController extends Controller
      */
     public function publish(Request $request, CreateNpmVersion $creator, string $name): JsonResponse
     {
-        $name = mb_strtolower(rawurldecode($name));
+        $name = $this->resolvedName($name);
 
-        abort_unless(
-            preg_match(self::NAME_PATTERN, $name) === 1 && strlen($name) <= 214,
-            400,
-            "\"{$name}\" is not a valid npm package name.",
-        );
+        abort_unless(NpmName::valid($name), 400, "\"{$name}\" is not a valid npm package name.");
 
         $document = $request->json()->all();
 
         if (($document['name'] ?? null) !== $name) {
             throw ValidationException::withMessages([
-                'name' => "The published document names \"".($document['name'] ?? '')."\", but the publish is addressed to \"{$name}\".",
+                'name' => 'The published document names "'.($document['name'] ?? '')."\", but the publish is addressed to \"{$name}\".",
             ]);
         }
 
@@ -335,26 +342,95 @@ class NpmRegistryController extends Controller
     }
 
     /**
-     * The npm package this repository serves under the name, refused with the
-     * same 404 whether it is absent or merely invisible to this principal.
+     * The one spelling this registry answers a URL's name under. Lowercased
+     * for the reason the Composer endpoints fold their URLs — the stored
+     * name is canonical and the lookup is an indexed equality — and
+     * rawurldecode()d for the client that sends a scoped name with its slash
+     * still encoded after the router declined to decode it.
      */
-    private function servedPackage(Request $request, Repository $repository, string $name): Package
+    private function resolvedName(string $name): string
     {
-        // Lowercased for the reason the Composer endpoints fold their URLs:
-        // the stored name is canonical and the lookup is an indexed equality.
-        // rawurldecode() for the client that sends a scoped name with its
-        // slash still encoded after the router declined to decode it.
-        $name = mb_strtolower(rawurldecode($name));
+        return mb_strtolower(rawurldecode($name));
+    }
 
-        $record = $repository->packages()
+    /**
+     * The npm package this repository serves under the name, or null — which
+     * the caller answers with the mirror, whose own refusals cover the rest.
+     */
+    private function servedPackage(Request $request, Repository $repository, string $name): ?Package
+    {
+        return $repository->packages()
             ->ofEcosystem(Ecosystem::Npm)
             ->visibleTo($this->token($request), $repository)
             ->where('name', $name)
             ->first();
+    }
 
-        abort_unless($record instanceof Package, 404, "Package {$name} is not served by this registry.");
+    /**
+     * A packument this repository does not publish, served from an npm
+     * upstream with its tarballs pointed back here.
+     *
+     * Word for word what a package that is simply not here says: nothing
+     * distinguishes "no upstream has it", "mirroring is off" and "the name
+     * is local but invisible to you".
+     */
+    private function mirroredPackument(Request $request, Repository $repository, string $name): Response
+    {
+        $mirrored = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->packument($repository, $name)
+            : null;
 
-        return $record;
+        abort_unless($mirrored instanceof MirroredPackage, 404, "Package {$name} is not served by this registry.");
+
+        return response($this->mirror->render($repository, $mirrored), 200, [
+            'Content-Type' => 'application/json',
+            'Cache-Control' => 'private, no-cache',
+            'Vary' => 'Authorization',
+        ]);
+    }
+
+    /**
+     * An upstream tarball, served from this registry's own disk — fetched,
+     * verified and stored on first request, exactly as the Composer mirror
+     * serves a dist. Downloads are not counted, for the reason the Composer
+     * mirror's are not: `total_downloads` is a statement about packages this
+     * registry publishes.
+     */
+    private function mirroredTarball(Request $request, Repository $repository, string $name, string $filename): StreamedResponse|RedirectResponse
+    {
+        $archive = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->tarball($repository, $name, $filename)
+            : null;
+
+        abort_unless($archive instanceof MirroredArchive, 404, "No tarball is stored for {$name}, and none could be mirrored.");
+
+        $path = (string) $archive->path;
+
+        $url = $this->archives->temporaryUrl($path, $filename);
+
+        if ($url !== null) {
+            return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
+        }
+
+        return $this->archives->disk()->download($path, $filename, [
+            'Content-Type' => 'application/octet-stream',
+            'Cache-Control' => 'private, max-age=31536000, immutable',
+        ]);
+    }
+
+    /**
+     * Whether this request's principal may be served mirrored content at all
+     * — the repository is the unit, for the reasons the Composer controller
+     * spells out on its own copy of this check.
+     *
+     * @see ComposerRepositoryController::mayReadMirrored()
+     */
+    private function mayReadMirrored(Request $request, Repository $repository): bool
+    {
+        return Repository::query()
+            ->whereKey($repository->getKey())
+            ->visibleTo($this->token($request))
+            ->exists();
     }
 
     /**

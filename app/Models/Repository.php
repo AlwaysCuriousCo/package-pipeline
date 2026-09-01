@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Ecosystem;
 use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\RepositoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -122,17 +123,25 @@ class Repository extends Model
     }
 
     /**
-     * The upstreams actually in play — the disabled ones keep their cache but
-     * are never reached for.
+     * The upstreams actually in play for one protocol surface — the disabled
+     * ones keep their cache but are never reached for.
+     *
+     * Composer by default, because every caller predates the other
+     * ecosystems and an upstream speaks exactly one protocol: consulting a
+     * Composer upstream for a packument would be asking packagist.org about
+     * lodash.
      *
      * @return Collection<int, Upstream>
      */
-    public function activeUpstreams(): Collection
+    public function activeUpstreams(Ecosystem $ecosystem = Ecosystem::Composer): Collection
     {
         // Memoised on the relation rather than re-queried, because this is
         // asked once per Composer request and the answer cannot change inside
         // one. `mirrors()` below asks it too.
-        return $this->upstreams->where('enabled', true)->values();
+        return $this->upstreams
+            ->where('enabled', true)
+            ->where('ecosystem', $ecosystem)
+            ->values();
     }
 
     /**
@@ -169,9 +178,9 @@ class Repository extends Model
      * there is nothing to consult, and every mirroring path returns before it
      * reaches the network.
      */
-    public function mirrors(): bool
+    public function mirrors(Ecosystem $ecosystem = Ecosystem::Composer): bool
     {
-        return $this->activeUpstreams()->isNotEmpty();
+        return $this->activeUpstreams($ecosystem)->isNotEmpty();
     }
 
     /**

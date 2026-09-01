@@ -217,7 +217,7 @@ npm config set @acme:registry https://packages.example.com/npm/
 pip config set global.extra-index-url https://__token__:pp_your-token@packages.example.com/pypi/simple/
 ```
 
-Both surfaces are publish-only (`npm publish`, `twine upload`) — CI pushes what it built, as with Composer artifact uploads. See **[docs/ecosystems.md](docs/ecosystems.md)** for configuration, publishing, and what is deliberately not implemented yet.
+Both surfaces are publish-only (`npm publish`, `twine upload`) — CI pushes what it built, as with Composer artifact uploads — and both can mirror their public registries: an upstream carries an ecosystem, so a repository can serve npmjs.org and pypi.org through the same cache-on-demand machinery, under the same local-package-always-wins rule, that mirrors packagist.org. See **[docs/ecosystems.md](docs/ecosystems.md)** for configuration, publishing, mirroring, and what is deliberately not implemented yet.
 
 ### Reserved vendors
 

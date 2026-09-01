@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Enums\Ecosystem;
 use App\Events\PackageDownloaded;
+use App\Models\MirroredArchive;
+use App\Models\MirroredPackage;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use App\Models\Repository;
@@ -11,6 +13,8 @@ use App\Models\ReservedVendor;
 use App\Models\Token;
 use App\Services\ArchiveStore;
 use App\Services\CreatePypiFile;
+use App\Services\Mirror\PypiMirror;
+use App\Support\PypiName;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -37,11 +41,6 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class PypiRegistryController extends Controller
 {
     /**
-     * A project name as PEP 508 admits it, checked before normalization.
-     */
-    private const NAME_PATTERN = '/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/';
-
-    /**
      * A distribution filename: what setuptools and wheel produce, and the one
      * string here that is interpolated into both HTML and storage paths.
      */
@@ -49,18 +48,8 @@ class PypiRegistryController extends Controller
 
     public function __construct(
         private readonly ArchiveStore $archives,
+        private readonly PypiMirror $mirror,
     ) {}
-
-    /**
-     * The one spelling a project name is stored and looked up under — PEP
-     * 503's: lowercase, with runs of dots, hyphens and underscores folded to
-     * one hyphen. pip normalizes before asking; this is the same fold for
-     * hand-typed URLs and for whatever twine was handed.
-     */
-    public static function normalize(string $name): string
-    {
-        return mb_strtolower((string) preg_replace('/[-_.]+/', '-', trim($name)));
-    }
 
     /**
      * The index root: every served project, one anchor each. pip only reads
@@ -90,7 +79,17 @@ class PypiRegistryController extends Controller
     public function project(Request $request, string $name): Response
     {
         $repository = $this->repository($request);
+        $name = PypiName::normalize($name);
+
         $record = $this->servedPackage($request, $repository, $name);
+
+        // Only a name nothing local answers for falls through to the PyPI
+        // upstreams, and the mirror refuses again on its own terms — an
+        // invisible local project still 404s, and 404s without an upstream
+        // having been asked anything.
+        if (! $record instanceof Package) {
+            return $this->mirroredProject($request, $repository, $name);
+        }
 
         $anchors = [];
 
@@ -121,7 +120,16 @@ class PypiRegistryController extends Controller
     public function file(Request $request, string $name, string $versionString, string $filename): StreamedResponse|RedirectResponse
     {
         $repository = $this->repository($request);
+        $name = PypiName::normalize($name);
+
         $record = $this->servedPackage($request, $repository, $name);
+
+        // A mirrored file's URL carries `-` where a local one carries its
+        // version — see PypiMirror::anchors() — but the fall-through does not
+        // hinge on that: any name nothing local answers for is the mirror's.
+        if (! $record instanceof Package) {
+            return $this->mirroredFile($request, $repository, $name, $filename);
+        }
 
         $version = $record->versions()->where('version', $versionString)->first();
 
@@ -169,7 +177,7 @@ class PypiRegistryController extends Controller
         $maxKilobytes = (int) config('registry.upload_max_megabytes') * 1024;
 
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255', 'regex:'.self::NAME_PATTERN],
+            'name' => ['required', 'string', 'max:255', 'regex:'.PypiName::PATTERN],
             'version' => ['required', 'string', 'max:255'],
             'content' => ['required', 'file', "max:{$maxKilobytes}"],
             'summary' => ['nullable', 'string', 'max:512'],
@@ -177,7 +185,7 @@ class PypiRegistryController extends Controller
             'sha256_digest' => ['nullable', 'string', 'size:64'],
         ]);
 
-        $name = self::normalize($validated['name']);
+        $name = PypiName::normalize($validated['name']);
         $file = $validated['content'];
         $filename = $file->getClientOriginalName();
 
@@ -301,17 +309,77 @@ class PypiRegistryController extends Controller
      * The Python package this repository serves under the name, refused with
      * the same 404 whether absent or merely invisible to this principal.
      */
-    private function servedPackage(Request $request, Repository $repository, string $name): Package
+    private function servedPackage(Request $request, Repository $repository, string $name): ?Package
     {
-        $record = $repository->packages()
+        return $repository->packages()
             ->ofEcosystem(Ecosystem::Pypi)
             ->visibleTo($this->token($request), $repository)
-            ->where('name', self::normalize($name))
+            ->where('name', $name)
             ->first();
+    }
 
-        abort_unless($record instanceof Package, 404, "Project {$name} is not served by this index.");
+    /**
+     * A project this index does not publish, served from a PyPI upstream
+     * with its verifiable files pointed back here. Nothing distinguishes "no
+     * upstream has it", "mirroring is off" and "the name is local but
+     * invisible to you".
+     */
+    private function mirroredProject(Request $request, Repository $repository, string $name): Response
+    {
+        $mirrored = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->project($repository, $name)
+            : null;
 
-        return $record;
+        $anchors = $mirrored instanceof MirroredPackage
+            ? $this->mirror->anchors($repository, $mirrored)
+            : [];
+
+        abort_if($anchors === [], 404, "Project {$name} is not served by this index.");
+
+        return $this->page("Links for {$name}", $anchors);
+    }
+
+    /**
+     * An upstream distribution file, served from this registry's own disk —
+     * fetched, sha256-verified and stored on first request. Downloads are
+     * not counted, for the reason no mirror's are: `total_downloads` is a
+     * statement about packages this registry publishes.
+     */
+    private function mirroredFile(Request $request, Repository $repository, string $name, string $filename): StreamedResponse|RedirectResponse
+    {
+        $archive = $this->mayReadMirrored($request, $repository)
+            ? $this->mirror->file($repository, $name, $filename)
+            : null;
+
+        abort_unless($archive instanceof MirroredArchive, 404, "No file named {$filename} is stored for {$name}, and none could be mirrored.");
+
+        $path = (string) $archive->path;
+
+        $url = $this->archives->temporaryUrl($path, $filename);
+
+        if ($url !== null) {
+            return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
+        }
+
+        return $this->archives->disk()->download($path, $filename, [
+            'Content-Type' => 'application/octet-stream',
+            'Cache-Control' => 'private, max-age=31536000, immutable',
+        ]);
+    }
+
+    /**
+     * Whether this request's principal may be served mirrored content at all
+     * — the repository is the unit, for the reasons the Composer controller
+     * spells out on its own copy of this check.
+     *
+     * @see ComposerRepositoryController::mayReadMirrored()
+     */
+    private function mayReadMirrored(Request $request, Repository $repository): bool
+    {
+        return Repository::query()
+            ->whereKey($repository->getKey())
+            ->visibleTo($this->token($request))
+            ->exists();
     }
 
     /**
