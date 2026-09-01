@@ -14,6 +14,34 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **npm and Python packages.** The same deployment now answers as an npm
+  registry (`/npm/`, with `npm publish` accepted) and a PEP 503 Python package
+  index (`/pypi/simple/`, with `twine upload` at `/pypi/legacy/`) — one URL and
+  one set of tokens for `composer`, `npm` and `pip`, on the same repository
+  mounts with the same visibility rules, archive storage and download
+  accounting. Both surfaces are publish-only: CI pushes what it built, as with
+  Composer artifact uploads. Packages carry an `ecosystem` (a new column,
+  defaulted so every existing row is Composer's), each protocol's endpoints
+  only ever see their own, and within one repository a name identifies one
+  package across ecosystems — a colliding publish is refused with a 409. Digests
+  are computed server-side from the received bytes, never echoed from the
+  client. See [docs/ecosystems.md](docs/ecosystems.md).
+
+- **npm and PyPI mirroring.** An upstream now carries an ecosystem, so a
+  repository can mirror registry.npmjs.org and pypi.org through the same
+  cache-on-demand machinery, retention (`mirror:prune`) and configuration that
+  mirror packagist.org — under the same unconditional rule: a name published
+  here in any ecosystem, or under a reserved vendor, is never answered from an
+  upstream. Tarballs and wheels are verified against the digest the upstream
+  published before they are stored; a file the upstream publishes without one
+  keeps the upstream's own URL. The PyPI mirror requires the upstream to speak
+  PEP 691 JSON (pypi.org and every serious proxy do). Existing upstream rows
+  are unaffected: they default to Composer.
+
+- **Badges on package pages.** A package page can display its own badges,
+  horizontally under the description or floated in a side panel — for the
+  README that does not embed them itself. Off by default, per package.
+
 - **Public pages.** A package or a repository can publish a page anyone can read
   — no account, no token, no Composer. A package page shows the description, the
   repository's `package-page.md` or `README.md`, the install commands, the
