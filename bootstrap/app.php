@@ -39,6 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
             require __DIR__.'/../routes/composer.php';
             require __DIR__.'/../routes/npm.php';
+            require __DIR__.'/../routes/pypi.php';
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -88,6 +89,10 @@ return Application::configure(basePath: dirname(__DIR__))
                 // never answer with a redirect.
                 || $request->is('npm/*')
                 || $request->is('r/*/npm/*')
+                // twine prints the response body of a failed upload; JSON it
+                // can show beats a redirect it cannot follow.
+                || $request->is('pypi/*')
+                || $request->is('r/*/pypi/*')
                 || $request->is('incoming/*')
                 // Composer sends no Accept header when it posts a package
                 // list, and a validation failure answered with a redirect

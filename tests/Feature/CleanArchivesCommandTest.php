@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\Ecosystem;
 use App\Models\Package;
 use App\Models\PackageVersion;
 use Illuminate\Contracts\Filesystem\Filesystem;
@@ -103,6 +104,34 @@ class CleanArchivesCommandTest extends TestCase
             ->assertSuccessful();
 
         $disk->assertExists('packages/acme/widgets/01931f00-committing.zip');
+    }
+
+    /**
+     * A Python version's `archive_path` only names its most recently stored
+     * file; the sdist beside the wheel is referenced from metadata alone and
+     * must not read as an orphan. @see CreatePypiFile
+     */
+    public function test_clean_spares_a_python_versions_earlier_files(): void
+    {
+        $disk = $this->disk();
+        $disk->put('packages/widgets/sdist.tar.gz', 'sdist-bytes');
+        $this->age('packages/widgets/sdist.tar.gz');
+
+        PackageVersion::factory()
+            ->for(Package::factory()->create(['name' => 'widgets', 'ecosystem' => Ecosystem::Pypi]))
+            ->create([
+                'archive_path' => 'packages/acme/widgets/kept.zip',
+                'metadata' => [
+                    'files' => [
+                        ['filename' => 'widgets-1.0.0.tar.gz', 'path' => 'packages/widgets/sdist.tar.gz', 'sha256' => hash('sha256', 'sdist-bytes')],
+                    ],
+                ],
+            ]);
+
+        $this->artisan('archives:clean')->assertSuccessful();
+
+        $disk->assertExists('packages/widgets/sdist.tar.gz');
+        $disk->assertMissing('packages/acme/widgets/orphan.zip');
     }
 
     public function test_clean_reports_when_nothing_is_orphaned(): void

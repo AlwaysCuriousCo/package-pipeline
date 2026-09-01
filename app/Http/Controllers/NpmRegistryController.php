@@ -232,7 +232,17 @@ class NpmRegistryController extends Controller
 
         $repository = $this->repository($request);
 
-        $existing = $repository->packages()->ofEcosystem(Ecosystem::Npm)->where('packages.name', $name)->first();
+        $existing = $repository->packages()->where('packages.name', $name)->first();
+
+        // ponytail: names are unique per repository across ecosystems — an
+        // unscoped npm name can collide with a PyPI project's — so the wrong
+        // ecosystem's package refuses the name rather than tripping the
+        // unique index; scope the indexes by ecosystem if that bites.
+        abort_if(
+            $existing instanceof Package && $existing->ecosystem !== Ecosystem::Npm,
+            409,
+            "\"{$name}\" is already served by this repository as a {$existing?->ecosystem->value} package; one repository answers for one package per name.",
+        );
 
         abort_unless(
             $this->mayPublishTo($request, $repository, $existing),
