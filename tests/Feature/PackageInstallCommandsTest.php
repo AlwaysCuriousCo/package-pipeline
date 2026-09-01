@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\Ecosystem;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Models\Package;
 use App\Models\Repository;
@@ -31,6 +32,33 @@ class PackageInstallCommandsTest extends TestCase
             'composer config repositories.'.Str::slug(config('app.name')).' composer '.rtrim(url('/'), '/'),
             $commands['repository'],
         );
+    }
+
+    public function test_an_npm_package_points_its_scope_at_the_registry(): void
+    {
+        $scoped = Package::factory()->create(['name' => '@acme/ui', 'ecosystem' => Ecosystem::Npm]);
+
+        $this->assertSame([
+            'repository' => 'npm config set @acme:registry '.rtrim(url('/'), '/').'/npm/',
+            'require' => 'npm install @acme/ui',
+        ], $scoped->installCommands());
+
+        $bare = Package::factory()->create(['name' => 'widgets', 'ecosystem' => Ecosystem::Npm]);
+
+        $this->assertSame(
+            'npm config set registry '.rtrim(url('/'), '/').'/npm/',
+            $bare->installCommands()['repository'],
+        );
+    }
+
+    public function test_a_python_package_adds_the_index_beside_pypi_org(): void
+    {
+        $package = Package::factory()->create(['name' => 'widgets', 'ecosystem' => Ecosystem::Pypi]);
+
+        $this->assertSame([
+            'repository' => 'pip config set global.extra-index-url '.rtrim(url('/'), '/').'/pypi/simple/',
+            'require' => 'pip install widgets',
+        ], $package->installCommands());
     }
 
     public function test_an_unreleased_package_prefers_its_default_dev_branch(): void

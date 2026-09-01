@@ -2,6 +2,8 @@
 
 namespace App\Enums;
 
+use Filament\Support\Contracts\HasLabel;
+
 /**
  * Which package manager's protocol a package is published under.
  *
@@ -12,9 +14,18 @@ namespace App\Enums;
  * a Composer name is "vendor/name", an npm name is "@scope/name" or a bare
  * single segment, and NpmRegistryController refuses anything else.
  */
-enum Ecosystem: string
+enum Ecosystem: string implements HasLabel
 {
     case Composer = 'composer';
     case Npm = 'npm';
     case Pypi = 'pypi';
+
+    public function getLabel(): string
+    {
+        return match ($this) {
+            self::Composer => 'Composer',
+            self::Npm => 'npm',
+            self::Pypi => 'PyPI',
+        };
+    }
 }

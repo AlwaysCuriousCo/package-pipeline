@@ -1348,12 +1348,40 @@ class Package extends Model
 
     /**
      * The commands a consuming project runs to install this package, keyed by
-     * a short label describing each step.
+     * a short label describing each step: point the client at this registry,
+     * then require the package — whichever client this package's ecosystem
+     * means.
      *
      * @return array<string, string>
      */
     public function installCommands(): array
     {
+        $repository = $this->servingRepository();
+
+        if ($this->ecosystem === Ecosystem::Npm) {
+            // A scoped package only needs its scope pointed here, which is
+            // the configuration to prefer: everything else keeps resolving
+            // from npmjs.org. An unscoped one can only be reached by moving
+            // the whole registry.
+            $scope = str_starts_with((string) $this->name, '@')
+                ? Str::before((string) $this->name, '/').':'
+                : '';
+
+            return [
+                'repository' => "npm config set {$scope}registry ".$repository->url('/npm/'),
+                'require' => "npm install {$this->name}",
+            ];
+        }
+
+        if ($this->ecosystem === Ecosystem::Pypi) {
+            return [
+                // extra-index-url rather than index-url, so pypi.org stays
+                // beside this registry instead of being replaced by it.
+                'repository' => 'pip config set global.extra-index-url '.$repository->url('/pypi/simple/'),
+                'require' => "pip install {$this->name}",
+            ];
+        }
+
         $require = $this->name;
 
         if ($constraint = $this->suggestedConstraint()) {
@@ -1364,7 +1392,7 @@ class Package extends Model
             // Which entry in the consumer's composer.json this repository
             // claims, and what it is pointed at, is the repository's own
             // decision — the same line its landing page prints.
-            'repository' => $this->servingRepository()->configureCommand(),
+            'repository' => $repository->configureCommand(),
             'require' => "composer require {$require}",
         ];
     }
@@ -1448,7 +1476,11 @@ class Package extends Model
      */
     public function hasPage(): bool
     {
-        return (bool) $this->page_enabled;
+        // The page routes address /p/{vendor}/{package}, so a name with no
+        // slash — an unscoped npm package, any Python project — has no URL a
+        // page could answer at. The switch is kept rather than refused, so a
+        // scoped rename later publishes what the admin already chose.
+        return (bool) $this->page_enabled && str_contains((string) $this->name, '/');
     }
 
     /**
@@ -1844,7 +1876,9 @@ class Package extends Model
      */
     public function scopeWithPage(Builder $query): Builder
     {
-        return $query->where('page_enabled', true);
+        // The slash for the reason hasPage() asks for one: a name without it
+        // has no page URL, and the sitemap must not emit a link to nowhere.
+        return $query->where('page_enabled', true)->whereLike('name', '%/%');
     }
 
     /**
