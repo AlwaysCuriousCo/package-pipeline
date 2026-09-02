@@ -82,6 +82,7 @@ class PackageForm
                 self::pageType(),
                 self::pageSource(),
                 self::pageImage(),
+                self::sponsorPlan(),
                 self::pageBodySource(),
                 self::pageBodyPath(),
                 self::pageBody(),
@@ -269,6 +270,28 @@ class PackageForm
             ->placeholder('https://example.com/package-card.png')
             ->helperText('Shown when the page is linked in Slack, a post or a chat. Around 1200×630 works everywhere. '
                 .'Empty uses the registry-wide default.');
+    }
+
+    /**
+     * The plan the page offers as sponsorship — a "sponsor this package"
+     * button per active price, one-time and recurring alike, through the
+     * ordinary checkout. A plan granting no entitlements is the usual choice;
+     * the billing layer treats that as a plan like any other.
+     */
+    public static function sponsorPlan(): Select
+    {
+        return Select::make('sponsor_plan_id')
+            ->label('Sponsorship plan')
+            ->relationship(
+                'sponsorPlan',
+                'name',
+                fn ($query) => $query->where('active', true)->orderBy('name'),
+            )
+            ->placeholder('None — no sponsor button')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled') && (bool) config('registry.billing.enabled'))
+            ->helperText('The page shows a sponsor button for each of the plan\'s active prices. '
+                .'A plan with a one-time price and a monthly price offers both, GitHub-Sponsors style. '
+                .'Nothing is shown while the plan has no active price.');
     }
 
     /**

@@ -38,7 +38,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
+#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image', 'sponsor_plan_id'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -114,6 +114,9 @@ class Package extends Model
             // the switch that publishes the repository URL of a private
             // package to anonymous readers.
             'page_source',
+            // A commercial decision: which plan the page asks strangers to
+            // sponsor the package through.
+            'sponsor_plan_id',
         ];
     }
 
@@ -290,6 +293,36 @@ class Package extends Model
     public function source(): BelongsTo
     {
         return $this->belongsTo(Source::class);
+    }
+
+    /**
+     * The plan this package's page offers as sponsorship, when one is set.
+     *
+     * A plain plan like any other — its prices are what the sponsor buttons
+     * sell, one-time and recurring alike — usually granting nothing, which the
+     * billing layer already treats as a plan rather than a special case.
+     *
+     * @return BelongsTo<Plan, $this>
+     */
+    public function sponsorPlan(): BelongsTo
+    {
+        return $this->belongsTo(Plan::class, 'sponsor_plan_id');
+    }
+
+    /**
+     * The plan the page's sponsor section renders, or null when there is
+     * nothing a stranger could buy right now — the section disappears rather
+     * than offering a dead button.
+     */
+    public function pageSponsorPlan(): ?Plan
+    {
+        if (! config('registry.billing.enabled') || $this->sponsor_plan_id === null) {
+            return null;
+        }
+
+        $plan = $this->sponsorPlan;
+
+        return $plan !== null && $plan->purchasable() ? $plan : null;
     }
 
     /**
