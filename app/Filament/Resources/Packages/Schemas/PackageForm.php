@@ -82,7 +82,7 @@ class PackageForm
                 self::pageType(),
                 self::pageSource(),
                 self::pageImage(),
-                self::sponsorPlan(),
+                self::sponsorPlans(),
                 self::pageBodySource(),
                 self::pageBodyPath(),
                 self::pageBody(),
@@ -273,25 +273,27 @@ class PackageForm
     }
 
     /**
-     * The plan the page offers as sponsorship — a "sponsor this package"
-     * button per active price, one-time and recurring alike, through the
-     * ordinary checkout. A plan granting no entitlements is the usual choice;
-     * the billing layer treats that as a plan like any other.
+     * The plans the page offers as sponsorship tiers, each selling its own
+     * prices — one-time and recurring alike — through the ordinary checkout.
+     * A tier granting no entitlements is a pure donation; one with
+     * entitlements is a perk (say, gold sponsors get a private package), and
+     * the billing layer treats both as plans like any other.
      */
-    public static function sponsorPlan(): Select
+    public static function sponsorPlans(): Select
     {
-        return Select::make('sponsor_plan_id')
-            ->label('Sponsorship plan')
+        return Select::make('sponsorPlans')
+            ->label('Sponsorship tiers')
+            ->multiple()
             ->relationship(
-                'sponsorPlan',
+                'sponsorPlans',
                 'name',
-                fn ($query) => $query->where('active', true)->orderBy('name'),
+                fn ($query) => $query->where('active', true)->orderBy('sort')->orderBy('name'),
             )
-            ->placeholder('None — no sponsor button')
+            ->placeholder('None — no sponsor section')
             ->visible(fn (Get $get): bool => (bool) $get('page_enabled') && (bool) config('registry.billing.enabled'))
-            ->helperText('The page shows a sponsor button for each of the plan\'s active prices. '
-                .'A plan with a one-time price and a monthly price offers both, GitHub-Sponsors style. '
-                .'Nothing is shown while the plan has no active price.');
+            ->helperText('Each plan chosen here is one tier, shown with a button per active price — '
+                .'GitHub-Sponsors style. A plan with entitlements makes a perk-bearing tier; tiers appear '
+                .'in the plans\' own sort order, and one with no active price is not shown.');
     }
 
     /**

@@ -138,33 +138,41 @@
             </section>
         @endif
 
-        @if ($sponsor)
+        @if ($sponsors->isNotEmpty())
             <section class="mb-10 rounded-xl border border-pink-200 dark:border-pink-950">
                 <h2 class="border-b border-pink-200 px-5 py-3 text-sm font-semibold text-pink-700 dark:border-pink-950 dark:text-pink-300">
                     ♥ Sponsor this package
                 </h2>
                 <div class="divide-y divide-zinc-100 dark:divide-zinc-900">
-                    @foreach ($sponsor->activePrices as $price)
-                        <div class="flex items-center justify-between gap-4 px-5 py-4">
-                            <p class="font-medium text-zinc-900 dark:text-white">
-                                {{ $price->display() }}
-                                <span class="ml-2 text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                                    {{ $price->interval->recurring() ? 'recurring' : 'one-time' }}
-                                </span>
-                            </p>
+                    @foreach ($sponsors as $tier)
+                        <div class="px-5 py-4">
+                            {{-- The tier links to the plan's own public page,
+                                 which already lists what it grants — that page
+                                 is where a perk-bearing tier explains itself. --}}
+                            <h3 class="font-medium text-zinc-900 dark:text-white">
+                                <a href="{{ route('pages.pricing.plan', $tier) }}" class="underline-offset-2 hover:underline">{{ $tier->name }}</a>
+                            </h3>
 
-                            @auth
-                                <form method="POST" action="{{ route('billing.checkout', $price) }}">
-                                    @csrf
-                                    <button type="submit" class="rounded-lg bg-pink-600 px-4 py-2 text-sm font-medium text-white hover:bg-pink-500">
-                                        Sponsor
-                                    </button>
-                                </form>
-                            @else
-                                <a href="{{ config('registry.billing.public_signup') ? route('billing.register') : route('filament.admin.auth.login') }}" class="rounded-lg bg-pink-600 px-4 py-2 text-sm font-medium text-white hover:bg-pink-500">
-                                    Sign {{ config('registry.billing.public_signup') ? 'up' : 'in' }} to sponsor
-                                </a>
-                            @endauth
+                            @if (filled($tier->description))
+                                <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{{ $tier->description }}</p>
+                            @endif
+
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                @foreach ($tier->activePrices as $price)
+                                    @auth
+                                        <form method="POST" action="{{ route('billing.checkout', $price) }}">
+                                            @csrf
+                                            <button type="submit" class="rounded-lg bg-pink-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pink-500">
+                                                {{ $price->display() }}{{ $price->interval->recurring() ? '' : ' once' }}
+                                            </button>
+                                        </form>
+                                    @else
+                                        <a href="{{ config('registry.billing.public_signup') ? route('billing.register') : route('filament.admin.auth.login') }}" class="rounded-lg bg-pink-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pink-500">
+                                            {{ $price->display() }}{{ $price->interval->recurring() ? '' : ' once' }}
+                                        </a>
+                                    @endauth
+                                @endforeach
+                            </div>
                         </div>
                     @endforeach
                 </div>
