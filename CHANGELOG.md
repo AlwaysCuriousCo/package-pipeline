@@ -38,6 +38,18 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   PEP 691 JSON (pypi.org and every serious proxy do). Existing upstream rows
   are unaffected: they default to Composer.
 
+- **Package sponsorship.** A package page can ask its readers to sponsor the
+  package, GitHub-Sponsors style: any number of tiers, each an ordinary billing
+  plan attached to the package (**Sponsorship tiers** on the package form),
+  shown with one checkout button per active price — one-time and recurring
+  alike, through the same merchant checkout every plan sells by. A tier that
+  grants nothing is a pure donation; one with entitlements is a perk (gold
+  sponsors get a private package, say) and the existing entitlement machinery
+  grants it on payment, no special case anywhere. Each tier links to the plan's
+  own public page, which already lists what it grants. The section appears only
+  while billing is enabled and the tier has an active price a stranger could
+  buy. Requires nothing of an operator not using it.
+
 - **Badges on package pages.** A package page can display its own badges,
   horizontally under the description or floated in a side panel — for the
   README that does not embed them itself. Off by default, per package.
