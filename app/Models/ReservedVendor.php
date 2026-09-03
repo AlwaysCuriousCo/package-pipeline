@@ -67,11 +67,13 @@ class ReservedVendor extends Model
      *
      * Accepts what an operator is likely to type: the bare vendor, the pattern
      * form Composer uses in `exclude` (`acme/*`), or a whole package name — all
-     * of which mean the same claim.
+     * of which mean the same claim. An npm scope is the same vendor spelt
+     * `@acme/ui`, so the `@` goes too: a reservation of `acme` must close
+     * `@acme/*` on the npm surface, or it is no defence there at all.
      */
     public static function normalize(string $vendor): string
     {
-        return mb_strtolower(trim(Str::before(trim($vendor), '/')));
+        return mb_strtolower(trim(ltrim(Str::before(trim($vendor), '/'), '@')));
     }
 
     /**

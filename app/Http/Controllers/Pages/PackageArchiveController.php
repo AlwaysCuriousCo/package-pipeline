@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Pages;
 
+use App\Enums\Ecosystem;
 use App\Enums\PageDownloads;
 use App\Events\PackageDownloaded;
 use App\Http\Controllers\Controller;
@@ -80,7 +81,12 @@ class PackageArchiveController extends Controller
             "No archive is stored for {$found->name}@{$release->version}.",
         );
 
-        $filename = ArchiveStore::downloadFilename($found->name, $release->version);
+        // An npm version is stored as the tarball `npm publish` sent, and a
+        // Composer one as the zip Composer expects; a page never serves a
+        // Python project (@see Package::hasPage()).
+        $npm = $found->ecosystem === Ecosystem::Npm;
+
+        $filename = ArchiveStore::downloadFilename($found->name, $release->version, $npm ? 'tgz' : 'zip');
 
         // Only an archive actually being served counts, and only a GET:
         // Laravel answers HEAD on every GET route and drops the body far below
@@ -103,7 +109,7 @@ class PackageArchiveController extends Controller
         }
 
         return $disk->download($release->archive_path, $filename, [
-            'Content-Type' => 'application/zip',
+            'Content-Type' => $npm ? 'application/gzip' : 'application/zip',
             // Public bytes at a stable address, so a shared cache is welcome
             // to keep them: a version's archive never changes, and the URL
             // names the version rather than a row id.

@@ -174,6 +174,17 @@ class NpmMirroringTest extends TestCase
         $this->getJson('/npm/lodash')->assertNotFound();
     }
 
+    public function test_a_reserved_vendor_closes_its_npm_scope_too(): void
+    {
+        $repository = $this->mirroring();
+
+        // Reserved the Composer way, as `acme` — the same vendor npm spells @acme.
+        $repository->reservedVendors()->create(['vendor' => 'acme']);
+
+        $this->getJson('/npm/@acme%2fui')->assertNotFound();
+        $this->getJson('/npm/@acme/ui')->assertNotFound();
+    }
+
     public function test_a_composer_upstream_is_not_consulted_for_npm(): void
     {
         $repository = Repository::default();

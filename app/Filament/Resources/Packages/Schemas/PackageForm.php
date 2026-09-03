@@ -169,7 +169,7 @@ class PackageForm
         return Toggle::make('page_install')
             ->label('Show install commands')
             ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
-            ->helperText('The two `composer config` and `composer require` lines, exactly as the panel shows them.');
+            ->helperText('The registry setup and install lines for the package\'s ecosystem — `composer config` and `composer require`, or their npm and pip equivalents — exactly as the panel shows them.');
     }
 
     public static function pageType(): Toggle
