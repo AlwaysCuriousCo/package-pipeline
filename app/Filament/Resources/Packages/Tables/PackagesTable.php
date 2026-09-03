@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Tables;
 
+use App\Enums\Ecosystem;
 use App\Filament\Resources\Packages\Actions\ExportDownloadsAction;
 use App\Filament\Resources\Packages\Actions\QueueSyncsBulkAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
@@ -42,6 +43,12 @@ class PackagesTable
                         filled($record->replacement_package) => "Abandoned — use {$record->replacement_package} instead.",
                         default => 'Abandoned.',
                     }),
+                // Only worth a glance once a registry serves more than
+                // Composer, which is why it hides itself until then.
+                TextColumn::make('ecosystem')
+                    ->badge()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('repository')
                     ->label('Repository')
                     ->searchable()
@@ -140,6 +147,9 @@ class PackagesTable
                     ->preload(),
                 SelectFilter::make('type')
                     ->options(fn (): array => Package::types())
+                    ->multiple(),
+                SelectFilter::make('ecosystem')
+                    ->options(Ecosystem::class)
                     ->multiple(),
                 Filter::make('unreleased')
                     ->label('Unreleased only')

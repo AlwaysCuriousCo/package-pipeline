@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\Ecosystem;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Models\Package;
@@ -209,6 +210,27 @@ class PublicPackagePageTest extends TestCase
 
         // The history is not reachable by editing the URL.
         $this->get('/p/acme/widgets/download/v1.0.0')->assertNotFound();
+    }
+
+    public function test_an_npm_page_labels_and_serves_its_tarball_as_one(): void
+    {
+        $this->fakeArchives();
+        $this->package([
+            'name' => '@acme/widgets',
+            'ecosystem' => Ecosystem::Npm,
+            'page_downloads' => PageDownloads::Latest,
+            'page_install' => true,
+        ]);
+
+        $this->get('/p/@acme/widgets')
+            ->assertOk()
+            ->assertSee('Point npm at this registry')
+            ->assertDontSee('Composer repository');
+
+        $this->get('/p/@acme/widgets/download')
+            ->assertOk()
+            ->assertHeader('Content-Type', 'application/gzip')
+            ->assertDownload('widgets-v1.1.0.tgz');
     }
 
     public function test_every_version_is_downloadable_when_that_is_what_was_chosen(): void

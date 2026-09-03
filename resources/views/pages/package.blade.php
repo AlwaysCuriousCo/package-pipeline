@@ -35,6 +35,14 @@
                 <p class="mt-4 text-lg text-zinc-600 dark:text-zinc-400">{{ $package->description }}</p>
             @endif
 
+            @if ($package->pageBadges() === \App\Enums\PageBadges::Horizontal)
+                <div class="mt-4 flex flex-wrap items-center gap-2">
+                    @foreach (\App\Http\Controllers\Pages\PackageBadgeController::KINDS as $kind)
+                        <img src="{{ $repository->url('/p/'.$package->name.'/badge/'.$kind.'.svg') }}" alt="{{ $kind }} badge" class="h-5">
+                    @endforeach
+                </div>
+            @endif
+
             @if (($package->page_type && $package->type) || ($package->page_source && filled($package->repository)))
                 <dl class="mt-6 flex flex-wrap gap-x-8 gap-y-3 text-sm text-zinc-500 dark:text-zinc-400">
                     @if ($package->page_type && $package->type)
@@ -53,6 +61,16 @@
                 </dl>
             @endif
         </header>
+
+        @if ($package->pageBadges() === \App\Enums\PageBadges::Vertical)
+            {{-- Floated, so the install and download sections flow beside it
+                 and share the row rather than being pushed below. --}}
+            <aside class="float-right mb-6 ml-6 flex flex-col items-start gap-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+                @foreach (\App\Http\Controllers\Pages\PackageBadgeController::KINDS as $kind)
+                    <img src="{{ $repository->url('/p/'.$package->name.'/badge/'.$kind.'.svg') }}" alt="{{ $kind }} badge" class="h-5">
+                @endforeach
+            </aside>
+        @endif
 
         @if ($package->pageRequiresAccess())
             {{-- What stands in for the install commands and the download
@@ -78,15 +96,32 @@
 
                 <div class="space-y-4 px-5 py-4">
                     <div>
-                        <p class="mb-1 text-xs text-zinc-500 dark:text-zinc-400">1. Register this Composer repository (once per project)</p>
-                        <pre class="overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 text-sm text-zinc-100"><code>{{ $commands['repository'] }}</code></pre>
+                        <p class="mb-1 text-xs text-zinc-500 dark:text-zinc-400">1. Point {{ $package->ecosystem->getLabel() }} at this registry (once per project)</p>
+                        <div class="relative">
+                            <pre data-copy title="Click to copy" class="cursor-pointer overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 pr-20 text-sm text-zinc-100"><code>{{ $commands['repository'] }}</code></pre>
+                            <button type="button" data-copy class="absolute top-2 right-2 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Copy</button>
+                        </div>
                     </div>
                     <div>
                         <p class="mb-1 text-xs text-zinc-500 dark:text-zinc-400">2. Require the package</p>
-                        <pre class="overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 text-sm text-zinc-100"><code>{{ $commands['require'] }}</code></pre>
+                        <div class="relative">
+                            <pre data-copy title="Click to copy" class="cursor-pointer overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 pr-20 text-sm text-zinc-100"><code>{{ $commands['require'] }}</code></pre>
+                            <button type="button" data-copy class="absolute top-2 right-2 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Copy</button>
+                        </div>
                     </div>
                 </div>
             </section>
+
+            <script>
+                document.querySelectorAll('[data-copy]').forEach((el) => el.addEventListener('click', () => {
+                    const wrapper = el.parentElement;
+                    navigator.clipboard.writeText(wrapper.querySelector('code').textContent.trim()).then(() => {
+                        const button = wrapper.querySelector('button');
+                        button.textContent = 'Copied';
+                        setTimeout(() => button.textContent = 'Copy', 1500);
+                    });
+                }));
+            </script>
         @endif
 
         @if ($latest)
@@ -103,12 +138,53 @@
             </section>
         @endif
 
+        @if ($sponsors->isNotEmpty())
+            <section class="mb-10 rounded-xl border border-pink-200 dark:border-pink-950">
+                <h2 class="border-b border-pink-200 px-5 py-3 text-sm font-semibold text-pink-700 dark:border-pink-950 dark:text-pink-300">
+                    ♥ Sponsor this package
+                </h2>
+                <div class="divide-y divide-zinc-100 dark:divide-zinc-900">
+                    @foreach ($sponsors as $tier)
+                        <div class="px-5 py-4">
+                            {{-- The tier links to the plan's own public page,
+                                 which already lists what it grants — that page
+                                 is where a perk-bearing tier explains itself. --}}
+                            <h3 class="font-medium text-zinc-900 dark:text-white">
+                                <a href="{{ route('pages.pricing.plan', $tier) }}" class="underline-offset-2 hover:underline">{{ $tier->name }}</a>
+                            </h3>
+
+                            @if (filled($tier->description))
+                                <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{{ $tier->description }}</p>
+                            @endif
+
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                @foreach ($tier->activePrices as $price)
+                                    @auth
+                                        <form method="POST" action="{{ route('billing.checkout', $price) }}">
+                                            @csrf
+                                            <button type="submit" class="rounded-lg bg-pink-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pink-500">
+                                                {{ $price->display() }}{{ $price->interval->recurring() ? '' : ' once' }}
+                                            </button>
+                                        </form>
+                                    @else
+                                        <a href="{{ config('registry.billing.public_signup') ? route('billing.register') : route('filament.admin.auth.login') }}" class="rounded-lg bg-pink-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-pink-500">
+                                            {{ $price->display() }}{{ $price->interval->recurring() ? '' : ' once' }}
+                                        </a>
+                                    @endauth
+                                @endforeach
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            </section>
+        @endif
+
         @if ($body)
             <section class="markdown mb-12">{!! $body !!}</section>
         @endif
 
         @if ($versions->isNotEmpty())
-            <section>
+            <section class="clear-both">
                 <h2 class="mb-3 text-sm font-semibold text-zinc-900 dark:text-white">Versions</h2>
 
                 <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">

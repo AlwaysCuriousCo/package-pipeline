@@ -9,6 +9,7 @@ use App\Filament\Pages\ApiTokens;
 use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Filament\Resources\Sources\SourceResource;
+use App\Http\Controllers\Pages\PackageBadgeController;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
@@ -24,6 +25,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\HtmlString;
 
 class PackageInfolist
 {
@@ -106,6 +108,20 @@ class PackageInfolist
                                 $record->pageRequiresAccess() => 'Readable by anyone. Archives and install commands are withheld — this package is served from a private repository.',
                                 default => 'Readable by anyone, with '.mb_strtolower($record->pageDownloads()->getLabel()).'.',
                             }),
+                        TextEntry::make('badges')
+                            ->label('README badges')
+                            ->visible(fn (Package $record): bool => $record->hasPage())
+                            // The badges themselves, not their markdown: an
+                            // admin wants to see what a README will show, and
+                            // the click hands over the markdown to paste.
+                            ->state(fn (Package $record): HtmlString => new HtmlString(implode(' ', array_map(
+                                fn (string $kind): string => '<img src="'.e($record->pageUrl().'/badge/'.$kind.'.svg').'" alt="'.e($kind).'" class="inline" />',
+                                PackageBadgeController::KINDS,
+                            ))))
+                            ->copyable()
+                            ->copyableState(fn (Package $record): string => $record->badgeMarkdown())
+                            ->copyMessage('Markdown copied')
+                            ->helperText('Click to copy the markdown for the repository\'s README.'),
                         TextEntry::make('page_source_path')
                             ->label('Page content')
                             ->visible(fn (Package $record): bool => $record->hasPage())

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\Ecosystem;
 use App\Filament\Resources\Repositories\Pages\CreateRepository;
 use App\Filament\Resources\Repositories\Pages\EditRepository;
 use App\Filament\Resources\Repositories\Pages\ListRepositories;
@@ -77,6 +78,7 @@ class RepositoryResourceTest extends TestCase
                 'name' => 'packagist.org',
                 'url' => 'https://repo.packagist.org/',
                 'token' => 'upstream-secret',
+                'ecosystem' => Ecosystem::Composer->value,
                 'enabled' => true,
             ]]])
             ->call('save')

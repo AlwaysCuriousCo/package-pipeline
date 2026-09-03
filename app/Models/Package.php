@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Enums\Ecosystem;
+use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Exceptions\NameCollision;
 use App\Exceptions\VendorReserved;
+use App\Http\Controllers\Pages\PackageBadgeController;
 use App\Jobs\RefreshPackagePage;
 use App\Models\Concerns\LogsAuditableChanges;
 use App\Notifications\PackageAbandoned;
@@ -35,7 +38,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
+#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -56,12 +59,17 @@ class Package extends Model
     protected $attributes = [
         'webhook_enabled' => true,
         'abandoned' => false,
+        // Restated for the same reason: which protocol serves a package is
+        // asked of records built in memory — by the endpoints scoping their
+        // queries, by the factories — before the column default exists.
+        'ecosystem' => Ecosystem::Composer,
         // The page columns, restated for the same reason `abandoned` is: the
         // form reads them off a record it has just built, and a null where
         // the column says false is a toggle that renders indeterminate and an
         // audit entry for a change nobody made.
         'page_enabled' => false,
         'page_downloads' => PageDownloads::None,
+        'page_badges' => PageBadges::None,
         'page_install' => true,
         'page_versions' => true,
         'page_type' => true,
@@ -101,7 +109,7 @@ class Package extends Model
             // when, is worth more here than anywhere else on the row. The
             // bodies are left off: they are content, and the log is a record
             // of decisions, not a revision history for markdown.
-            'page_enabled', 'page_downloads', 'page_install', 'page_versions',
+            'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions',
             // Audited with the rest rather than treated as cosmetic: this is
             // the switch that publishes the repository URL of a private
             // package to anonymous readers.
@@ -115,6 +123,7 @@ class Package extends Model
     protected function casts(): array
     {
         return [
+            'ecosystem' => Ecosystem::class,
             'token' => 'encrypted',
             'webhook_secret' => 'encrypted',
             'webhook_enabled' => 'boolean',
@@ -127,6 +136,7 @@ class Package extends Model
             'page_type' => 'boolean',
             'page_source' => 'boolean',
             'page_downloads' => PageDownloads::class,
+            'page_badges' => PageBadges::class,
             'page_body_source' => PageBodySource::class,
             'page_source_synced_at' => 'datetime',
         ];
@@ -280,6 +290,41 @@ class Package extends Model
     public function source(): BelongsTo
     {
         return $this->belongsTo(Source::class);
+    }
+
+    /**
+     * The sponsorship tiers this package's page offers: plans like any other,
+     * each selling its own prices — one-time and recurring alike. A tier that
+     * grants nothing is a pure donation; one with entitlements is a perk, and
+     * the billing layer treats both as ordinary plans.
+     *
+     * @return BelongsToMany<Plan, $this>
+     */
+    public function sponsorPlans(): BelongsToMany
+    {
+        return $this->belongsToMany(Plan::class, 'package_sponsor_plan');
+    }
+
+    /**
+     * The tiers the page's sponsor section renders, in the plans' own sort
+     * order, each with its buyable prices loaded. A tier nobody could buy
+     * right now is left out rather than shown as a dead button.
+     *
+     * @return Collection<int, Plan>
+     */
+    public function pageSponsorPlans(): Collection
+    {
+        if (! config('registry.billing.enabled')) {
+            return new Collection;
+        }
+
+        return $this->sponsorPlans()
+            ->where('active', true)
+            ->orderBy('sort')
+            ->with('activePrices')
+            ->get()
+            ->filter(fn (Plan $plan): bool => $plan->activePrices->isNotEmpty())
+            ->values();
     }
 
     /**
@@ -627,6 +672,21 @@ class Package extends Model
                 'updated_at' => $timestamp,
             ]);
         }
+    }
+
+    /**
+     * Narrow to one protocol's packages — applied by every serving endpoint,
+     * so `composer` never resolves an npm package or the other way round.
+     *
+     * Qualified, because the Composer endpoints reach packages through the
+     * serving pivot and an unqualified `ecosystem` is ambiguous there.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeOfEcosystem(Builder $query, Ecosystem $ecosystem): Builder
+    {
+        return $query->where($query->qualifyColumn('ecosystem'), $ecosystem);
     }
 
     /**
@@ -1323,12 +1383,40 @@ class Package extends Model
 
     /**
      * The commands a consuming project runs to install this package, keyed by
-     * a short label describing each step.
+     * a short label describing each step: point the client at this registry,
+     * then require the package — whichever client this package's ecosystem
+     * means.
      *
      * @return array<string, string>
      */
     public function installCommands(): array
     {
+        $repository = $this->servingRepository();
+
+        if ($this->ecosystem === Ecosystem::Npm) {
+            // A scoped package only needs its scope pointed here, which is
+            // the configuration to prefer: everything else keeps resolving
+            // from npmjs.org. An unscoped one can only be reached by moving
+            // the whole registry.
+            $scope = str_starts_with((string) $this->name, '@')
+                ? Str::before((string) $this->name, '/').':'
+                : '';
+
+            return [
+                'repository' => "npm config set {$scope}registry ".$repository->url('/npm/'),
+                'require' => "npm install {$this->name}",
+            ];
+        }
+
+        if ($this->ecosystem === Ecosystem::Pypi) {
+            return [
+                // extra-index-url rather than index-url, so pypi.org stays
+                // beside this registry instead of being replaced by it.
+                'repository' => 'pip config set global.extra-index-url '.$repository->url('/pypi/simple/'),
+                'require' => "pip install {$this->name}",
+            ];
+        }
+
         $require = $this->name;
 
         if ($constraint = $this->suggestedConstraint()) {
@@ -1339,7 +1427,7 @@ class Package extends Model
             // Which entry in the consumer's composer.json this repository
             // claims, and what it is pointed at, is the repository's own
             // decision — the same line its landing page prints.
-            'repository' => $this->servingRepository()->configureCommand(),
+            'repository' => $repository->configureCommand(),
             'require' => "composer require {$require}",
         ];
     }
@@ -1423,7 +1511,11 @@ class Package extends Model
      */
     public function hasPage(): bool
     {
-        return (bool) $this->page_enabled;
+        // The page routes address /p/{vendor}/{package}, so a name with no
+        // slash — an unscoped npm package, any Python project — has no URL a
+        // page could answer at. The switch is kept rather than refused, so a
+        // scoped rename later publishes what the admin already chose.
+        return (bool) $this->page_enabled && str_contains((string) $this->name, '/');
     }
 
     /**
@@ -1446,6 +1538,28 @@ class Package extends Model
         [$vendor, $name] = explode('/', (string) $this->name, 2) + ['', ''];
 
         return $this->servingRepository()->url('/p/'.$vendor.'/'.$name);
+    }
+
+    /**
+     * How this page displays its own badges, if at all.
+     */
+    public function pageBadges(): PageBadges
+    {
+        return $this->page_badges ?? PageBadges::None;
+    }
+
+    /**
+     * The markdown for pasting this package's badges into a README, one per
+     * kind, each linking back to the page.
+     */
+    public function badgeMarkdown(): string
+    {
+        $page = $this->pageUrl();
+
+        return implode(' ', array_map(
+            fn (string $kind): string => "[![{$kind}]({$page}/badge/{$kind}.svg)]({$page})",
+            PackageBadgeController::KINDS,
+        ));
     }
 
     /**
@@ -1797,7 +1911,9 @@ class Package extends Model
      */
     public function scopeWithPage(Builder $query): Builder
     {
-        return $query->where('page_enabled', true);
+        // The slash for the reason hasPage() asks for one: a name without it
+        // has no page URL, and the sitemap must not emit a link to nowhere.
+        return $query->where('page_enabled', true)->whereLike('name', '%/%');
     }
 
     /**

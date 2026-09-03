@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\Ecosystem;
 use App\Models\PackageVersion;
 use App\Services\ArchiveStore;
 use Illuminate\Console\Command;
@@ -58,9 +59,26 @@ class CleanArchives extends Command
         $disk = $archives->disk();
         $dryRun = (bool) $this->option('dry-run');
 
+        // A Python version holds several files — an sdist and its wheels —
+        // and `archive_path` only ever names the most recently stored one;
+        // the rest are referenced from the row's metadata and must not read
+        // as orphans. @see CreatePypiFile
+        $pypiFiles = PackageVersion::query()
+            ->whereHas('package', fn ($query) => $query->where('ecosystem', Ecosystem::Pypi))
+            ->pluck('metadata')
+            ->flatMap(function (mixed $metadata): array {
+                $decoded = is_string($metadata) ? json_decode($metadata, true) : $metadata;
+
+                return array_values(array_filter(
+                    array_column((array) (((array) $decoded)['files'] ?? []), 'path'),
+                    is_string(...),
+                ));
+            });
+
         $referenced = PackageVersion::query()
             ->whereNotNull('archive_path')
             ->pluck('archive_path')
+            ->merge($pypiFiles)
             ->flip();
 
         $unreferenced = array_filter(

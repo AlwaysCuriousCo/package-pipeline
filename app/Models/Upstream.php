@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Ecosystem;
 use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\UpstreamFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -25,7 +26,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @see docs/mirroring.md
  */
-#[Fillable(['name', 'url', 'token', 'enabled', 'position'])]
+#[Fillable(['name', 'url', 'token', 'ecosystem', 'enabled', 'position'])]
 class Upstream extends Model
 {
     /** @use HasFactory<UpstreamFactory> */
@@ -43,6 +44,9 @@ class Upstream extends Model
     protected $attributes = [
         'enabled' => true,
         'position' => 0,
+        // Restated for the same reason: which surface consults an upstream is
+        // read off rows built in memory, by the factories among others.
+        'ecosystem' => Ecosystem::Composer,
     ];
 
     /**
@@ -55,7 +59,7 @@ class Upstream extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'url', 'enabled', 'repository_id'];
+        return ['name', 'url', 'ecosystem', 'enabled', 'repository_id'];
     }
 
     /**
@@ -66,6 +70,7 @@ class Upstream extends Model
         return [
             'token' => 'encrypted',
             'enabled' => 'boolean',
+            'ecosystem' => Ecosystem::class,
         ];
     }
 

@@ -42,6 +42,7 @@ class PackagePageController extends Controller
             'latest' => $downloads->offersAny() ? $package->pageLatestVersion() : null,
             'versions' => $package->page_versions ? $package->pageVersions() : collect(),
             'commands' => $package->pageShowsInstall() ? $package->installCommands() : null,
+            'sponsors' => $package->pageSponsorPlans(),
             'schema' => PageSchema::package($package),
         ]);
     }

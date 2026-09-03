@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\WebhookCoverage;
@@ -75,11 +76,13 @@ class PackageForm
                 self::pageEnabled(),
                 self::pageUrl(),
                 self::pageDownloadsSelect(),
+                self::pageBadgesSelect(),
                 self::pageInstall(),
                 self::pageVersions(),
                 self::pageType(),
                 self::pageSource(),
                 self::pageImage(),
+                self::sponsorPlans(),
                 self::pageBodySource(),
                 self::pageBodyPath(),
                 self::pageBody(),
@@ -145,12 +148,28 @@ class PackageForm
                 : null);
     }
 
+    /**
+     * Whether the page displays the package's own badges — for the README
+     * that does not embed them itself.
+     */
+    public static function pageBadgesSelect(): Radio
+    {
+        return Radio::make('page_badges')
+            ->label('Badges')
+            ->options(PageBadges::class)
+            ->descriptions(collect(PageBadges::cases())
+                ->mapWithKeys(fn (PageBadges $case): array => [$case->value => $case->description()])
+                ->all())
+            ->default(PageBadges::None)
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'));
+    }
+
     public static function pageInstall(): Toggle
     {
         return Toggle::make('page_install')
             ->label('Show install commands')
             ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
-            ->helperText('The two `composer config` and `composer require` lines, exactly as the panel shows them.');
+            ->helperText('The registry setup and install lines for the package\'s ecosystem — `composer config` and `composer require`, or their npm and pip equivalents — exactly as the panel shows them.');
     }
 
     public static function pageType(): Toggle
@@ -251,6 +270,30 @@ class PackageForm
             ->placeholder('https://example.com/package-card.png')
             ->helperText('Shown when the page is linked in Slack, a post or a chat. Around 1200×630 works everywhere. '
                 .'Empty uses the registry-wide default.');
+    }
+
+    /**
+     * The plans the page offers as sponsorship tiers, each selling its own
+     * prices — one-time and recurring alike — through the ordinary checkout.
+     * A tier granting no entitlements is a pure donation; one with
+     * entitlements is a perk (say, gold sponsors get a private package), and
+     * the billing layer treats both as plans like any other.
+     */
+    public static function sponsorPlans(): Select
+    {
+        return Select::make('sponsorPlans')
+            ->label('Sponsorship tiers')
+            ->multiple()
+            ->relationship(
+                'sponsorPlans',
+                'name',
+                fn ($query) => $query->where('active', true)->orderBy('sort')->orderBy('name'),
+            )
+            ->placeholder('None — no sponsor section')
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled') && (bool) config('registry.billing.enabled'))
+            ->helperText('Each plan chosen here is one tier, shown with a button per active price — '
+                .'GitHub-Sponsors style. A plan with entitlements makes a perk-bearing tier; tiers appear '
+                .'in the plans\' own sort order, and one with no active price is not shown.');
     }
 
     /**

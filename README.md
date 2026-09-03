@@ -208,6 +208,17 @@ Access is decided by the mount rather than by the package: a package added to a 
 
 See **[docs/shared-packages.md](docs/shared-packages.md)**.
 
+### npm and Python packages
+
+The same deployment also answers as an npm registry and a PEP 503 Python package index — one URL and one set of tokens for `composer`, `npm` and `pip`, on the same repository mounts with the same visibility rules:
+
+```bash
+npm config set @acme:registry https://packages.example.com/npm/
+pip config set global.extra-index-url https://__token__:pp_your-token@packages.example.com/pypi/simple/
+```
+
+Both surfaces are publish-only (`npm publish`, `twine upload`) — CI pushes what it built, as with Composer artifact uploads — and both can mirror their public registries: an upstream carries an ecosystem, so a repository can serve npmjs.org and pypi.org through the same cache-on-demand machinery, under the same local-package-always-wins rule, that mirrors packagist.org. See **[docs/ecosystems.md](docs/ecosystems.md)** for configuration, publishing, mirroring, and what is deliberately not implemented yet.
+
 ### Reserved vendors
 
 Each repository can reserve vendor prefixes — `acme`, meaning every `acme/…` name. Only that repository may then introduce a package under it, whether through the panel, the API, `package:add`, an artifact upload, or a sync adopting the name a repository's `composer.json` declares. Packages published under the vendor before it was reserved keep working; a reservation governs what may be *introduced*.
@@ -449,6 +460,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/dependency-confusion.md](docs/dependency-confusion.md) — reserving vendor prefixes here, and the Composer configuration each consuming project needs so a public package cannot win a private name.
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
+- [docs/ecosystems.md](docs/ecosystems.md) — serving npm and Python packages beside Composer: client configuration, publishing, name rules, and what is not implemented yet.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/merchant-drivers.md](docs/merchant-drivers.md) — adding a payment merchant other than Stripe: the driver contract, the rules a translation must keep, and what shared machinery a driver inherits.
 - [docs/licensing.md](docs/licensing.md) — the license report, what a version declaring none means, and the CycloneDX SBOM export: its shape, the choices behind it, and what was verified against the spec.
