@@ -319,6 +319,16 @@ return [
     | escaped rather than rendered and javascript: URLs are dropped, the same
     | as for a package's README. Empty leaves no footer at all.
     |
+    | `pages.access_notice` is what a private package's page says where the
+    | install commands and download buttons would be. The default states the
+    | fact and stops there, which is the right answer for an internal registry
+    | and the wrong one for a registry that sells: the visitor who reads it is
+    | a buyer standing in front of a locked door, so this is the one piece of
+    | copy on a public page worth writing yourself. The body is inline
+    | markdown, so it can link at a pricing page, a plan or a contact form.
+    | Both empty removes the notice, which leaves a private package's page
+    | describing something a visitor is given no way to install.
+    |
     */
 
     'page_image' => env('PAGE_IMAGE'),
@@ -330,6 +340,10 @@ return [
         'max_asset_kilobytes' => (int) env('PAGE_MAX_ASSET_KB', 4096),
         'sitemap' => (bool) env('PAGE_SITEMAP', true),
         'footer' => (string) env('PAGE_FOOTER', 'Served by '.env('APP_NAME', 'package-pipeline').' — a private Composer registry.'),
+        'access_notice' => [
+            'heading' => (string) env('PAGE_ACCESS_HEADING', 'Access required'),
+            'body' => (string) env('PAGE_ACCESS_BODY', 'This package is served from a private repository. Installing it needs an access token for '.env('APP_NAME', 'package-pipeline').'; ask whoever administers this registry for one.'),
+        ],
     ],
 
     'mirror' => [

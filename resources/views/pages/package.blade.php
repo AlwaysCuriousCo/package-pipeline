@@ -72,7 +72,14 @@
             </aside>
         @endif
 
-        @if ($package->pageRequiresAccess())
+        @php
+            $notice = $package->pageRequiresAccess() ? [
+                'heading' => trim((string) config('registry.pages.access_notice.heading')),
+                'body' => trim((string) config('registry.pages.access_notice.body')),
+            ] : ['heading' => '', 'body' => ''];
+        @endphp
+
+        @if (filled($notice['heading']) || filled($notice['body']))
             {{-- What stands in for the install commands and the download
                  buttons on a package whose repository is private. The page
                  still describes the package — that is the whole point of
@@ -80,13 +87,25 @@
                  credential says so plainly instead of sending a visitor to a
                  401 that reads as the registry being broken.
 
+                 The copy is PAGE_ACCESS_HEADING / PAGE_ACCESS_BODY, because
+                 the visitor reading it on a registry that sells is a buyer,
+                 not an employee who mislaid a token. The body is inline
+                 markdown so it can link at wherever access is bought.
+
                  This block is where a "request access" form will go. --}}
             <section class="mb-10 rounded-xl border border-amber-200 bg-amber-50/60 p-5 dark:border-amber-900 dark:bg-amber-950/40">
-                <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">Access required</h2>
-                <p class="mt-1 text-sm text-amber-800 dark:text-amber-300">
-                    This package is served from a private repository. Installing it needs an access token
-                    for {{ config('app.name') }}; ask whoever administers this registry for one.
-                </p>
+                @if (filled($notice['heading']))
+                    <h2 class="text-sm font-semibold text-amber-900 dark:text-amber-200">{{ $notice['heading'] }}</h2>
+                @endif
+
+                @if (filled($notice['body']))
+                    {{-- ponytail: one paragraph — inline markdown drops block
+                         structure. Switch to Str::markdown() if a seller wants
+                         several. --}}
+                    <p class="mt-1 text-sm text-amber-800 [&_a]:font-medium [&_a]:underline [&_a]:underline-offset-2 dark:text-amber-300">
+                        {!! Str::inlineMarkdown($notice['body'], ['html_input' => 'escape', 'allow_unsafe_links' => false]) !!}
+                    </p>
+                @endif
             </section>
         @endif
 
