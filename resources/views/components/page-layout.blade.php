@@ -92,9 +92,14 @@
             {{ $slot }}
         </main>
 
-        <footer class="mt-16 border-t border-zinc-200 pt-6 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-500">
-            Served by {{ config('app.name') }} — a private Composer registry.
-        </footer>
+        {{-- Inline markdown so an installation can sign its pages with a
+             link, and escaped/unsafe-link-refused for the same reason a
+             README is. Set PAGE_FOOTER; empty leaves no footer. --}}
+        @if (filled($footer = trim((string) config('registry.pages.footer'))))
+            <footer class="mt-16 border-t border-zinc-200 pt-6 text-xs text-zinc-500 [&_a]:underline [&_a]:underline-offset-2 hover:[&_a]:text-zinc-900 dark:border-zinc-800 dark:text-zinc-500 dark:hover:[&_a]:text-zinc-100">
+                {!! Str::inlineMarkdown($footer, ['html_input' => 'escape', 'allow_unsafe_links' => false]) !!}
+            </footer>
+        @endif
     </div>
 </body>
 </html>

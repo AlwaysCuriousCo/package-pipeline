@@ -153,4 +153,21 @@ class PublicRepositoryPageTest extends TestCase
             ->assertOk()
             ->assertDontSee('<loc>', false);
     }
+
+    public function test_the_footer_is_configurable_and_may_carry_a_link(): void
+    {
+        Repository::default()->update(['public' => true, 'page_enabled' => true]);
+
+        config(['registry.pages.footer' => 'Built by [Acme](https://acme.example) <script>x</script>']);
+
+        $this->get('/')
+            ->assertSee('<a href="https://acme.example"', false)
+            ->assertSee('&lt;script&gt;', false)
+            ->assertDontSee('<script>x</script>', false);
+
+        // Empty leaves no footer at all rather than an empty rule above one.
+        config(['registry.pages.footer' => '']);
+
+        $this->get('/')->assertDontSee('<footer', false);
+    }
 }

@@ -313,6 +313,12 @@ return [
     | reachable and unlisted — the right answer for a registry whose pages are
     | for people who were sent the link rather than for search.
     |
+    | `pages.footer` is the line at the bottom of every public page. Inline
+    | markdown, so an installation can sign its pages with a link —
+    | `PAGE_FOOTER="Built by [Acme](https://acme.example)"`. Raw HTML is
+    | escaped rather than rendered and javascript: URLs are dropped, the same
+    | as for a package's README. Empty leaves no footer at all.
+    |
     */
 
     'page_image' => env('PAGE_IMAGE'),
@@ -323,6 +329,7 @@ return [
         'asset_cache_minutes' => (int) env('PAGE_ASSET_CACHE_MINUTES', 1440),
         'max_asset_kilobytes' => (int) env('PAGE_MAX_ASSET_KB', 4096),
         'sitemap' => (bool) env('PAGE_SITEMAP', true),
+        'footer' => (string) env('PAGE_FOOTER', 'Served by '.env('APP_NAME', 'package-pipeline').' — a private Composer registry.'),
     ],
 
     'mirror' => [
