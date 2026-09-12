@@ -172,7 +172,9 @@ is withheld:
 - no download links, whatever **Downloads** is set to;
 - no install commands, because the tokenless pair sends a visitor to a `401`
   that reads as the registry being broken;
-- an **Access required** notice in their place.
+- an **Access required** notice in their place — its heading and body are
+  `PAGE_ACCESS_HEADING` and `PAGE_ACCESS_BODY`, so a registry that sells can say
+  what access costs and link at where it is bought.
 
 The **Downloads** setting is kept rather than cleared, so making the repository
 public later restores what you chose.
@@ -227,6 +229,8 @@ read by some crawlers as permission to crawl everything.
 | --- | --- |
 | `PAGE_IMAGE` | Social preview image for every page that has not set one of its own. An absolute URL or a path relative to the app root. Around 1200×630. |
 | `PAGE_SITEMAP` | Publish `/sitemap.xml` and an indexing `/robots.txt` (default `true`). |
+| `PAGE_FOOTER` | The line at the bottom of every public page. Inline markdown, so it can carry a link — `PAGE_FOOTER="Built by [Acme](https://acme.example)"`. Raw HTML is escaped and `javascript:` URLs dropped, as in a package body. Empty leaves no footer. Defaults to `Served by <app name> — a private Composer registry.` |
+| `PAGE_ACCESS_HEADING` / `PAGE_ACCESS_BODY` | The notice a private package's page shows in place of its install commands and download buttons (defaults: `Access required`, and a line telling the visitor to ask an administrator for a token). The body is inline markdown, so a registry that sells can link at a pricing page or a form. Both empty removes the notice. |
 | `PAGE_MARKDOWN_CACHE_MINUTES` | How long a rendered body is reused (default `1440`). Keyed by a hash of the markdown, so a sync that changes the file changes the key. `0` turns it off. |
 | `PAGE_MAX_BODY_KB` | Largest body stored or rendered (default `512`). |
 | `PAGE_ASSET_CACHE_MINUTES` | How long an image fetched from a repository is kept (default `1440`). Keyed by ref and path, so a release that changes an image publishes the new one. `0` means one provider request per image per visitor. |

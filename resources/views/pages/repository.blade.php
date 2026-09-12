@@ -15,13 +15,11 @@
             <p class="mt-4 text-lg text-zinc-600 dark:text-zinc-400">{{ $repository->description }}</p>
         @endif
 
-        <p class="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
-            @if ($repository->public)
-                A public Composer repository — readable without a token.
-            @else
+        @unless ($repository->public)
+            <p class="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
                 A private Composer repository. Installing from it needs an access token.
-            @endif
-        </p>
+            </p>
+        @endunless
     </header>
 
     <section class="mb-10 rounded-xl border border-zinc-200 dark:border-zinc-800">

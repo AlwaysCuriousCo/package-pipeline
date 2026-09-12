@@ -179,6 +179,27 @@ class PublicPackagePageTest extends TestCase
         $response->assertDontSee('/p/acme/widgets/download');
     }
 
+    public function test_the_access_notice_is_configurable_copy(): void
+    {
+        $this->package([], publicRepository: false);
+
+        config([
+            'registry.pages.access_notice.heading' => 'Get access',
+            'registry.pages.access_notice.body' => 'See [plans](https://acme.example/pricing). <script>x</script>',
+        ]);
+
+        $this->get('/p/acme/widgets')
+            ->assertSee('Get access')
+            ->assertSee('<a href="https://acme.example/pricing"', false)
+            ->assertSee('&lt;script&gt;', false)
+            ->assertDontSee('Access required');
+
+        // Cleared entirely, the notice goes rather than leaving an empty box.
+        config(['registry.pages.access_notice' => ['heading' => '', 'body' => '']]);
+
+        $this->get('/p/acme/widgets')->assertDontSee('Access required');
+    }
+
     public function test_a_private_package_hands_out_no_archive_however_it_was_configured(): void
     {
         $this->fakeArchives();
