@@ -15,6 +15,11 @@ return [
     */
 
     'github' => [
+        // OAuth app for "Sign in with GitHub". Seeding creates the matching
+        // authentication source when both values are set.
+        'client_id' => env('GITHUB_CLIENT_ID'),
+        'client_secret' => env('GITHUB_CLIENT_SECRET'),
+
         // Last-resort token, used only for packages with neither a connected
         // source nor a token of their own.
         'token' => env('GITHUB_TOKEN'),
@@ -37,6 +42,12 @@ return [
             // turns auto-sync on for App-connected sources; see docs/webhooks.md.
             'webhook_secret' => env('GITHUB_APP_WEBHOOK_SECRET'),
         ],
+    ],
+
+    'google' => [
+        // OAuth client for "Sign in with Google", same deal as GitHub above.
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
     ],
 
     'postmark' => [
