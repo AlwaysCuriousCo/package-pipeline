@@ -19,3 +19,5 @@
 
 @source '../../../../app/Filament/**/*';
 @source '../../../../resources/views/filament/**/*';
+/* Blade components the panel's own views render — x-copy-line and friends. */
+@source '../../../../resources/views/components/**/*';

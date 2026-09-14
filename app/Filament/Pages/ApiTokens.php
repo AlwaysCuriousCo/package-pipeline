@@ -64,12 +64,15 @@ class ApiTokens extends Page implements HasTable
     {
         return $table
             ->query(fn (): Builder => $this->user()->tokens()->getQuery())
+            ->defaultSort('created_at', 'desc')
             ->columns(AccessTokenResource::tokenColumns())
             ->recordActions([
                 AccessTokenResource::revokeAction(),
             ])
+            ->emptyStateIcon(Heroicon::OutlinedKey)
             ->emptyStateHeading('No API tokens')
-            ->emptyStateDescription('Create one to let a Composer client authenticate against this registry.');
+            ->emptyStateDescription('Create one to let a Composer client authenticate against this registry.')
+            ->emptyStateActions([$this->createTokenAction()]);
     }
 
     /**
@@ -78,60 +81,71 @@ class ApiTokens extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('create')
-                ->label('Create token')
-                ->icon(Heroicon::OutlinedPlus)
-                ->modalHeading('Create an API token')
-                ->modalDescription('The token is shown once, right after it is created.')
-                ->schema([
-                    TextInput::make('name')
-                        ->required()
-                        ->maxLength(255)
-                        ->placeholder('ci-deploy')
-                        ->helperText('What this token is for — shown in listings, and how you will recognise it later.'),
-                    TextInput::make('username')
-                        ->maxLength(255)
-                        ->placeholder(fn (): string => $this->user()->email)
-                        ->helperText('The username written into auth.json. Only the token authenticates, so this is yours to choose; leave it empty for your email.'),
-                    CheckboxList::make('abilities')
-                        ->options(fn (): array => $this->issuableAbilities())
-                        ->default([TokenAbility::RepositoryRead->value])
-                        ->required()
-                        // The options are what this account's role permits, and
-                        // the browser is under no obligation to post them:
-                        // Livewire state arrives from the client like any other
-                        // form field. So the same question is asked here, on the
-                        // way in, where it is the one that decides.
-                        ->rule(fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
-                            $refused = array_diff((array) $value, array_keys($this->issuableAbilities()));
-
-                            if ($refused !== []) {
-                                $fail('Your role may not issue a token with: '.implode(', ', $refused).'.');
-                            }
-                        })
-                        ->helperText('A token can never do more than you can: what it may reach, and what it may change, still answer to your own grants and role.'),
-                    DatePicker::make('expires_at')
-                        ->label('Expires')
-                        ->minDate(now()->addDay())
-                        ->helperText('Leave empty for a token that never expires.'),
-                ])
-                ->action(function (array $data): void {
-                    $new = Token::issue(
-                        $this->user(),
-                        $data['name'],
-                        $data['abilities'],
-                        // The whole chosen day is valid; expiring at its
-                        // midnight would cut the last day off.
-                        filled($data['expires_at'] ?? null) ? CarbonImmutable::parse($data['expires_at'])->endOfDay() : null,
-                        username: filled($data['username'] ?? null) ? $data['username'] : null,
-                    );
-
-                    $this->plainTextToken = $new->plainText;
-                    $this->tokenUsername = $new->token->composerUsername();
-
-                    $new->notification('Token created — copy it now')->send();
-                }),
+            $this->createTokenAction(),
         ];
+    }
+
+    /**
+     * Issuing a token — offered in the header and, when there are none yet,
+     * from the middle of the empty table where somebody is already looking.
+     */
+    private function createTokenAction(): Action
+    {
+        return Action::make('create')
+            ->label('Create token')
+            ->icon(Heroicon::OutlinedPlus)
+            ->modalHeading('Create an API token')
+            ->modalDescription('The token is shown once, right after it is created.')
+            ->modalIcon(Heroicon::OutlinedKey)
+            ->modalSubmitActionLabel('Create token')
+            ->schema([
+                TextInput::make('name')
+                    ->required()
+                    ->maxLength(255)
+                    ->placeholder('ci-deploy')
+                    ->helperText('What this token is for — shown in listings, and how you will recognise it later.'),
+                TextInput::make('username')
+                    ->maxLength(255)
+                    ->placeholder(fn (): string => $this->user()->email)
+                    ->helperText('The username written into auth.json. Only the token authenticates, so this is yours to choose; leave it empty for your email.'),
+                CheckboxList::make('abilities')
+                    ->options(fn (): array => $this->issuableAbilities())
+                    ->default([TokenAbility::RepositoryRead->value])
+                    ->required()
+                    // The options are what this account's role permits, and
+                    // the browser is under no obligation to post them:
+                    // Livewire state arrives from the client like any other
+                    // form field. So the same question is asked here, on the
+                    // way in, where it is the one that decides.
+                    ->rule(fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                        $refused = array_diff((array) $value, array_keys($this->issuableAbilities()));
+
+                        if ($refused !== []) {
+                            $fail('Your role may not issue a token with: '.implode(', ', $refused).'.');
+                        }
+                    })
+                    ->helperText('A token can never do more than you can: what it may reach, and what it may change, still answer to your own grants and role.'),
+                DatePicker::make('expires_at')
+                    ->label('Expires')
+                    ->minDate(now()->addDay())
+                    ->helperText('Leave empty for a token that never expires.'),
+            ])
+            ->action(function (array $data): void {
+                $new = Token::issue(
+                    $this->user(),
+                    $data['name'],
+                    $data['abilities'],
+                    // The whole chosen day is valid; expiring at its
+                    // midnight would cut the last day off.
+                    filled($data['expires_at'] ?? null) ? CarbonImmutable::parse($data['expires_at'])->endOfDay() : null,
+                    username: filled($data['username'] ?? null) ? $data['username'] : null,
+                );
+
+                $this->plainTextToken = $new->plainText;
+                $this->tokenUsername = $new->token->composerUsername();
+
+                $new->notification('Token created — copy it now')->send();
+            });
     }
 
     /**

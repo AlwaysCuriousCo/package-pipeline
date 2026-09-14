@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
+use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Filament\Resources\DeployTokens\Pages\ListDeployTokens;
 use App\Models\DeployToken;
 use App\Models\Package;
@@ -189,6 +190,22 @@ class DeployTokenTest extends TestCase
 
         $this->assertNotNull($token);
         $this->assertSame([TokenAbility::RepositoryRead->value], $token->abilities);
+    }
+
+    public function test_the_edit_page_shows_the_live_credential(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $deployToken = DeployToken::factory()->create(['name' => 'production-deploys']);
+        $new = Token::issue($deployToken, $deployToken->name, [TokenAbility::RepositoryRead]);
+
+        $this->get(DeployTokenResource::getUrl('edit', ['record' => $deployToken]))
+            ->assertOk()
+            ->assertSee('Credential')
+            ->assertSee(substr($new->plainText, 0, 8).'…')
+            ->assertSee('Never used')
+            // The secret itself is gone the moment it was shown.
+            ->assertDontSee($new->plainText);
     }
 
     public function test_the_list_names_what_a_scoped_token_reaches(): void

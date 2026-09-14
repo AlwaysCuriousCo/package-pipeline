@@ -29,6 +29,8 @@ class EditDeployToken extends EditRecord
                 ->color('warning')
                 ->modalHeading('Regenerate the access token')
                 ->modalDescription('The current token stops authenticating immediately; whatever machine uses it needs the new one.')
+                ->modalIcon(Heroicon::OutlinedArrowPath)
+                ->modalSubmitActionLabel('Regenerate token')
                 ->schema([
                     TextInput::make('username')
                         ->maxLength(255)
