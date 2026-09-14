@@ -32,7 +32,7 @@ class AuthenticationSourceForm
                     ->maxLength(255)
                     ->unique(ignoreRecord: true)
                     ->placeholder('Acme SSO')
-                    ->helperText('The login button reads "Continue with {name}".'),
+                    ->helperText('The login button\'s label.'),
                 Select::make('provider')
                     ->options(AuthProvider::class)
                     ->required()
