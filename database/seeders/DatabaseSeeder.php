@@ -43,10 +43,16 @@ class DatabaseSeeder extends Seeder
                 continue;
             }
 
-            AuthenticationSource::query()->updateOrCreate(
-                ['name' => $provider->getLabel()],
-                ['provider' => $provider, 'client_id' => $clientId, 'client_secret' => $clientSecret],
-            );
+            // Matched on the provider, not the name: the name is the login
+            // button's label and an admin may rewrite it, and reseeding after
+            // that would otherwise mint a second source for the same provider
+            // — two buttons, and rotated credentials landing on neither of the
+            // ones in use.
+            $source = AuthenticationSource::query()->firstOrNew(['provider' => $provider]);
+
+            $source->fill(['client_id' => $clientId, 'client_secret' => $clientSecret]);
+            $source->name ??= $provider->getLabel();
+            $source->save();
         }
     }
 }

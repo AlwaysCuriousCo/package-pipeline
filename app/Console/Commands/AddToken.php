@@ -52,8 +52,7 @@ class AddToken extends Command
         // No request to read a host from out here, so the configured app URL
         // is the registry's name.
         $host = parse_url((string) config('app.url'), PHP_URL_HOST) ?: 'localhost';
-        $line = fn (bool $global): string => 'composer config '.($global ? '--global ' : '')
-            ."http-basic.{$host} {$new->token->composerUsername()} {$new->plainText}";
+        $line = fn (bool $global): string => $new->composerCommand($global, $host);
 
         $this->components->info('Token created. Copy it now — it will not be shown again.');
         $this->line($new->plainText);

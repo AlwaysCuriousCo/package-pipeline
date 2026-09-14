@@ -58,4 +58,29 @@ class DefaultAuthenticationSourceSeederTest extends TestCase
         $this->assertFalse($github->allow_registration);
         $this->assertSame(1, AuthenticationSource::count());
     }
+
+    public function test_renaming_a_seeded_source_does_not_mint_a_second_one(): void
+    {
+        config([
+            'services.github.client_id' => 'gh-id',
+            'services.github.client_secret' => 'gh-secret',
+        ]);
+
+        $this->seed(DatabaseSeeder::class);
+
+        // The name is the login button's label, and admins rewrite it.
+        AuthenticationSource::query()->where('provider', AuthProvider::Github)
+            ->firstOrFail()
+            ->update(['name' => 'Sign in with our GitHub org']);
+
+        config(['services.github.client_secret' => 'rotated']);
+
+        $this->seed(DatabaseSeeder::class);
+
+        $github = AuthenticationSource::query()->where('provider', AuthProvider::Github)->sole();
+
+        $this->assertSame('Sign in with our GitHub org', $github->name);
+        $this->assertSame('rotated', $github->client_secret);
+        $this->assertSame(1, AuthenticationSource::count());
+    }
 }

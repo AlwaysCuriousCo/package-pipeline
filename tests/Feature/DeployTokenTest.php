@@ -192,6 +192,37 @@ class DeployTokenTest extends TestCase
         $this->assertSame([TokenAbility::RepositoryRead->value], $token->abilities);
     }
 
+    public function test_a_username_with_a_space_is_quoted_in_the_printed_command(): void
+    {
+        // The deploy token's name is the derived username, and names are free
+        // text — unquoted, "build box" would be two arguments and the command
+        // would write something other than what it reads as.
+        $deployToken = DeployToken::factory()->create(['name' => 'build box']);
+        $new = Token::issue($deployToken, $deployToken->name, [TokenAbility::RepositoryRead]);
+
+        $this->assertStringContainsString("'build box' {$new->plainText}", $new->composerCommand());
+        $this->assertStringContainsString("'build box'", $new->composerCommand(global: true));
+
+        // And nothing is quoted that does not need to be.
+        $plain = DeployToken::factory()->create(['name' => 'production-deploys']);
+        $this->assertStringContainsString(
+            'production-deploys',
+            $printed = Token::issue($plain, $plain->name, [TokenAbility::RepositoryRead])->composerCommand(),
+        );
+        $this->assertStringNotContainsString("'", $printed);
+    }
+
+    public function test_a_username_carrying_markup_is_escaped_in_the_toast(): void
+    {
+        $deployToken = DeployToken::factory()->create(['name' => 'ci']);
+        $new = Token::issue($deployToken, 'ci', [TokenAbility::RepositoryRead], username: '<script>alert(1)</script>');
+
+        $body = $new->notification('Token created')->getBody();
+
+        $this->assertStringNotContainsString('<script>', $body);
+        $this->assertStringContainsString('&lt;script&gt;', $body);
+    }
+
     public function test_the_edit_page_shows_the_live_credential(): void
     {
         $this->actingAs(User::factory()->superAdmin()->create());

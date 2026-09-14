@@ -10,6 +10,7 @@ use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
 use App\Filament\Resources\Packages\Widgets\PackageSyncProgress;
+use App\Models\Package;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
 
@@ -36,7 +37,11 @@ class ViewPackage extends ViewRecord
     {
         parent::mount($record);
 
-        $this->installRepository = $this->record->repository_id;
+        // $record on a ViewRecord is typed as the key or the model, so the
+        // package is asked for rather than assumed.
+        $package = $this->getRecord();
+
+        $this->installRepository = $package instanceof Package ? $package->repository_id : null;
     }
 
     protected function getHeaderActions(): array
