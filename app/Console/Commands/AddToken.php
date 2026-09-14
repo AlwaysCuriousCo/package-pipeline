@@ -20,7 +20,8 @@ class AddToken extends Command
         {--user= : Issue a personal token for the user with this email}
         {--deploy= : Issue for the deploy token with this name, creating it if missing}
         {--ability=* : read, write, or any ability name (api:read, api:write, api:delete); read when omitted}
-        {--expires-days= : Expire after this many days; never when omitted}';
+        {--expires-days= : Expire after this many days; never when omitted}
+        {--username= : The HTTP Basic username to configure; the owner\'s email or deploy token name when omitted}';
 
     protected $description = 'Issue an access token for a user or a deploy token';
 
@@ -45,15 +46,21 @@ class AddToken extends Command
             (string) $this->argument('name'),
             $abilities,
             filled($days) ? now()->addDays((int) $days)->endOfDay() : null,
+            username: filled($this->option('username')) ? (string) $this->option('username') : null,
         );
 
+        // No request to read a host from out here, so the configured app URL
+        // is the registry's name.
         $host = parse_url((string) config('app.url'), PHP_URL_HOST) ?: 'localhost';
+        $line = fn (bool $global): string => 'composer config '.($global ? '--global ' : '')
+            ."http-basic.{$host} {$new->token->composerUsername()} {$new->plainText}";
 
         $this->components->info('Token created. Copy it now — it will not be shown again.');
         $this->line($new->plainText);
         $this->newLine();
         $this->components->bulletList([
-            "composer config http-basic.{$host} token {$new->plainText}",
+            $line(false),
+            $line(true).'  (this machine, every project)',
         ]);
 
         return self::SUCCESS;

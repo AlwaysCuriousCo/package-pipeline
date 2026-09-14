@@ -170,9 +170,14 @@ class PackageInstallCommandsTest extends TestCase
             ->assertNotified('Token created');
 
         $plain = $component->get('plainTextToken');
-        $component->assertSee('http-basic.'.request()->getHost()." token {$plain}");
+        // The rendered @ arrives as &#64; — Blade escapes it so Alpine does
+        // not read it as an event shorthand — so the username is asserted on
+        // the token rather than on the markup.
+        $component->assertSee('http-basic.'.request()->getHost());
+        $component->assertSee($plain);
 
         $token = Token::findByPlainText($plain);
+        $this->assertSame($user->email, $token->composerUsername());
         $this->assertSame('laptop', $token->name);
         $this->assertSame(['repository:read'], $token->abilities);
         $this->assertTrue($token->tokenable->is($user));

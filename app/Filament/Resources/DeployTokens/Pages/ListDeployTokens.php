@@ -32,7 +32,7 @@ class ListDeployTokens extends ListRecords
                 ->after(function (DeployToken $record): void {
                     $new = Token::issue($record, $record->name, [TokenAbility::RepositoryRead]);
 
-                    DeployTokenResource::plainTextTokenNotification('Token created — copy it now', $new)->send();
+                    $new->notification('Token created — copy it now')->send();
                 }),
         ];
     }

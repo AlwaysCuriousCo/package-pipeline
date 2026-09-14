@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\DeployTokens\Tables;
 
 use App\Enums\TokenAbility;
-use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Models\DeployToken;
 use App\Models\Token;
 use Filament\Actions\Action;
@@ -67,14 +66,17 @@ class DeployTokensTable
                     ->modalDescription('The current token stops authenticating immediately; whatever machine uses it needs the new one.')
                     ->action(function (DeployToken $record): void {
                         $abilities = $record->token->abilities ?? [TokenAbility::RepositoryRead];
+                        // A roll replaces the secret, not how the machine's
+                        // auth.json is labelled.
+                        $username = $record->token->username;
 
                         // One at a time, so each revocation fires the model
                         // events the audit log is written from.
                         $record->tokens->each->delete();
 
-                        $new = Token::issue($record, $record->name, $abilities);
+                        $new = Token::issue($record, $record->name, $abilities, username: $username);
 
-                        DeployTokenResource::plainTextTokenNotification('Token rolled — copy it now', $new)->send();
+                        $new->notification('Token rolled — copy it now')->send();
                     }),
                 DeleteAction::make()
                     ->modalHeading('Delete deploy token')

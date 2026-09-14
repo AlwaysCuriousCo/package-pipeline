@@ -13,7 +13,6 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Concerns\InteractsWithTable;
@@ -55,6 +54,12 @@ class ApiTokens extends Page implements HasTable
      */
     public ?string $plainTextToken = null;
 
+    /**
+     * The Basic username that token is configured with — its own, or the
+     * email it fell back to.
+     */
+    public ?string $tokenUsername = null;
+
     public function table(Table $table): Table
     {
         return $table
@@ -84,6 +89,10 @@ class ApiTokens extends Page implements HasTable
                         ->maxLength(255)
                         ->placeholder('ci-deploy')
                         ->helperText('What this token is for — shown in listings, and how you will recognise it later.'),
+                    TextInput::make('username')
+                        ->maxLength(255)
+                        ->placeholder(fn (): string => $this->user()->email)
+                        ->helperText('The username written into auth.json. Only the token authenticates, so this is yours to choose; leave it empty for your email.'),
                     CheckboxList::make('abilities')
                         ->options(fn (): array => $this->issuableAbilities())
                         ->default([TokenAbility::RepositoryRead->value])
@@ -114,15 +123,13 @@ class ApiTokens extends Page implements HasTable
                         // The whole chosen day is valid; expiring at its
                         // midnight would cut the last day off.
                         filled($data['expires_at'] ?? null) ? CarbonImmutable::parse($data['expires_at'])->endOfDay() : null,
+                        username: filled($data['username'] ?? null) ? $data['username'] : null,
                     );
 
                     $this->plainTextToken = $new->plainText;
+                    $this->tokenUsername = $new->token->composerUsername();
 
-                    Notification::make()
-                        ->success()
-                        ->title('Token created')
-                        ->body('Copy it now — it will not be shown again.')
-                        ->send();
+                    $new->notification('Token created — copy it now')->send();
                 }),
         ];
     }

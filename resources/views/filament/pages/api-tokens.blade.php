@@ -4,9 +4,11 @@
             icon="heroicon-o-key"
             icon-color="success"
             heading="Copy your new token now"
-            description="This is the only time it is shown. Configure Composer on the consuming machine with:"
+            description="This is the only time it is shown. Configure Composer on the consuming machine with one of:"
         >
-            <pre class="overflow-x-auto rounded-lg bg-gray-950 p-4 text-sm text-gray-100"><code>composer config http-basic.{{ request()->getHost() }} token {{ $plainTextToken }}</code></pre>
+            <pre class="overflow-x-auto rounded-lg bg-gray-950 p-4 text-sm text-gray-100"><code>{{ \App\Support\NewToken::composerCommandFor($tokenUsername, $plainTextToken) }}
+{{ \App\Support\NewToken::composerCommandFor($tokenUsername, $plainTextToken, global: true) }}</code></pre>
+            <p class="text-sm text-gray-500 dark:text-gray-400">The first writes the project's auth.json; the second this machine's, for every project on it.</p>
         </x-filament::section>
     @endif
 

@@ -29,6 +29,9 @@ class ViewPackage extends ViewRecord
      */
     public ?string $plainTextToken = null;
 
+    /** The Basic username that token is configured with. */
+    public ?string $tokenUsername = null;
+
     public function mount(int|string $record): void
     {
         parent::mount($record);
