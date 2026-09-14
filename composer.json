@@ -6,7 +6,7 @@
     "keywords": ["composer", "registry", "packages", "laravel", "filament"],
     "license": "MIT",
     "require": {
-        "php": "^8.3",
+        "php": "^8.4",
         "bezhansalleh/filament-shield": "^4.3",
         "composer/metadata-minifier": "^1.0",
         "composer/semver": "^3.4",

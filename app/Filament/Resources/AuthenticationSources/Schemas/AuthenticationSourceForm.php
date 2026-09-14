@@ -14,6 +14,15 @@ use Spatie\Permission\Models\Role;
 
 class AuthenticationSourceForm
 {
+    /**
+     * The provider state is the enum when hydrated from the record and the
+     * select's raw string once the user changes it — accept both.
+     */
+    private static function isOidc(mixed $provider): bool
+    {
+        return ($provider instanceof AuthProvider ? $provider : AuthProvider::tryFrom((string) $provider)) === AuthProvider::Oidc;
+    }
+
     public static function configure(Schema $schema): Schema
     {
         return $schema
@@ -34,8 +43,8 @@ class AuthenticationSourceForm
                     ->url()
                     ->maxLength(255)
                     ->placeholder('https://id.example.com/.well-known/openid-configuration')
-                    ->visible(fn (Get $get): bool => AuthProvider::tryFrom((string) $get('provider')) === AuthProvider::Oidc)
-                    ->required(fn (Get $get): bool => AuthProvider::tryFrom((string) $get('provider')) === AuthProvider::Oidc)
+                    ->visible(fn (Get $get): bool => self::isOidc($get('provider')))
+                    ->required(fn (Get $get): bool => self::isOidc($get('provider')))
                     ->helperText('The issuer\'s openid-configuration document; endpoints are read from it.'),
                 TextInput::make('client_id')
                     ->label('Client ID')

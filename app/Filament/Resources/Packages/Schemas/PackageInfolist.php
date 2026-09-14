@@ -14,6 +14,7 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
 use App\Services\GitHub\WebhookRegistrar;
+use App\Support\NewToken;
 use Filament\Actions\Action;
 use Filament\Actions\SelectAction;
 use Filament\Forms\Components\DatePicker;
@@ -231,6 +232,7 @@ class PackageInfolist
                                 );
 
                                 $livewire->plainTextToken = $new->plainText;
+                                $livewire->tokenUsername = $new->token->composerUsername();
 
                                 Notification::make()
                                     ->success()
@@ -251,7 +253,7 @@ class PackageInfolist
                             ->visible(fn (Package $record, ViewPackage $livewire): bool => ! self::installRepository($record, $livewire)->public)
                             ->state(fn (ViewPackage $livewire): string => $livewire->plainTextToken === null
                                 ? self::tokenPlaceholder()
-                                : e('composer config http-basic.'.request()->getHost()." token {$livewire->plainTextToken}"))
+                                : e(NewToken::composerCommandFor($livewire->tokenUsername, $livewire->plainTextToken)))
                             ->html()
                             ->fontFamily(fn (ViewPackage $livewire): ?FontFamily => $livewire->plainTextToken === null ? null : FontFamily::Mono)
                             ->color(fn (ViewPackage $livewire): ?string => $livewire->plainTextToken === null ? 'gray' : null)

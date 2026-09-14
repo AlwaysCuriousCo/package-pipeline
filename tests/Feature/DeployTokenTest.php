@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\TokenAbility;
+use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Filament\Resources\DeployTokens\Pages\ListDeployTokens;
 use App\Models\DeployToken;
 use App\Models\Package;
@@ -189,6 +190,53 @@ class DeployTokenTest extends TestCase
 
         $this->assertNotNull($token);
         $this->assertSame([TokenAbility::RepositoryRead->value], $token->abilities);
+    }
+
+    public function test_a_username_with_a_space_is_quoted_in_the_printed_command(): void
+    {
+        // The deploy token's name is the derived username, and names are free
+        // text — unquoted, "build box" would be two arguments and the command
+        // would write something other than what it reads as.
+        $deployToken = DeployToken::factory()->create(['name' => 'build box']);
+        $new = Token::issue($deployToken, $deployToken->name, [TokenAbility::RepositoryRead]);
+
+        $this->assertStringContainsString("'build box' {$new->plainText}", $new->composerCommand());
+        $this->assertStringContainsString("'build box'", $new->composerCommand(global: true));
+
+        // And nothing is quoted that does not need to be.
+        $plain = DeployToken::factory()->create(['name' => 'production-deploys']);
+        $this->assertStringContainsString(
+            'production-deploys',
+            $printed = Token::issue($plain, $plain->name, [TokenAbility::RepositoryRead])->composerCommand(),
+        );
+        $this->assertStringNotContainsString("'", $printed);
+    }
+
+    public function test_a_username_carrying_markup_is_escaped_in_the_toast(): void
+    {
+        $deployToken = DeployToken::factory()->create(['name' => 'ci']);
+        $new = Token::issue($deployToken, 'ci', [TokenAbility::RepositoryRead], username: '<script>alert(1)</script>');
+
+        $body = $new->notification('Token created')->getBody();
+
+        $this->assertStringNotContainsString('<script>', $body);
+        $this->assertStringContainsString('&lt;script&gt;', $body);
+    }
+
+    public function test_the_edit_page_shows_the_live_credential(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $deployToken = DeployToken::factory()->create(['name' => 'production-deploys']);
+        $new = Token::issue($deployToken, $deployToken->name, [TokenAbility::RepositoryRead]);
+
+        $this->get(DeployTokenResource::getUrl('edit', ['record' => $deployToken]))
+            ->assertOk()
+            ->assertSee('Credential')
+            ->assertSee(substr($new->plainText, 0, 8).'…')
+            ->assertSee('Never used')
+            // The secret itself is gone the moment it was shown.
+            ->assertDontSee($new->plainText);
     }
 
     public function test_the_list_names_what_a_scoped_token_reaches(): void

@@ -14,7 +14,7 @@ Sharing private PHP packages across projects is a chore: every consuming app nee
 
 ## Requirements
 
-- PHP **8.3+** with Composer
+- PHP **8.4+** with Composer
 - Node **22+** with npm, to compile the front-end assets and the admin panel's stylesheet
 - SQLite (default — nothing to configure), or MySQL/Postgres if you prefer
 - A GitHub or GitLab account with the repositories you want to serve (GitHub Enterprise and self-managed GitLab both work; each source can point at its own API base URL)

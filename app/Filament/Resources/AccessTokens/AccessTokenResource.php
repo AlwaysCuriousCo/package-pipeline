@@ -87,7 +87,9 @@ class AccessTokenResource extends Resource
     {
         return [
             TextColumn::make('name')
-                ->searchable(),
+                ->searchable()
+                ->description(fn (Token $record): string => $record->composerUsername())
+                ->tooltip('The name is yours; the line under it is the auth.json username.'),
             TextColumn::make('token_prefix')
                 ->label('Token')
                 ->formatStateUsing(fn (string $state): string => "{$state}…")
@@ -96,17 +98,37 @@ class AccessTokenResource extends Resource
             TextColumn::make('abilities')
                 ->badge()
                 ->formatStateUsing(fn (string $state): string => TokenAbility::tryFrom($state)?->getLabel() ?? $state),
+            // One column for the three questions asked of a credential at a
+            // glance — is it alive, is it about to stop being, has it been
+            // turned off — in place of a date that has to be read against
+            // today's to mean anything.
+            TextColumn::make('status')
+                ->badge()
+                ->state(fn (Token $record): string => match (true) {
+                    $record->trashed() => 'Revoked',
+                    $record->isExpired() => 'Expired',
+                    $record->expires_at !== null => 'Expires '.$record->expires_at->diffForHumans(),
+                    default => 'Never expires',
+                })
+                ->color(fn (Token $record): string => match (true) {
+                    $record->trashed(), $record->isExpired() => 'danger',
+                    $record->expires_at?->isBefore(now()->addWeek()) => 'warning',
+                    $record->expires_at !== null => 'success',
+                    default => 'gray',
+                })
+                ->icon(fn (Token $record): Heroicon => match (true) {
+                    $record->trashed() => Heroicon::OutlinedNoSymbol,
+                    $record->isExpired() => Heroicon::OutlinedExclamationTriangle,
+                    default => Heroicon::OutlinedClock,
+                }),
             TextColumn::make('last_used_at')
                 ->label('Last used')
                 ->since()
-                ->placeholder('Never'),
-            TextColumn::make('expires_at')
-                ->label('Expires')
-                ->date()
-                ->placeholder('Never'),
+                ->placeholder('Never used'),
             TextColumn::make('created_at')
                 ->label('Created')
-                ->date(),
+                ->since()
+                ->sortable(),
         ];
     }
 

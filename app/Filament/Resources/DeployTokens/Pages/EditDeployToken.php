@@ -9,6 +9,7 @@ use App\Models\Token;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\CheckboxList;
+use Filament\Forms\Components\TextInput;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Icons\Heroicon;
 
@@ -28,7 +29,14 @@ class EditDeployToken extends EditRecord
                 ->color('warning')
                 ->modalHeading('Regenerate the access token')
                 ->modalDescription('The current token stops authenticating immediately; whatever machine uses it needs the new one.')
+                ->modalIcon(Heroicon::OutlinedArrowPath)
+                ->modalSubmitActionLabel('Regenerate token')
                 ->schema([
+                    TextInput::make('username')
+                        ->maxLength(255)
+                        ->default(fn (DeployToken $record): ?string => $record->token->username)
+                        ->placeholder(fn (DeployToken $record): string => $record->name)
+                        ->helperText('The username written into the machine\'s auth.json. Only the token authenticates, so this is yours to choose; empty means the deploy token name.'),
                     CheckboxList::make('abilities')
                         ->options(TokenAbility::class)
                         ->default(fn (DeployToken $record): array => $record->token->abilities
@@ -40,9 +48,14 @@ class EditDeployToken extends EditRecord
                     // events the audit log is written from.
                     $record->tokens->each->delete();
 
-                    $new = Token::issue($record, $record->name, $data['abilities']);
+                    $new = Token::issue(
+                        $record,
+                        $record->name,
+                        $data['abilities'],
+                        username: filled($data['username'] ?? null) ? $data['username'] : null,
+                    );
 
-                    DeployTokenResource::plainTextTokenNotification('Token regenerated — copy it now', $new)->send();
+                    $new->notification('Token regenerated — copy it now')->send();
                 }),
             DeleteAction::make()
                 ->modalDescription('Its access token stops authenticating immediately.'),

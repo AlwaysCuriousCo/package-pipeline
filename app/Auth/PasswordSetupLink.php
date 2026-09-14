@@ -49,7 +49,9 @@ class PasswordSetupLink
         return route('password-setup', [
             'payload' => self::seal([
                 'email' => $user->getEmailForPasswordReset(),
-                'token' => Password::broker()->createToken($user),
+                // Through the facade rather than broker(), whose contract
+                // return type does not carry createToken().
+                'token' => Password::createToken($user),
                 'expires' => now()->addMinutes(self::TTL_MINUTES)->getTimestamp(),
             ]),
         ]);

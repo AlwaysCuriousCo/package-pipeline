@@ -19,16 +19,16 @@ use Illuminate\Support\Str;
 /**
  * An access token a Composer client authenticates with.
  *
- * Consumers configure it as an HTTP Basic password (any username) or a
- * bearer token:
+ * Consumers configure it as an HTTP Basic password (any username — see
+ * composerUsername()) or a bearer token:
  *
- *   composer config http-basic.<registry-host> token <plain-token>
+ *   composer config http-basic.<registry-host> <username> <plain-token>
  *
  * The plain token exists only at issue time; the row keeps its sha256.
  * Revocation is a soft delete, which is also what findByPlainText() honours —
  * a revoked token stops authenticating without its history disappearing.
  */
-#[Fillable(['name', 'abilities', 'expires_at'])]
+#[Fillable(['name', 'username', 'abilities', 'expires_at'])]
 class Token extends Model
 {
     /** @use HasFactory<TokenFactory> */
@@ -47,7 +47,7 @@ class Token extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'token_prefix', 'abilities', 'expires_at', 'tokenable_type', 'tokenable_id'];
+        return ['name', 'username', 'token_prefix', 'abilities', 'expires_at', 'tokenable_type', 'tokenable_id'];
     }
 
     /**
@@ -100,6 +100,7 @@ class Token extends Model
         array $abilities,
         ?DateTimeInterface $expiresAt = null,
         ?Subscription $subscription = null,
+        ?string $username = null,
     ): NewToken {
         $plain = 'pp_'.Str::random(40);
 
@@ -109,6 +110,7 @@ class Token extends Model
             'tokenable_type' => $tokenable->getMorphClass(),
             'tokenable_id' => $tokenable->getKey(),
             'name' => $name,
+            'username' => $username,
             'abilities' => array_map(
                 fn (TokenAbility|string $ability): string => $ability instanceof TokenAbility ? $ability->value : $ability,
                 $abilities,
@@ -120,6 +122,23 @@ class Token extends Model
         ])->save();
 
         return new NewToken($token, $plain);
+    }
+
+    /**
+     * The HTTP Basic username this token is configured with.
+     *
+     * Only the password authenticates, so this is free to be whatever reads
+     * best in auth.json — the owner's email, or whatever was set instead.
+     */
+    public function composerUsername(): string
+    {
+        $principal = $this->tokenable;
+
+        return $this->username ?: match (true) {
+            $principal instanceof User => $principal->email,
+            $principal instanceof DeployToken => $principal->name,
+            default => 'token',
+        };
     }
 
     /**

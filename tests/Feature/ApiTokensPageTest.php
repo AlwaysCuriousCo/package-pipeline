@@ -38,6 +38,31 @@ class ApiTokensPageTest extends TestCase
         return tap(User::factory()->create())->assignRole($role);
     }
 
+    public function test_the_username_defaults_to_the_owners_email_and_can_be_set(): void
+    {
+        $component = Livewire::test(ApiTokens::class)
+            ->callAction('create', ['name' => 'default', 'abilities' => ['repository:read']])
+            ->assertHasNoActionErrors();
+
+        $token = Token::findByPlainText($component->get('plainTextToken'));
+
+        $this->assertNull($token->username);
+        $this->assertSame($this->user->email, $token->composerUsername());
+
+        $component = Livewire::test(ApiTokens::class)
+            ->callAction('create', ['name' => 'custom', 'username' => 'ci-bot', 'abilities' => ['repository:read']])
+            ->assertHasNoActionErrors();
+
+        $plain = $component->get('plainTextToken');
+        $token = Token::findByPlainText($plain);
+
+        $this->assertSame('ci-bot', $token->composerUsername());
+        // Both auth.json shapes, so the surface that prints them stays honest.
+        $host = request()->getHost();
+        $component->assertSee("composer config http-basic.{$host} ci-bot {$plain}")
+            ->assertSee("composer config --global http-basic.{$host} ci-bot {$plain}");
+    }
+
     public function test_a_token_is_created_and_its_plain_text_shown_once(): void
     {
         $component = Livewire::test(ApiTokens::class)
