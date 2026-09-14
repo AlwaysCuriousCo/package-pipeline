@@ -48,7 +48,7 @@ class AdminPanelProvider extends PanelProvider
             // a trail on top of that is clutter.
             ->breadcrumbs(false)
             ->login()
-            // One "Continue with …" button per active authentication source,
+            // One button per active authentication source,
             // under the password form. Rendered from a hook rather than a
             // login page subclass, so the stock page stays stock.
             ->renderHook(

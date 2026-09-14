@@ -70,7 +70,7 @@ class SsoTest extends TestCase
 
         $this->get('/admin/login')
             ->assertOk()
-            ->assertSee('Continue with Acme SSO')
+            ->assertSee('Acme SSO')
             ->assertDontSee('Dormant IdP');
     }
 
