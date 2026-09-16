@@ -11,8 +11,10 @@ use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
 use App\Filament\Resources\Packages\Widgets\PackageSyncProgress;
 use App\Models\Package;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
+use Illuminate\Contracts\Support\Htmlable;
 
 class ViewPackage extends ViewRecord
 {
@@ -44,15 +46,32 @@ class ViewPackage extends ViewRecord
         $this->installRepository = $package instanceof Package ? $package->repository_id : null;
     }
 
+    /**
+     * The heading is a GitHub-style switcher: the package name opens a
+     * searchable list of every package the user can see, and picking one
+     * jumps to its view page. The title (breadcrumb, browser tab) stays text.
+     */
+    public function getHeading(): string|Htmlable|null
+    {
+        // ponytail: every visible package is rendered and filtered client-side;
+        // move the search server-side when a registry outgrows a few thousand.
+        return view('filament.resources.packages.package-switcher', [
+            'current' => $this->getRecord(),
+            'packages' => PackageResource::getEloquentQuery()->orderBy('name')->pluck('name', 'id'),
+        ]);
+    }
+
     protected function getHeaderActions(): array
     {
         return [
             SyncPackageAction::make(),
-            RebuildPackageAction::make(),
-            RefreshPageContentAction::make(),
-            CreateWebhookAction::make(),
-            ExportSbomAction::make(),
             EditAction::make(),
+            ActionGroup::make([
+                RebuildPackageAction::make(),
+                RefreshPageContentAction::make(),
+                CreateWebhookAction::make(),
+                ExportSbomAction::make(),
+            ]),
         ];
     }
 

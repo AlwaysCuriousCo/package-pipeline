@@ -7,6 +7,13 @@
     finishing without anyone reloading the page.
 --}}
 <x-filament-widgets::widget class="fi-wi-package-sync-progress">
+    {{-- An idle widget is still a row in the page grid; give its gap back. --}}
+    <style>
+        .fi-wi:has(> .fi-wi-package-sync-progress:only-child):not(:has(.fi-section)) {
+            margin-bottom: -2rem;
+        }
+    </style>
+
     <div wire:poll.5s>
         @if ($running)
             <x-filament::section>
