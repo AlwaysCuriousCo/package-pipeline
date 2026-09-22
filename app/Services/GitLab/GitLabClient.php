@@ -179,6 +179,24 @@ class GitLabClient implements RepositoryClient
     }
 
     /**
+     * @see GitHubClient::hasWebhook() for why a 404 is confirmed by listing.
+     */
+    public function hasWebhook(int $id): bool
+    {
+        $response = $this->request()->get("/projects/{$this->projectId()}/hooks/{$id}");
+
+        if ($response->status() === 404) {
+            $this->ok($this->request()->get("/projects/{$this->projectId()}/hooks"));
+
+            return false;
+        }
+
+        $this->ok($response);
+
+        return true;
+    }
+
+    /**
      * The project's default branch, or null when the project is out of reach.
      */
     private function defaultBranch(): ?string

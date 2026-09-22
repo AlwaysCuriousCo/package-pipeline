@@ -519,4 +519,69 @@ class PackageWebhookRegistrationTest extends TestCase
 
         $this->assertSame(8675309, $uncovered->refresh()->webhook_id);
     }
+
+    public function test_a_webhook_deleted_on_github_is_noticed_and_offered_again(): void
+    {
+        Http::fake([
+            'api.github.com/repos/*/hooks/8675309' => Http::response(['message' => 'Not Found'], 404),
+            // The listing answers the "is the hook really gone, or can this
+            // credential just not see hooks?" check; the same URL then takes
+            // the re-creation.
+            'api.github.com/repos/*/hooks' => Http::sequence()
+                ->push([], 200)
+                ->push(['id' => 42], 201),
+        ]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/other/gizmos',
+            'source_id' => $this->tokenSource('other')->id,
+        ]);
+        $package->forceFill(['webhook_id' => 8675309, 'webhook_secret' => 's'])->save();
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getKey()])
+            ->assertActionVisible(TestAction::make('createWebhook'))
+            ->callAction(TestAction::make('createWebhook'));
+
+        $this->assertSame(42, $package->refresh()->webhook_id);
+    }
+
+    public function test_a_credential_that_cannot_see_hooks_does_not_forget_the_webhook(): void
+    {
+        // GitHub says 404 for a hook a credential lacks access to as well as
+        // for a hook that is gone. Only the listing tells them apart.
+        Http::fake(['api.github.com/repos/*/hooks*' => Http::response(['message' => 'Not Found'], 404)]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/other/gizmos',
+            'source_id' => $this->tokenSource('other')->id,
+        ]);
+        $package->forceFill(['webhook_id' => 8675309, 'webhook_secret' => 's'])->save();
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getKey()])
+            ->assertActionHidden(TestAction::make('createWebhook'));
+
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+    }
+
+    public function test_an_unreachable_provider_does_not_forget_the_webhook(): void
+    {
+        Http::fake(['api.github.com/*' => Http::response(status: 500)]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/other/gizmos',
+            'source_id' => $this->tokenSource('other')->id,
+        ]);
+        $package->forceFill(['webhook_id' => 8675309, 'webhook_secret' => 's'])->save();
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getKey()])
+            ->assertActionHidden(TestAction::make('createWebhook'));
+
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+    }
 }

@@ -209,6 +209,27 @@ class GitHubClient implements RepositoryClient
     }
 
     /**
+     * A 404 on the hook alone is not proof it is gone: GitHub answers the same
+     * for a credential that cannot see the repository's hooks at all. Only
+     * when listing them succeeds does a missing id mean deleted; anything
+     * else throws, and the caller treats that as inconclusive.
+     */
+    public function hasWebhook(int $id): bool
+    {
+        $response = $this->request()->get("/repos/{$this->repositoryPath}/hooks/{$id}");
+
+        if ($response->status() === 404) {
+            $this->ok($this->request()->get("/repos/{$this->repositoryPath}/hooks"));
+
+            return false;
+        }
+
+        $this->ok($response);
+
+        return true;
+    }
+
+    /**
      * @return array<string, string>
      */
     private function paginate(string $endpoint): array
