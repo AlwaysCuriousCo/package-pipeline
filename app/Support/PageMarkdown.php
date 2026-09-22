@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Dom\HTMLDocument;
 use League\CommonMark\Environment\Environment;
 use League\CommonMark\Event\DocumentParsedEvent;
 use League\CommonMark\Extension\Autolink\AutolinkExtension;
@@ -125,7 +126,7 @@ class PageMarkdown
 
         $html = (new MarkdownConverter($environment))->convert($markdown)->getContent();
 
-        return $this->resolveHtmlUrls(
+        return $this->finishAnchorsAndUrls(
             $this->sanitize($html),
             $linkBase,
             $imageBase,
@@ -139,79 +140,124 @@ class PageMarkdown
      * business carrying at this origin.
      *
      * Safe elements is Symfony's own list: no script, no style, no iframe,
-     * no event handlers, no CSS that can reach outside its own box. On top
-     * of it, every anchor is forced to the same rel and target the markdown
-     * links already carry — the external-link extension only ever saw the
-     * links it parsed, not the ones written as HTML.
+     * no event handlers, no CSS that can reach outside its own box.
      */
     private function sanitize(string $html): string
     {
         $config = (new HtmlSanitizerConfig)
             ->allowSafeElements()
-            // Relative URLs survive the sanitizer so that resolveHtmlUrls()
+            // The one element the safe list withholds that a README needs:
+            // a task list is rendered as disabled checkboxes, and without
+            // this the list arrives with its boxes missing. Harmless on its
+            // own — `form` is not allowed, so there is nothing to submit to.
+            ->allowElement('input', ['type', 'checked', 'disabled'])
+            // Relative URLs survive the sanitizer so that finishAnchorsAndUrls()
             // can point them at the repository; what it cannot resolve it
             // empties itself.
             ->allowRelativeLinks()
             ->allowRelativeMedias()
             ->allowLinkSchemes(['http', 'https', 'mailto'])
-            ->allowMediaSchemes(['http', 'https'])
-            ->forceAttribute('a', 'rel', 'external nofollow noopener noreferrer')
-            ->forceAttribute('a', 'target', '_blank');
+            ->allowMediaSchemes(['http', 'https']);
 
         return (new HtmlSanitizer($config))->sanitizeFor('body', $html);
     }
 
     /**
-     * Point the relative URLs written as raw HTML at the repository too.
+     * Finish the raw HTML the sanitizer let through: resolve the URLs in it,
+     * and give its anchors the rel the parsed ones already carry.
      *
      * The tree pass below only sees links and images the markdown parser
      * made; a README's `<img src="art/header.png">` is one string to the
-     * parser. This runs over the sanitized output, which is serialized with
-     * double-quoted attributes, so the values are addressable without
-     * parsing the document a second time. URLs the tree pass already
-     * resolved are absolute and fall straight through.
+     * parser, and an `<a>` written as HTML never reaches the external-link
+     * extension. Both are finished here, on the parsed document rather than
+     * on its text, so that a path quoted inside a code sample stays the text
+     * the author wrote.
+     *
+     * Anchors already carrying a rel are the parsed ones, and fragment links
+     * point within this page — neither is touched.
      */
-    private function resolveHtmlUrls(
+    private function finishAnchorsAndUrls(
         string $html,
         ?string $linkBase,
         ?string $imageBase,
         ?string $linkRootBase,
         ?string $imageRootBase,
     ): string {
-        return (string) preg_replace_callback(
-            '/ (href|src|srcset)="([^"]*)"/i',
-            function (array $match) use ($linkBase, $imageBase, $linkRootBase, $imageRootBase): string {
-                $attribute = strtolower($match[1]);
-                $media = $attribute !== 'href';
+        if (trim($html) === '') {
+            return $html;
+        }
 
-                // srcset is a comma-separated list, each entry a URL and an
-                // optional density or width descriptor.
-                $parts = $attribute === 'srcset' ? explode(',', $match[2]) : [$match[2]];
+        $document = HTMLDocument::createFromString(
+            '<!DOCTYPE html><body>'.$html.'</body>',
+            LIBXML_NOERROR,
+            'UTF-8',
+        );
 
-                $resolved = array_map(function (string $part) use ($media, $linkBase, $imageBase, $linkRootBase, $imageRootBase): string {
-                    $trimmed = trim($part);
-                    [$url, $descriptor] = array_pad(preg_split('/\s+/', $trimmed, 2) ?: [], 2, '');
+        foreach ($document->body->querySelectorAll('[href], [src], [srcset]') as $element) {
+            foreach (['href', 'src', 'srcset'] as $attribute) {
+                if (! $element->hasAttribute($attribute)) {
+                    continue;
+                }
 
-                    $url = html_entity_decode((string) $url, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                $element->setAttribute($attribute, $this->resolveAttribute(
+                    $element->getAttribute($attribute),
+                    list: $attribute === 'srcset',
+                    media: $attribute !== 'href',
+                    linkBase: $linkBase,
+                    imageBase: $imageBase,
+                    linkRootBase: $linkRootBase,
+                    imageRootBase: $imageRootBase,
+                ));
+            }
+        }
 
-                    if ($url === '' || str_starts_with($url, '#') || $this->isAbsolute($url)) {
-                        return $trimmed;
-                    }
+        foreach ($document->body->querySelectorAll('a[href]') as $anchor) {
+            if ($anchor->hasAttribute('rel') || str_starts_with($anchor->getAttribute('href'), '#')) {
+                continue;
+            }
 
-                    $root = str_starts_with($url, '/');
-                    $base = $media
-                        ? ($root ? $imageRootBase : $imageBase)
-                        : ($root ? $linkRootBase : $linkBase);
+            $anchor->setAttribute('rel', 'external nofollow noopener noreferrer');
+            $anchor->setAttribute('target', '_blank');
+        }
 
-                    $url = $base === null ? '' : $this->join($base, $url);
+        return $document->body->innerHTML;
+    }
 
-                    return trim(htmlspecialchars($url, ENT_QUOTES | ENT_HTML5).' '.$descriptor);
-                }, $parts);
+    /**
+     * Resolve one URL-bearing attribute value.
+     *
+     * srcset is a comma-separated list, each entry a URL and an optional
+     * density or width descriptor; everything else is one URL, which may
+     * itself contain a comma.
+     */
+    private function resolveAttribute(
+        string $value,
+        bool $list,
+        bool $media,
+        ?string $linkBase,
+        ?string $imageBase,
+        ?string $linkRootBase,
+        ?string $imageRootBase,
+    ): string {
+        $resolved = array_map(function (string $part) use ($media, $linkBase, $imageBase, $linkRootBase, $imageRootBase): string {
+            $trimmed = trim($part);
+            [$url, $descriptor] = array_pad(preg_split('/\s+/', $trimmed, 2) ?: [], 2, '');
 
-                return ' '.$attribute.'="'.implode(', ', $resolved).'"';
-            },
-            $html,
-        ) ?: $html;
+            $url = (string) $url;
+
+            if ($url === '' || str_starts_with($url, '#') || $this->isAbsolute($url)) {
+                return $trimmed;
+            }
+
+            $root = str_starts_with($url, '/');
+            $base = $media
+                ? ($root ? $imageRootBase : $imageBase)
+                : ($root ? $linkRootBase : $linkBase);
+
+            return trim(($base === null ? '' : $this->join($base, $url)).' '.$descriptor);
+        }, $list ? explode(',', $value) : [$value]);
+
+        return implode(', ', $resolved);
     }
 
     /**

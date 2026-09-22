@@ -305,7 +305,7 @@ class PublicPackagePageTest extends TestCase
     {
         $this->package([
             'page_source_path' => 'README.md',
-            'page_source_body' => "<div align=\"center\"><picture><img src=\"art/header.png\" onclick=\"steal()\"></picture></div>\n\n# Widgets\n\nSee the [docs](docs/install.md).\n\n<script>alert('xss')</script>\n\n![logo](art/logo.png)\n",
+            'page_source_body' => "<div align=\"center\"><picture><img src=\"art/header.png\" onclick=\"steal()\"></picture></div>\n\n# Widgets\n\n- [x] shipped\n\n## Docs\n\n[jump](#docs)\n\n```html\n<img src=\"art/sample.png\">\n```\n\nSee the [docs](docs/install.md).\n\n<script>alert('xss')</script>\n\n![logo](art/logo.png)\n",
         ]);
 
         $response = $this->get('/p/acme/widgets');
@@ -319,6 +319,15 @@ class PublicPackagePageTest extends TestCase
         $response->assertDontSee('onclick', false);
         // Relative URLs written as HTML resolve like the markdown ones.
         $response->assertSee(config('app.url').'/p/acme/widgets/asset/art/header.png', false);
+        // A task list keeps its checkboxes, which the safe-element list
+        // withholds by default.
+        $response->assertSee('type="checkbox"', false);
+        // An anchor into the page itself is not an outbound link and does
+        // not open a tab of its own.
+        $response->assertSee('<a href="#docs">jump</a>', false);
+        // A path quoted in a code sample is text, not a URL to resolve.
+        $response->assertSee('art/sample.png', false);
+        $response->assertDontSee('asset/art/sample.png', false);
         // Relative links resolve against the repository they were written in.
         $response->assertSee('https://github.com/acme/widgets/blob/HEAD/docs/install.md', false);
         // Images come back through this registry rather than from the
