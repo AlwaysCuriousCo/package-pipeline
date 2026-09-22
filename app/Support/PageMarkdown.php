@@ -14,6 +14,8 @@ use League\CommonMark\Extension\Table\TableExtension;
 use League\CommonMark\Extension\TaskList\TaskListExtension;
 use League\CommonMark\MarkdownConverter;
 use League\CommonMark\Node\Block\Document;
+use Symfony\Component\HtmlSanitizer\HtmlSanitizer;
+use Symfony\Component\HtmlSanitizer\HtmlSanitizerConfig;
 
 /**
  * Renders the markdown behind a public page.
@@ -22,12 +24,12 @@ use League\CommonMark\Node\Block\Document;
  * app at this app's origin, to anonymous visitors. That is the whole reason
  * this class exists rather than a call to Str::markdown():
  *
- *  - Raw HTML in the source is escaped, not passed through. A README is
- *    allowed to contain a `<script>` and frequently contains a `<div>`; on
- *    GitHub both are sanitized, and here the origin they would run at is the
- *    one holding the admin panel's session cookie. Escaping rather than
- *    stripping is deliberate: it is visible, so an admin can see that their
- *    HTML did not render, where stripping looks like the file was truncated.
+ *  - Raw HTML in the source is sanitized, not trusted and not escaped. A
+ *    README is allowed to contain a `<script>` and frequently contains the
+ *    `<div align="center"><picture>` header every Laravel package ships; the
+ *    origin a script would run at is the one holding the admin panel's
+ *    session cookie, so the markup goes through Symfony's HTML sanitizer on
+ *    its safe-elements profile — the same bargain GitHub makes.
  *  - `javascript:` and `data:` URLs are refused by the converter.
  *  - Relative links and images — which is how every README references its own
  *    screenshots — are resolved against the repository they came from, so
@@ -74,10 +76,12 @@ class PageMarkdown
         ?string $imageRootBase = null,
     ): string {
         $environment = new Environment([
-            // The two settings this class exists for. `escape` renders raw
-            // HTML as visible text; `allow_unsafe_links: false` drops
-            // javascript:, vbscript: and non-image data: URLs.
-            'html_input' => 'escape',
+            // Raw HTML passes the parser and is sanitized afterwards, on
+            // the whole document, so markup spanning several blocks — the
+            // `<div>` wrapping half a README — is judged in one piece.
+            // `allow_unsafe_links: false` drops javascript:, vbscript: and
+            // non-image data: URLs.
+            'html_input' => 'allow',
             'allow_unsafe_links' => false,
             'max_nesting_level' => self::MAX_NESTING_LEVEL,
             'external_link' => [
@@ -119,7 +123,95 @@ class PageMarkdown
             priority: 10,
         );
 
-        return (new MarkdownConverter($environment))->convert($markdown)->getContent();
+        $html = (new MarkdownConverter($environment))->convert($markdown)->getContent();
+
+        return $this->resolveHtmlUrls(
+            $this->sanitize($html),
+            $linkBase,
+            $imageBase,
+            $linkRootBase ?? $linkBase,
+            $imageRootBase ?? $imageBase,
+        );
+    }
+
+    /**
+     * Strip everything from the rendered document that a README has no
+     * business carrying at this origin.
+     *
+     * Safe elements is Symfony's own list: no script, no style, no iframe,
+     * no event handlers, no CSS that can reach outside its own box. On top
+     * of it, every anchor is forced to the same rel and target the markdown
+     * links already carry — the external-link extension only ever saw the
+     * links it parsed, not the ones written as HTML.
+     */
+    private function sanitize(string $html): string
+    {
+        $config = (new HtmlSanitizerConfig)
+            ->allowSafeElements()
+            // Relative URLs survive the sanitizer so that resolveHtmlUrls()
+            // can point them at the repository; what it cannot resolve it
+            // empties itself.
+            ->allowRelativeLinks()
+            ->allowRelativeMedias()
+            ->allowLinkSchemes(['http', 'https', 'mailto'])
+            ->allowMediaSchemes(['http', 'https'])
+            ->forceAttribute('a', 'rel', 'external nofollow noopener noreferrer')
+            ->forceAttribute('a', 'target', '_blank');
+
+        return (new HtmlSanitizer($config))->sanitizeFor('body', $html);
+    }
+
+    /**
+     * Point the relative URLs written as raw HTML at the repository too.
+     *
+     * The tree pass below only sees links and images the markdown parser
+     * made; a README's `<img src="art/header.png">` is one string to the
+     * parser. This runs over the sanitized output, which is serialized with
+     * double-quoted attributes, so the values are addressable without
+     * parsing the document a second time. URLs the tree pass already
+     * resolved are absolute and fall straight through.
+     */
+    private function resolveHtmlUrls(
+        string $html,
+        ?string $linkBase,
+        ?string $imageBase,
+        ?string $linkRootBase,
+        ?string $imageRootBase,
+    ): string {
+        return (string) preg_replace_callback(
+            '/ (href|src|srcset)="([^"]*)"/i',
+            function (array $match) use ($linkBase, $imageBase, $linkRootBase, $imageRootBase): string {
+                $attribute = strtolower($match[1]);
+                $media = $attribute !== 'href';
+
+                // srcset is a comma-separated list, each entry a URL and an
+                // optional density or width descriptor.
+                $parts = $attribute === 'srcset' ? explode(',', $match[2]) : [$match[2]];
+
+                $resolved = array_map(function (string $part) use ($media, $linkBase, $imageBase, $linkRootBase, $imageRootBase): string {
+                    $trimmed = trim($part);
+                    [$url, $descriptor] = array_pad(preg_split('/\s+/', $trimmed, 2) ?: [], 2, '');
+
+                    $url = html_entity_decode((string) $url, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+                    if ($url === '' || str_starts_with($url, '#') || $this->isAbsolute($url)) {
+                        return $trimmed;
+                    }
+
+                    $root = str_starts_with($url, '/');
+                    $base = $media
+                        ? ($root ? $imageRootBase : $imageBase)
+                        : ($root ? $linkRootBase : $linkBase);
+
+                    $url = $base === null ? '' : $this->join($base, $url);
+
+                    return trim(htmlspecialchars($url, ENT_QUOTES | ENT_HTML5).' '.$descriptor);
+                }, $parts);
+
+                return ' '.$attribute.'="'.implode(', ', $resolved).'"';
+            },
+            $html,
+        ) ?: $html;
     }
 
     /**
