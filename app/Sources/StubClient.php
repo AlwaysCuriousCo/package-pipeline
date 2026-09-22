@@ -61,6 +61,11 @@ class StubClient implements RepositoryClient, SourceClient
         throw $this->unsupported();
     }
 
+    public function hasWebhook(int $id): bool
+    {
+        throw $this->unsupported();
+    }
+
     private function unsupported(): UnsupportedProviderException
     {
         return new UnsupportedProviderException(

@@ -178,6 +178,19 @@ class GitLabClient implements RepositoryClient
         $this->ok($response);
     }
 
+    public function hasWebhook(int $id): bool
+    {
+        $response = $this->request()->get("/projects/{$this->projectId()}/hooks/{$id}");
+
+        if ($response->status() === 404) {
+            return false;
+        }
+
+        $this->ok($response);
+
+        return true;
+    }
+
     /**
      * The project's default branch, or null when the project is out of reach.
      */

@@ -78,4 +78,9 @@ interface RepositoryClient
      * error — the desired state is the same either way.
      */
     public function deleteWebhook(int $id): void;
+
+    /**
+     * Whether the webhook with this id still exists on the repository.
+     */
+    public function hasWebhook(int $id): bool;
 }

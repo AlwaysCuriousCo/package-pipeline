@@ -519,4 +519,44 @@ class PackageWebhookRegistrationTest extends TestCase
 
         $this->assertSame(8675309, $uncovered->refresh()->webhook_id);
     }
+
+    public function test_a_webhook_deleted_on_github_is_noticed_and_offered_again(): void
+    {
+        Http::fake([
+            'api.github.com/repos/*/hooks/8675309' => Http::response(['message' => 'Not Found'], 404),
+            'api.github.com/repos/*/hooks' => Http::response(['id' => 42], 201),
+        ]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/other/gizmos',
+            'source_id' => $this->tokenSource('other')->id,
+        ]);
+        $package->forceFill(['webhook_id' => 8675309, 'webhook_secret' => 's'])->save();
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getKey()])
+            ->assertActionVisible(TestAction::make('createWebhook'))
+            ->callAction(TestAction::make('createWebhook'));
+
+        $this->assertSame(42, $package->refresh()->webhook_id);
+    }
+
+    public function test_an_unreachable_provider_does_not_forget_the_webhook(): void
+    {
+        Http::fake(['api.github.com/*' => Http::response(status: 500)]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $package = Package::factory()->create([
+            'repository' => 'https://github.com/other/gizmos',
+            'source_id' => $this->tokenSource('other')->id,
+        ]);
+        $package->forceFill(['webhook_id' => 8675309, 'webhook_secret' => 's'])->save();
+
+        Livewire::test(ViewPackage::class, ['record' => $package->getKey()])
+            ->assertActionHidden(TestAction::make('createWebhook'));
+
+        $this->assertSame(8675309, $package->refresh()->webhook_id);
+    }
 }

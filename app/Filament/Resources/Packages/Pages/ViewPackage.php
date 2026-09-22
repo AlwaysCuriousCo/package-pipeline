@@ -11,6 +11,7 @@ use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Widgets\PackageDownloadsChart;
 use App\Filament\Resources\Packages\Widgets\PackageSyncProgress;
 use App\Models\Package;
+use App\Services\GitHub\WebhookRegistrar;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
@@ -44,6 +45,13 @@ class ViewPackage extends ViewRecord
         $package = $this->getRecord();
 
         $this->installRepository = $package instanceof Package ? $package->repository_id : null;
+
+        // The auto-sync badge is only honest if the hook it names still
+        // exists, so it is checked here rather than trusted from the column.
+        // ponytail: one provider request per page view; cache it if that shows.
+        if ($package instanceof Package) {
+            app(WebhookRegistrar::class)->verify($package);
+        }
     }
 
     /**

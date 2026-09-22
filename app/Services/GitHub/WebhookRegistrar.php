@@ -116,6 +116,32 @@ class WebhookRegistrar
     }
 
     /**
+     * Confirm with the provider that the package's repository hook still
+     * exists, forgetting it when it does not.
+     *
+     * A hook deleted on GitHub leaves the stored id behind, and the package
+     * would read as auto-syncing forever. Once forgotten, coverage falls to
+     * None and the panel offers to create it again. The provider being
+     * unreachable is not evidence the hook is gone, so that changes nothing.
+     */
+    public function verify(Package $package): WebhookCoverage
+    {
+        if ($package->webhook_id !== null) {
+            $exists = rescue(fn (): bool => $package->client()->hasWebhook($package->webhook_id), true, report: false);
+
+            if (! $exists) {
+                $package->forceFill([
+                    'webhook_id' => null,
+                    'webhook_secret' => null,
+                    'webhook_error' => null,
+                ])->save();
+            }
+        }
+
+        return $package->webhookCoverage();
+    }
+
+    /**
      * Remove the repository hook, if this package has one.
      *
      * Called as a package is deleted, where there is nowhere left to report a

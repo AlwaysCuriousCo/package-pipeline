@@ -208,6 +208,19 @@ class GitHubClient implements RepositoryClient
         $this->ok($response);
     }
 
+    public function hasWebhook(int $id): bool
+    {
+        $response = $this->request()->get("/repos/{$this->repositoryPath}/hooks/{$id}");
+
+        if ($response->status() === 404) {
+            return false;
+        }
+
+        $this->ok($response);
+
+        return true;
+    }
+
     /**
      * @return array<string, string>
      */
