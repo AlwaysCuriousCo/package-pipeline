@@ -377,6 +377,22 @@ The admin panel loads `resources/css/filament/admin/theme.css`, compiled by Vite
 
 Tailwind generates utilities only for files named by the `@source` globs in that file, which currently cover `app/Filament/` and `resources/views/filament/`. **A Blade view outside those paths that uses a utility class renders unstyled** — no build error, nothing in the browser console, just a `div` that ignored `grid` and `p-4`. Add an `@source` line when you add a view root.
 
+#### The optional Flux theme
+
+`alwayscurious/filament-flux-theme` is a separately licensed package that restyles the panel to match the Flux design language. It is not required, it is not bundled, and no licence key is checked anywhere — the registry ships no token and asks for none. Installations that hold a licence simply install the package, and both halves of the wiring notice on their own:
+
+- `AdminPanelProvider` registers the plugin behind a `class_exists()` check, so the panel picks it up with no configuration.
+- `theme.css` imports the package's stylesheet, and the `optional-flux-theme` plugin in `vite.config.js` strips that import when the package is absent. Tailwind resolves `@import` with enhanced-resolve, which throws on a missing file and never reaches Vite's resolver, so the line has to go before Tailwind is handed the source — an alias or a virtual module cannot stand in for it.
+
+To install it, register the repository it is served from, put your token in `auth.json` (which is gitignored — never commit it), then require it and rebuild:
+
+```bash
+composer require alwayscurious/filament-flux-theme
+npm run build
+```
+
+Without it the panel renders in the stock Filament theme, and every test still passes. Removing it later is `composer remove` plus a rebuild; nothing else references it.
+
 Neither `npm run dev` nor `npm run build` is optional in a fresh checkout. `->viteTheme()` resolves the stylesheet through Laravel's Vite helper, which throws `ViteManifestNotFoundException` when there is no `public/build/manifest.json` and no dev server running — so every admin page returns a 500 rather than rendering unstyled. That is the loud failure; the quiet one is the `@source` glob above.
 
 ## Deploying

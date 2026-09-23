@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use AlwaysCurious\FilamentFluxTheme\FluxTheme;
 use App\Filament\Auth\ResetPassword;
 use App\Filament\Livewire\EmailNotificationsForm;
 use App\Filament\Pages\ApiTokens;
@@ -131,6 +132,13 @@ class AdminPanelProvider extends PanelProvider
                             : null,
                     ]))
             )
+            // The Flux theme is an optional, separately licensed package. An
+            // installation that holds a licence requires it itself and the
+            // plugin registers on sight; everyone else runs the stock Filament
+            // theme, with the stylesheet import stripped at build time to
+            // match. Nothing here asks for a licence key, and nothing breaks
+            // when the package is absent.
+            ->plugins(class_exists(FluxTheme::class) ? [FluxTheme::make()] : [])
             ->userMenuItems([
                 'profile' => MenuItem::make()
                     ->label(fn (): string => auth()->user()->name)
