@@ -17,6 +17,9 @@
 
 @import '../../../../vendor/filament/filament/resources/css/theme.css';
 
+/* Flux overrides — must come after Filament's base theme. */
+@import '../../../../vendor/alwayscurious/filament-flux-theme/resources/css/theme.css';
+
 @source '../../../../app/Filament/**/*';
 @source '../../../../resources/views/filament/**/*';
 /* Blade components the panel's own views render — x-copy-line and friends. */

@@ -29,6 +29,7 @@ use Illuminate\Support\Facades\Route as RouteFacade;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Joaopaulolndev\FilamentEditProfile\FilamentEditProfilePlugin;
 use Joaopaulolndev\FilamentEditProfile\Pages\EditProfilePage;
+use MrFelipeMartins\Wirebones\Runtime\BuildModeMiddleware;
 
 class AdminPanelProvider extends PanelProvider
 {
@@ -148,6 +149,12 @@ class AdminPanelProvider extends PanelProvider
             // often nobody watching the page it happened on.
             ->databaseNotifications()
             ->middleware([
+                // The panel lists the web middleware individually rather than
+                // using the group, so Wirebones' build-mode middleware — which
+                // it prepends to `web` — would never run on /admin. Named here
+                // so skeleton captures can authenticate. It is inert unless the
+                // capture query parameter is present on a local/token request.
+                BuildModeMiddleware::class,
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,

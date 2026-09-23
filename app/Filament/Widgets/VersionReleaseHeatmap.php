@@ -9,6 +9,7 @@ use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Filament\Widgets\Widget;
 use Illuminate\Support\Collection;
+use MrFelipeMartins\Wirebones\Attributes\Wirebone;
 
 /**
  * A GitHub-style contribution graph of every tagged release across all tracked
@@ -19,6 +20,7 @@ use Illuminate\Support\Collection;
  * yet, whereas this one always ends in the current month with a full year of
  * history behind it.
  */
+#[Wirebone(route: '/admin')]
 class VersionReleaseHeatmap extends Widget
 {
     protected string $view = 'filament.widgets.version-release-heatmap';

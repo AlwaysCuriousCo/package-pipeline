@@ -7,6 +7,7 @@ use App\Enums\SubscriptionStatus;
 use App\Models\Subscription;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
+use MrFelipeMartins\Wirebones\Attributes\Wirebone;
 
 /**
  * The four numbers an operator checks daily: recurring revenue, live
@@ -20,6 +21,7 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
  * Hidden entirely while billing is disabled, and from anybody who cannot
  * see subscriptions.
  */
+#[Wirebone(route: '/admin')]
 class BillingTotals extends StatsOverviewWidget
 {
     protected static ?int $sort = 5;

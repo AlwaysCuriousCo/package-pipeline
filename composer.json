@@ -7,6 +7,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.4",
+        "alwayscurious/filament-flux-theme": "@dev",
         "bezhansalleh/filament-shield": "^4.3",
         "composer/metadata-minifier": "^1.0",
         "composer/semver": "^3.4",
@@ -17,6 +18,7 @@
         "laravel/socialite": "^5.29",
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
+        "mrfelipemartins/wirebones": "^0.1.1",
         "resend/resend-php": "^1.0",
         "spatie/laravel-activitylog": "^4.12",
         "stripe/stripe-php": "^21.2"
@@ -104,5 +106,10 @@
         }
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "repositories": [{
+        "name": "filament-flux-theme",
+        "type": "path",
+        "url": "../package/filament-flux-theme"
+    }]
 }

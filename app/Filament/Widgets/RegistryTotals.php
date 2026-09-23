@@ -7,6 +7,7 @@ use App\Models\PackageVersion;
 use App\Models\Repository;
 use Filament\Widgets\Concerns\CanPoll;
 use Filament\Widgets\Widget;
+use MrFelipeMartins\Wirebones\Attributes\Wirebone;
 
 /**
  * The registry's four running totals — repositories, packages, versions,
@@ -16,6 +17,7 @@ use Filament\Widgets\Widget;
  * The top row is what the registry hosts, the bottom row what it has
  * shipped; the two tones follow that split.
  */
+#[Wirebone(route: '/admin')]
 class RegistryTotals extends Widget
 {
     use CanPoll;
