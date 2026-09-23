@@ -173,8 +173,9 @@ class PageMarkdown
      * on its text, so that a path quoted inside a code sample stays the text
      * the author wrote.
      *
-     * Anchors already carrying a rel are the parsed ones, and fragment links
-     * point within this page — neither is touched.
+     * Fragment links point within this page, so they are left alone; every
+     * other anchor has its rel and target replaced, including one that came
+     * with its own.
      */
     private function finishAnchorsAndUrls(
         string $html,
@@ -212,7 +213,12 @@ class PageMarkdown
         }
 
         foreach ($document->body->querySelectorAll('a[href]') as $anchor) {
-            if ($anchor->hasAttribute('rel') || str_starts_with($anchor->getAttribute('href'), '#')) {
+            // A link into this page is not outbound and is left as it is.
+            // Everything else is overwritten rather than topped up: the rel
+            // a README wrote is the author's opinion of how this registry
+            // should vouch for their links, and a parsed link is only being
+            // given back the values it already carries.
+            if (str_starts_with($anchor->getAttribute('href'), '#')) {
                 continue;
             }
 

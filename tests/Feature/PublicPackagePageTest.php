@@ -305,7 +305,7 @@ class PublicPackagePageTest extends TestCase
     {
         $this->package([
             'page_source_path' => 'README.md',
-            'page_source_body' => "<div align=\"center\"><picture><img src=\"art/header.png\" onclick=\"steal()\"></picture></div>\n\n# Widgets\n\n- [x] shipped\n\n## Docs\n\n[jump](#docs)\n\n```html\n<img src=\"art/sample.png\">\n```\n\nSee the [docs](docs/install.md).\n\n<script>alert('xss')</script>\n\n![logo](art/logo.png)\n",
+            'page_source_body' => "<div align=\"center\"><picture><img src=\"art/header.png\" onclick=\"steal()\"></picture></div>\n\n# Widgets\n\n- [x] shipped\n\n## Docs\n\n[jump](#docs)\n\n```html\n<img src=\"art/sample.png\">\n```\n\n<a href=\"https://evil.test\" rel=\"dofollow\" target=\"_top\">theirs</a>\n\nSee the [docs](docs/install.md).\n\n<script>alert('xss')</script>\n\n![logo](art/logo.png)\n",
         ]);
 
         $response = $this->get('/p/acme/widgets');
@@ -325,6 +325,11 @@ class PublicPackagePageTest extends TestCase
         // An anchor into the page itself is not an outbound link and does
         // not open a tab of its own.
         $response->assertSee('<a href="#docs">jump</a>', false);
+        // A README does not get to choose how this registry vouches for
+        // its links, or where they open.
+        $response->assertSee('rel="external nofollow noopener noreferrer"', false);
+        $response->assertDontSee('dofollow', false);
+        $response->assertDontSee('_top', false);
         // A path quoted in a code sample is text, not a URL to resolve.
         $response->assertSee('art/sample.png', false);
         $response->assertDontSee('asset/art/sample.png', false);
