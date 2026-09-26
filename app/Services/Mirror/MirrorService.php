@@ -300,6 +300,70 @@ class MirrorService
     }
 
     /**
+     * Drop what is cached for a package — all of it, or one release — so the
+     * next request fetches it from the upstream again.
+     *
+     * The only way anything leaves an upstream that keeps its versions, and
+     * the way to take back a pinned release that should not have been. A
+     * single release is cut out of the stored document and the document's
+     * validators cleared, so the next request re-reads the upstream in full
+     * rather than being told by a 304 that nothing changed.
+     *
+     * @return int the archives deleted
+     */
+    public function forget(string $name, ?string $version = null): int
+    {
+        $name = mb_strtolower($name);
+        $documents = MirroredPackage::query()->where('name', $name);
+        $archives = MirroredArchive::query()->where('name', $name);
+
+        if ($version !== null) {
+            $references = [];
+
+            foreach ($documents->whereNotNull('payload')->get() as $document) {
+                $decoded = json_decode((string) $document->payload, true);
+                $kept = [];
+
+                foreach ((is_array($decoded) ? $this->versionsIn($decoded, $name) : null) ?? [] as $entry) {
+                    if (is_array($entry) && ltrim((string) ($entry['version'] ?? ''), 'v') === ltrim($version, 'v')) {
+                        $references[] = $entry['dist']['reference'] ?? null;
+
+                        continue;
+                    }
+
+                    $kept[] = $entry;
+                }
+
+                unset($decoded['minified']);
+                $payload = json_encode([...$decoded, 'packages' => [$name => $kept]], JSON_THROW_ON_ERROR);
+
+                $document->forceFill([
+                    'payload' => $payload,
+                    'digest' => hash('xxh128', $payload),
+                    'changed_at' => now(),
+                    'upstream_etag' => null,
+                    'upstream_last_modified' => null,
+                    'fetched_at' => now()->subYear(),
+                ])->save();
+            }
+
+            $archives->whereIn('reference', array_filter($references, is_string(...)));
+        } else {
+            $documents->delete();
+        }
+
+        $doomed = $archives->get();
+
+        foreach ($doomed as $archive) {
+            $this->archives->disk()->delete((string) $archive->path);
+        }
+
+        MirroredArchive::query()->whereKey($doomed->modelKeys())->delete();
+
+        return $doomed->count();
+    }
+
+    /**
      * The stored archive for one mirrored reference, fetching and verifying it
      * the first time, or null when this registry will not serve one.
      *
@@ -665,6 +729,11 @@ class MirrorService
         // "no such package": that would hide the package for as long as the
         // negative entry lives, and hide the outage entirely.
         if (in_array($response->status(), [404, 410], true)) {
+            // A kept release outlives the upstream withdrawing the package.
+            if ($this->keeps($upstream, $cached, $dev)) {
+                return $this->confirm($cached);
+            }
+
             return $this->remember($upstream, $cached, $name, $dev, null, $response);
         }
 
@@ -698,7 +767,78 @@ class MirrorService
         // they do not have, rather than 404. Same fact, same negative entry.
         $has = $this->versionsIn($document, $name) !== null;
 
+        if ($this->keeps($upstream, $cached, $dev)) {
+            return $has
+                ? $this->remember($upstream, $cached, $name, $dev, $this->keptInto($cached, $name, $document), $response)
+                : $this->confirm($cached);
+        }
+
         return $this->remember($upstream, $cached, $name, $dev, $has ? $body : null, $response);
+    }
+
+    /**
+     * Whether what is cached must survive this refresh.
+     *
+     * Releases only: a branch document follows the upstream, because
+     * freezing `dev-main` at whatever commit was first cached is not a
+     * rollback, it is a branch that stops moving.
+     *
+     * @phpstan-assert-if-true MirroredPackage $cached
+     */
+    private function keeps(Upstream $upstream, ?MirroredPackage $cached, bool $dev): bool
+    {
+        return $upstream->keep_versions && ! $dev && $cached instanceof MirroredPackage && $cached->found();
+    }
+
+    /**
+     * The upstream's new document with every release already cached kept in
+     * it, exactly as first cached.
+     *
+     * The cached copy of a version wins over the upstream's. A re-tag that
+     * points 1.2.0 at a different commit is exactly what a pinned release is
+     * protecting against, and the archive this registry already verified is
+     * still the one the lock files in the wild were written against.
+     *
+     * Written expanded rather than minified, so the stored document says
+     * plainly what it holds; versionsIn() reads either.
+     *
+     * ponytail: a version whose zip was never downloaded is kept in metadata
+     * only — if the upstream withdraws it, its archive is gone too. Warm the
+     * archives on first sight if that ever matters.
+     *
+     * @param  array<mixed>  $document
+     */
+    private function keptInto(MirroredPackage $cached, string $name, array $document): string
+    {
+        $previous = json_decode((string) $cached->payload, true);
+
+        $kept = [];
+
+        foreach ((is_array($previous) ? $this->versionsIn($previous, $name) : null) ?? [] as $version) {
+            if (is_array($version) && is_string($version['version'] ?? null)) {
+                $kept[$version['version']] = $version;
+            }
+        }
+
+        $versions = [];
+
+        foreach ($this->versionsIn($document, $name) ?? [] as $version) {
+            $key = is_array($version) ? ($version['version'] ?? null) : null;
+
+            if (is_string($key) && isset($kept[$key])) {
+                $version = $kept[$key];
+                unset($kept[$key]);
+            }
+
+            $versions[] = $version;
+        }
+
+        unset($document['minified']);
+
+        return json_encode([
+            ...$document,
+            'packages' => [$name => [...$versions, ...array_values($kept)]],
+        ], JSON_THROW_ON_ERROR);
     }
 
     /**

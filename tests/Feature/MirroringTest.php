@@ -977,4 +977,119 @@ class MirroringTest extends TestCase
             ->assertOk()
             ->assertJsonPath('advisories.acme/widgets', []);
     }
+
+    public function test_the_basic_username_defaults_to_token_and_can_be_named(): void
+    {
+        $repository = Repository::default();
+        $upstream = Upstream::factory()->create([
+            'repository_id' => $repository->getKey(),
+            'url' => self::UPSTREAM,
+            'token' => 'licence-key',
+        ]);
+
+        $this->fakeUpstream([
+            // A fresh response each time: a faked body is a stream, read once.
+            'upstream.test/p2/*' => fn () => Http::response($this->upstreamDocument()),
+        ]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/p2/')
+            && $request->header('Authorization') === ['Basic '.base64_encode('token:licence-key')]);
+
+        // A licence server such as Flux checks the username against the key.
+        $upstream->update(['username' => 'me@example.com']);
+        MirroredPackage::query()->delete();
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/p2/')
+            && $request->header('Authorization') === ['Basic '.base64_encode('me@example.com:licence-key')]);
+    }
+
+    /**
+     * A repository mirroring one upstream that keeps its versions, already
+     * holding a stale copy of v6.0.0.
+     */
+    private function keeping(): Repository
+    {
+        $repository = $this->mirroring();
+        $repository->upstreams->first()?->update(['keep_versions' => true]);
+
+        $payload = json_encode($this->upstreamDocument(), JSON_THROW_ON_ERROR);
+
+        MirroredPackage::factory()->stale()->create([
+            'upstream_id' => $repository->upstreams->first()?->getKey(),
+            'name' => 'symfony/console',
+            'is_dev' => false,
+            'payload' => $payload,
+            'digest' => hash('xxh128', $payload),
+        ]);
+
+        return $repository;
+    }
+
+    public function test_a_kept_release_survives_the_upstream_withdrawing_or_retagging_it(): void
+    {
+        $this->keeping();
+
+        $next = $this->upstreamDocument();
+        $retagged = $next['packages']['symfony/console'][0];
+        $retagged['dist']['reference'] = str_repeat('b', 40);
+        $next['packages']['symfony/console'] = [
+            ['version' => 'v7.0.0', 'version_normalized' => '7.0.0.0', 'name' => 'symfony/console',
+                'dist' => ['type' => 'zip', 'url' => 'https://cdn.upstream.test/zipball/'.str_repeat('c', 40), 'reference' => str_repeat('c', 40), 'shasum' => sha1('seven')]],
+            $retagged,
+        ];
+        $next['minified'] = null;
+
+        $this->fakeUpstream(['upstream.test/p2/symfony/console.json' => Http::response($next)]);
+
+        $versions = collect($this->versionsOf($this->getJson('/p2/symfony/console.json')->assertOk()))->keyBy('version');
+
+        $this->assertTrue($versions->has('v7.0.0'));
+        // The re-tag is refused: v6.0.0 still points at what was first cached.
+        $this->assertSame(self::REFERENCE, $versions['v6.0.0']['dist']['reference']);
+    }
+
+    public function test_a_kept_package_outlives_the_upstream_deleting_it(): void
+    {
+        $this->keeping();
+
+        $this->fakeUpstream(['upstream.test/p2/symfony/console.json' => Http::response('', 404)]);
+
+        $versions = $this->versionsOf($this->getJson('/p2/symfony/console.json')->assertOk());
+
+        $this->assertSame('v6.0.0', $versions[0]['version']);
+    }
+
+    public function test_forgetting_a_kept_release_lets_the_upstream_supply_it_again(): void
+    {
+        $this->keeping();
+
+        $retagged = $this->upstreamDocument();
+        $retagged['packages']['symfony/console'][0]['dist']['reference'] = str_repeat('b', 40);
+
+        $this->fakeUpstream(['upstream.test/p2/symfony/console.json' => Http::response($retagged)]);
+
+        $this->artisan('mirror:forget', ['package' => 'symfony/console', 'version' => '6.0.0'])->assertSuccessful();
+
+        $versions = $this->versionsOf($this->getJson('/p2/symfony/console.json')->assertOk());
+
+        $this->assertSame(str_repeat('b', 40), $versions[0]['dist']['reference']);
+    }
+
+    public function test_a_kept_upstream_is_left_alone_by_pruning(): void
+    {
+        $repository = $this->keeping();
+        MirroredPackage::query()->update(['used_at' => now()->subDays(365)]);
+
+        $this->artisan('mirror:prune')->assertSuccessful();
+
+        $this->assertDatabaseCount('mirrored_packages', 1);
+
+        $this->artisan('mirror:forget', ['package' => 'symfony/console'])->assertSuccessful();
+
+        $this->assertDatabaseCount('mirrored_packages', 0);
+    }
 }

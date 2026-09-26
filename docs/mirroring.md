@@ -52,8 +52,10 @@ one.
 | --- | --- |
 | Name | A label for the admin. The URL is the identity. |
 | Repository URL | The root of a Composer v2 repository — `https://repo.packagist.org` for packagist.org, or another private registry, a corporate proxy, or another installation of this app. |
-| Access token | Sent as the HTTP Basic password (with the username `token`, which every Composer repository ignores). Only needed for an upstream that requires one. |
+| Username | The HTTP Basic username sent with the token. Blank sends `token`, which most Composer repositories ignore; set it for a licence server that checks it — Flux, for example, wants your licence email. |
+| Access token | Sent as the HTTP Basic password. Only needed for an upstream that requires one. |
 | Enabled | Turning an upstream off stops it being consulted but keeps what is already cached. |
+| Keep every cached version | Composer upstreams only. See [Keeping versions](#keeping-versions). |
 
 Add more than one and they are consulted **in order**: the first upstream that
 has a package wins, including over a later one that might have a higher version.
@@ -328,6 +330,33 @@ it is the knob that decides what the mirror costs.
 The sweep also deletes mirrored files on the disk that no row claims — what a
 deleted upstream's cascade leaves behind, and what a crash between storing an
 archive and recording it leaves.
+
+### Keeping versions
+
+An upstream with **Keep every cached version** on is a store rather than a
+cache — the setting for a commercial upstream (a paid component library, say)
+whose releases you want to be able to roll back to whatever the vendor does:
+
+- **A release, once cached, stays exactly as first cached.** New releases still
+  appear on the usual metadata TTL, but one the upstream withdraws stays
+  listed, and one it re-tags onto a different commit keeps pointing at the
+  commit — and the archive — this registry first verified.
+- **A package the upstream deletes (404) keeps being served**, as does
+  everything when the upstream stops answering or the licence lapses (401/403
+  is already treated as the upstream being down).
+- **`mirror:prune` leaves it alone.**
+- **Branches follow the upstream.** Freezing `dev-main` is not a rollback.
+
+"Cached" means the metadata. The archive for a release is fetched the first
+time something installs it — a release nobody has installed yet is only as
+durable as the upstream's copy of its zip.
+
+The only way out is by hand:
+
+```bash
+php artisan mirror:forget livewire/flux-pro 2.1.0   # one release: refetched fresh next time
+php artisan mirror:forget livewire/flux-pro         # the whole package
+```
 
 ### It does not collide with `archives:clean`
 

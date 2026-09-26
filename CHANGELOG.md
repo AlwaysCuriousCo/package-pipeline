@@ -14,6 +14,12 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Licensed upstreams and kept versions.** An upstream now takes an optional
+  HTTP Basic **username** (blank still sends `token`) for licence servers that
+  check it, such as Flux's. A Composer upstream can **keep every cached
+  version**: releases survive the upstream withdrawing or re-tagging them and
+  are skipped by `mirror:prune`; `php artisan mirror:forget <package> [version]`
+  removes one. See [docs/mirroring.md](docs/mirroring.md#keeping-versions).
 - **Claude integration.** **API tokens → Download Claude skill** in the panel
   (or `php artisan claude:skill` for a shared one) builds a Claude Skill that
   carries a read-only token, so Claude can list and install this registry's

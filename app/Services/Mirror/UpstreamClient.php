@@ -317,11 +317,11 @@ final class UpstreamClient
             return $request;
         }
 
-        // The username is ignored by every Composer repository that reads a
-        // token this way — including this app, whose own instructions are
-        // `composer config http-basic.<host> token <your-token>` — so one
-        // credential field is all an upstream needs.
-        return $request->withBasicAuth('token', (string) $this->upstream->token);
+        // Most Composer repositories ignore the username — this app's own
+        // instructions are `composer config http-basic.<host> token <token>` —
+        // so `token` is the default. Licence servers that check it get the one
+        // the operator configured.
+        return $request->withBasicAuth($this->upstream->basicUsername(), (string) $this->upstream->token);
     }
 
     /**

@@ -154,6 +154,7 @@ class RepositoryForm
                             ->default(Ecosystem::Composer)
                             ->required()
                             ->native(false)
+                            ->live()
                             ->helperText('Which protocol this upstream speaks — and therefore which of this repository\'s surfaces consults it.'),
                         TextInput::make('url')
                             ->label('Repository URL')
@@ -162,6 +163,10 @@ class RepositoryForm
                             ->maxLength(255)
                             ->placeholder('https://repo.packagist.org')
                             ->helperText('The root the protocol resolves from: a Composer v2 repository (https://repo.packagist.org), an npm registry (https://registry.npmjs.org), or a PEP 691 simple index (https://pypi.org/simple).'),
+                        TextInput::make('username')
+                            ->maxLength(255)
+                            ->placeholder('token')
+                            ->helperText('The HTTP Basic username sent with the token. Leave blank unless the upstream checks it — a licence server such as Flux wants your licence email.'),
                         TextInput::make('token')
                             ->label('Access token')
                             ->password()
@@ -177,11 +182,20 @@ class RepositoryForm
                             // because this is the field that creates the
                             // hazard: everything an upstream serves is served
                             // on through this repository's own read rules.
-                            ->helperText('Sent as the HTTP Basic password. Anything a credentialed upstream serves is served on under this repository\'s access rules — so a public repository with a private upstream republishes it to everyone.'),
+                            ->helperText('Sent as the HTTP Basic password (a bearer token for npm, unless a username is set). Anything a credentialed upstream serves is served on under this repository\'s access rules — so a public repository with a private upstream republishes it to everyone.'),
                         Toggle::make('enabled')
                             ->helperText('Turning an upstream off stops it being consulted but keeps what is already cached.'),
+                        Toggle::make('keep_versions')
+                            ->label('Keep every cached version')
+                            ->visible(fn (Get $get): bool => self::isComposer($get('ecosystem')))
+                            ->helperText('A release cached from this upstream stays installable exactly as first cached — even after the upstream withdraws or re-tags it, or stops answering — and mirror:prune leaves it alone. Remove one with mirror:forget.'),
                     ]),
             ]);
+    }
+
+    private static function isComposer(mixed $ecosystem): bool
+    {
+        return ($ecosystem instanceof Ecosystem ? $ecosystem : Ecosystem::tryFrom((string) $ecosystem)) === Ecosystem::Composer;
     }
 
     /**
