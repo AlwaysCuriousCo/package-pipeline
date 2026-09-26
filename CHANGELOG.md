@@ -14,6 +14,10 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Composer v1 upstreams, and a Test button.** Mirroring now reads v1
+  repositories (inline `packages`, Satis `includes`, lazy and hashed
+  `providers`), with a per-upstream protocol choice that defaults to detecting
+  it. **Test** on an upstream reports what it supports and recommends one.
 - **Licensed upstreams and kept versions.** An upstream now takes an optional
   HTTP Basic **username** (blank still sends `token`) for licence servers that
   check it, such as Flux's. A Composer upstream can **keep every cached

@@ -26,7 +26,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @see docs/mirroring.md
  */
-#[Fillable(['name', 'url', 'username', 'token', 'ecosystem', 'enabled', 'keep_versions', 'position'])]
+#[Fillable(['name', 'url', 'username', 'token', 'ecosystem', 'protocol', 'enabled', 'keep_versions', 'position'])]
 class Upstream extends Model
 {
     /** @use HasFactory<UpstreamFactory> */
@@ -60,7 +60,7 @@ class Upstream extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'url', 'username', 'ecosystem', 'enabled', 'keep_versions', 'repository_id'];
+        return ['name', 'url', 'username', 'ecosystem', 'protocol', 'enabled', 'keep_versions', 'repository_id'];
     }
 
     /**

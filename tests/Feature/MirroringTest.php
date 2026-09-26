@@ -11,6 +11,8 @@ use App\Models\Repository;
 use App\Models\Token;
 use App\Models\Upstream;
 use App\Services\Mirror\MirrorService;
+use App\Services\Mirror\UpstreamClient;
+use App\Support\EgressPolicy;
 use Composer\MetadataMinifier\MetadataMinifier;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -1091,5 +1093,150 @@ class MirroringTest extends TestCase
         $this->artisan('mirror:forget', ['package' => 'symfony/console'])->assertSuccessful();
 
         $this->assertDatabaseCount('mirrored_packages', 0);
+    }
+
+    /**
+     * One v1 version entry: keyed by version in the document, dist included.
+     *
+     * @return array<string, mixed>
+     */
+    private function v1Version(string $version, string $reference = self::REFERENCE): array
+    {
+        return [
+            'name' => 'livewire/flux-pro',
+            'version' => $version,
+            'dist' => ['type' => 'zip', 'url' => self::UPSTREAM.'/dist/'.$reference.'.zip', 'reference' => $reference, 'shasum' => sha1(self::ZIP)],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function v1Packages(): array
+    {
+        return ['packages' => ['livewire/flux-pro' => [
+            '2.1.0' => $this->v1Version('2.1.0'),
+            'dev-main' => $this->v1Version('dev-main', str_repeat('d', 40)),
+        ]]];
+    }
+
+    public function test_a_v1_repository_listing_its_packages_inline_is_mirrored_split_into_releases_and_branches(): void
+    {
+        $this->mirroring();
+        Http::fake(['upstream.test/packages.json' => fn () => Http::response($this->v1Packages())]);
+
+        $releases = $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro');
+        $branches = $this->versionsOf($this->getJson('/p2/livewire/flux-pro~dev.json')->assertOk(), 'livewire/flux-pro');
+
+        $this->assertSame(['2.1.0'], array_column($releases, 'version'));
+        $this->assertSame(['dev-main'], array_column($branches, 'version'));
+        $this->assertSame(url('/dist/livewire/flux-pro/'.self::REFERENCE.'.zip'), $releases[0]['dist']['url']);
+
+        $this->getJson('/p2/livewire/nothing.json')->assertNotFound();
+    }
+
+    public function test_a_satis_style_v1_repository_is_read_through_its_verified_includes(): void
+    {
+        $this->mirroring();
+
+        $include = json_encode($this->v1Packages(), JSON_THROW_ON_ERROR);
+
+        Http::fake([
+            'upstream.test/packages.json' => fn () => Http::response(['packages' => [], 'includes' => ['include/all$abc.json' => ['sha1' => sha1($include)]]]),
+            'upstream.test/include/*' => Http::response($include),
+        ]);
+
+        $releases = $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro');
+
+        $this->assertSame('2.1.0', $releases[0]['version']);
+    }
+
+    public function test_a_v1_include_that_does_not_match_its_sha1_is_refused(): void
+    {
+        $this->mirroring();
+
+        Http::fake([
+            'upstream.test/packages.json' => fn () => Http::response(['includes' => ['include/all$abc.json' => ['sha1' => sha1('something else')]]]),
+            'upstream.test/include/*' => Http::response($this->v1Packages()),
+        ]);
+
+        $this->getJson('/p2/livewire/flux-pro.json')->assertNotFound();
+
+        // Treated as the upstream being broken, never as the package being absent.
+        $this->assertDatabaseCount('mirrored_packages', 0);
+    }
+
+    public function test_a_v1_repository_with_lazy_providers_is_asked_one_package_at_a_time(): void
+    {
+        $this->mirroring();
+
+        Http::fake([
+            'upstream.test/packages.json' => fn () => Http::response(['packages' => [], 'providers-lazy-url' => '/p/%package%.json']),
+            'upstream.test/p/livewire/flux-pro.json' => Http::response($this->v1Packages()),
+            'upstream.test/p/*' => Http::response('', 404),
+        ]);
+
+        $this->assertSame('2.1.0', $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro')[0]['version']);
+        $this->getJson('/p2/livewire/nothing.json')->assertNotFound();
+    }
+
+    public function test_a_v1_repository_with_hashed_providers_is_read_and_verified(): void
+    {
+        $this->mirroring();
+
+        $document = json_encode($this->v1Packages(), JSON_THROW_ON_ERROR);
+        $providers = json_encode(['providers' => ['livewire/flux-pro' => ['sha256' => hash('sha256', $document)]]], JSON_THROW_ON_ERROR);
+
+        Http::fake([
+            'upstream.test/packages.json' => fn () => Http::response([
+                'packages' => [],
+                'providers-url' => '/p/%package%$%hash%.json',
+                'provider-includes' => ['p/provider-all$%hash%.json' => ['sha256' => hash('sha256', $providers)]],
+            ]),
+            'upstream.test/p/provider-all*' => Http::response($providers),
+            'upstream.test/p/livewire/flux-pro*' => Http::response($document),
+        ]);
+
+        $this->assertSame('2.1.0', $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro')[0]['version']);
+    }
+
+    public function test_the_protocol_is_detected_preferring_v2_and_can_be_forced_to_v1(): void
+    {
+        $repository = $this->mirroring();
+
+        $include = json_encode($this->v1Packages(), JSON_THROW_ON_ERROR);
+        $v2 = $this->upstreamDocument('livewire/flux-pro');
+        $v2['packages']['livewire/flux-pro'][0]['version'] = '9.9.9';
+
+        Http::fake([
+            // Satis serves both.
+            'upstream.test/packages.json' => fn () => Http::response(['metadata-url' => '/p2/%package%.json', 'includes' => ['include/all.json' => ['sha1' => sha1($include)]]]),
+            'upstream.test/p2/*' => fn () => Http::response($v2),
+            'upstream.test/include/*' => fn () => Http::response($include),
+        ]);
+
+        $this->assertSame('9.9.9', $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro')[0]['version']);
+
+        $repository->upstreams->first()?->update(['protocol' => 'v1']);
+        MirroredPackage::query()->delete();
+
+        $this->assertSame('2.1.0', $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro')[0]['version']);
+    }
+
+    public function test_probing_an_upstream_recommends_a_protocol_and_explains_a_refusal(): void
+    {
+        $upstream = new Upstream(['url' => self::UPSTREAM]);
+        $probe = fn (): array => (new UpstreamClient($upstream, app(EgressPolicy::class)))->probe();
+
+        Http::fakeSequence('upstream.test/packages.json')
+            ->push(['metadata-url' => '/p2/%package%.json', 'includes' => ['a.json' => []]])
+            ->push(['includes' => ['a.json' => []]])
+            ->push('Unauthorized', 401)
+            ->push('<html>', 200);
+
+        $this->assertSame(['v2', true, true], [($r = $probe())['recommended'], $r['v2'], $r['v1']]);
+        $this->assertSame('v1', $probe()['recommended']);
+        $this->assertStringContainsString('refused the credentials', (string) $probe()['error']);
+        $this->assertNotNull($probe()['error']);
     }
 }
