@@ -14,6 +14,10 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Claude integration.** `php artisan claude:skill` builds a Claude Skill that
+  carries a read-only token, so Claude can list and install this registry's
+  packages from its sandbox. The management API now returns each package's
+  `ecosystem`. See [docs/claude.md](docs/claude.md).
 - **npm and Python packages.** The same deployment now answers as an npm
   registry (`/npm/`, with `npm publish` accepted) and a PEP 503 Python package
   index (`/pypi/simple/`, with `twine upload` at `/pypi/legacy/`) — one URL and

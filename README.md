@@ -477,6 +477,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/ecosystems.md](docs/ecosystems.md) — serving npm and Python packages beside Composer: client configuration, publishing, name rules, and what is not implemented yet.
+- [docs/claude.md](docs/claude.md) — letting Claude find and install packages from this registry through a Claude Skill.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/merchant-drivers.md](docs/merchant-drivers.md) — adding a payment merchant other than Stripe: the driver contract, the rules a translation must keep, and what shared machinery a driver inherits.
 - [docs/licensing.md](docs/licensing.md) — the license report, what a version declaring none means, and the CycloneDX SBOM export: its shape, the choices behind it, and what was verified against the spec.
