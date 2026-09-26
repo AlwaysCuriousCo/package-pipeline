@@ -65,7 +65,7 @@ final class UpstreamClient
      *
      * @param  int|null  $budget  seconds this discovery may take, when the
      *                            caller is working inside one
-     * @return array{protocol?: string, metadata: ?string, advisories: ?string}
+     * @return array{protocol?: string, metadata: ?string, advisories: ?string, guessed?: bool}
      */
     public function endpoints(?int $budget = null): array
     {
@@ -73,7 +73,7 @@ final class UpstreamClient
         // effect on the next request rather than an hour later.
         $key = "mirror:endpoints:{$this->upstream->getKey()}:".md5($this->upstream->url.'|'.$this->upstream->protocol);
 
-        /** @var array{protocol?: string, metadata: ?string, advisories: ?string}|null $cached */
+        /** @var array{protocol?: string, metadata: ?string, advisories: ?string, guessed?: bool}|null $cached */
         $cached = cache()->get($key);
 
         if (is_array($cached)) {
@@ -86,13 +86,18 @@ final class UpstreamClient
             ? 'registry.mirror.missing_ttl_minutes'
             : 'registry.mirror.metadata_ttl_minutes');
 
-        // The fallback is packagist.org's layout, which is also this app's own
-        // and is what a Composer v2 repository serves unless it says otherwise.
-        // Caching it means a momentarily unreachable upstream still gets its
-        // metadata requests attempted rather than skipped — the metadata fetch
-        // is the one that matters, and it is about to fail or succeed on its
-        // own merits.
-        $endpoints = $discovered ?? ['protocol' => 'v2', 'metadata' => '/p2/%package%.json', 'advisories' => null];
+        // The fallback is the protocol the operator chose, or else
+        // packagist.org's layout, which is also this app's own. Caching it
+        // means a momentarily unreachable upstream still gets its metadata
+        // requests attempted rather than skipped — the metadata fetch is the
+        // one that matters, and it is about to fail or succeed on its own
+        // merits. An unchosen layout is only a guess, though, so it is marked
+        // as one: see metadata().
+        $endpoints = $discovered ?? match ($this->upstream->protocol) {
+            'v1' => ['protocol' => 'v1', 'metadata' => null, 'advisories' => null],
+            'v2' => ['protocol' => 'v2', 'metadata' => '/p2/%package%.json', 'advisories' => null],
+            default => ['protocol' => 'v2', 'metadata' => '/p2/%package%.json', 'advisories' => null, 'guessed' => true],
+        };
 
         cache()->put($key, $endpoints, now()->addMinutes($minutes));
 
@@ -127,11 +132,21 @@ final class UpstreamClient
 
         $absolute = $this->absolute($url);
 
-        return $this->bounded($sink, fn (): Response => $this->request($absolute)
+        $response = $this->bounded($sink, fn (): Response => $this->request($absolute)
             ->withOptions($this->into($sink))
             ->when($etag !== null, fn (PendingRequest $request) => $request->withHeader('If-None-Match', (string) $etag))
             ->when($lastModified !== null, fn (PendingRequest $request) => $request->withHeader('If-Modified-Since', (string) $lastModified))
             ->get($absolute));
+
+        // A 404 from a layout nobody confirmed says nothing about the package:
+        // a v1-only upstream whose packages.json was briefly down answers 404
+        // for every /p2 URL. Reported as the upstream failing, so what is
+        // cached keeps being served and nothing is remembered as missing.
+        if (($endpoints['guessed'] ?? false) && in_array($response->status(), [404, 410], true)) {
+            return new Response(new Psr7Response(502));
+        }
+
+        return $response;
     }
 
     /**
@@ -465,7 +480,7 @@ final class UpstreamClient
      */
     private function v1Index(): array
     {
-        $key = "mirror:v1index:{$this->upstream->getKey()}:".md5($this->upstream->url);
+        $key = self::v1IndexKey($this->upstream);
 
         /** @var array{packages: array<string, list<mixed>>, providers: array<string, string>, providers-url: ?string, lazy: ?string}|null $cached */
         $cached = cache()->get($key);
@@ -520,6 +535,21 @@ final class UpstreamClient
         cache()->put($key, $index, now()->addMinutes((int) config('registry.mirror.metadata_ttl_minutes')));
 
         return $index;
+    }
+
+    private static function v1IndexKey(Upstream $upstream): string
+    {
+        return "mirror:v1index:{$upstream->getKey()}:".md5($upstream->url);
+    }
+
+    /**
+     * Drop an upstream's cached v1 index, so the next request re-reads it.
+     * Without this, forgetting a package from a v1 upstream would rebuild it
+     * straight out of the index that still lists it.
+     */
+    public static function forgetIndex(Upstream $upstream): void
+    {
+        cache()->forget(self::v1IndexKey($upstream));
     }
 
     /**

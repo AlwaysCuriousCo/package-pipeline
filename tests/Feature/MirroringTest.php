@@ -1239,4 +1239,59 @@ class MirroringTest extends TestCase
         $this->assertStringContainsString('refused the credentials', (string) $probe()['error']);
         $this->assertNotNull($probe()['error']);
     }
+
+    public function test_forgetting_a_release_from_a_v1_upstream_rereads_its_index(): void
+    {
+        $repository = $this->mirroring();
+        $repository->upstreams->first()?->update(['keep_versions' => true]);
+
+        $retagged = $this->v1Packages();
+        $retagged['packages']['livewire/flux-pro']['2.1.0']['dist']['reference'] = str_repeat('b', 40);
+
+        $index = $this->v1Packages();
+        Http::fake(['upstream.test/packages.json' => function () use (&$index) {
+            return Http::response($index);
+        }]);
+
+        $this->getJson('/p2/livewire/flux-pro.json')->assertOk();
+
+        // The upstream re-tags 2.1.0; the operator forgets the pinned copy to take it.
+        $index = $retagged;
+        $this->artisan('mirror:forget', ['package' => 'livewire/flux-pro', 'version' => '2.1.0'])->assertSuccessful();
+
+        $versions = $this->versionsOf($this->getJson('/p2/livewire/flux-pro.json')->assertOk(), 'livewire/flux-pro');
+
+        $this->assertSame(str_repeat('b', 40), $versions[0]['dist']['reference']);
+    }
+
+    public function test_a_guessed_layout_never_records_a_package_as_missing(): void
+    {
+        $this->mirroring();
+
+        Http::fake([
+            // A v1-only upstream whose root is briefly down: the /p2 guess 404s.
+            'upstream.test/packages.json' => Http::response('', 503),
+            'upstream.test/p2/*' => Http::response('', 404),
+        ]);
+
+        $this->getJson('/p2/livewire/flux-pro.json')->assertNotFound();
+
+        $this->assertDatabaseCount('mirrored_packages', 0);
+    }
+
+    public function test_a_v1_upstream_whose_root_is_down_is_never_asked_a_v2_question(): void
+    {
+        $repository = $this->mirroring();
+        $repository->upstreams->first()?->update(['protocol' => 'v1']);
+
+        Http::fake([
+            'upstream.test/packages.json' => Http::response('', 503),
+            'upstream.test/p2/*' => Http::response('', 404),
+        ]);
+
+        $this->getJson('/p2/livewire/flux-pro.json')->assertNotFound();
+
+        $this->assertDatabaseCount('mirrored_packages', 0);
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/p2/'));
+    }
 }

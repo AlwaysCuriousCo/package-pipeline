@@ -2,6 +2,7 @@
 
 namespace App\Services\Mirror;
 
+use App\Enums\Ecosystem;
 use App\Models\MirroredArchive;
 use App\Models\MirroredPackage;
 use App\Models\Package;
@@ -314,6 +315,11 @@ class MirrorService
     public function forget(string $name, ?string $version = null): int
     {
         $name = mb_strtolower($name);
+
+        // Cheap to rebuild, and forgetting is rare: every Composer upstream's
+        // index goes, rather than working out which ones list this name.
+        Upstream::query()->where('ecosystem', Ecosystem::Composer)->each(UpstreamClient::forgetIndex(...));
+
         $documents = MirroredPackage::query()->where('name', $name);
         $archives = MirroredArchive::query()->where('name', $name);
 
