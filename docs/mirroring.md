@@ -51,9 +51,36 @@ one.
 | Field | What it is |
 | --- | --- |
 | Name | A label for the admin. The URL is the identity. |
-| Repository URL | The root of a Composer v2 repository — `https://repo.packagist.org` for packagist.org, or another private registry, a corporate proxy, or another installation of this app. |
-| Access token | Sent as the HTTP Basic password (with the username `token`, which every Composer repository ignores). Only needed for an upstream that requires one. |
+| Repository URL | The root of a Composer repository, v2 or v1 — `https://repo.packagist.org` for packagist.org, or another private registry, a corporate proxy, or another installation of this app. |
+| Composer protocol | Blank detects it from `packages.json`, preferring v2. Set `v1` or `v2` to insist. See [v1 and v2 upstreams](#v1-and-v2-upstreams). |
+| Username | The HTTP Basic username sent with the token. Blank sends `token`, which most Composer repositories ignore; set it for a licence server that checks it — Flux, for example, wants your licence email. |
+| Access token | Sent as the HTTP Basic password. Only needed for an upstream that requires one. |
 | Enabled | Turning an upstream off stops it being consulted but keeps what is already cached. |
+| Keep every cached version | Composer upstreams only. See [Keeping versions](#keeping-versions). |
+
+**Test** on each upstream fetches its `packages.json` with the credentials
+as typed (a blank token field uses the stored one), reports which protocols it
+supports, and pre-selects the recommended one when none is chosen. It saves
+nothing; the form still has to be saved.
+
+### v1 and v2 upstreams
+
+A v2 repository names a `metadata-url` and is asked one package at a time.
+A v1 repository is read however its `packages.json` says to:
+
+| v1 shape | How it is read |
+| --- | --- |
+| `packages` listed inline | Straight out of `packages.json`. |
+| `includes` (Satis) | Each include file, checked against its published `sha1`. |
+| `providers-lazy-url` | One request per package, like v2. |
+| `providers-url` + `provider-includes` | The provider lists, then the package file, each checked against its `sha256`. |
+
+A v1 index is fetched once per metadata TTL per upstream and cached. Each
+package is then served to Composer as a v2 document, split into releases and
+`~dev` branches, so caching, kept versions and dist rewriting behave the same
+as for a v2 upstream. A repository serving both (Satis does) is read as v2
+unless you set it to v1. A file that does not match its published hash is
+treated as the upstream being broken, not the package being missing.
 
 Add more than one and they are consulted **in order**: the first upstream that
 has a package wins, including over a later one that might have a higher version.
@@ -275,7 +302,7 @@ For mirrored packages:
   a 503 as an absence would hide the package for the whole TTL and hide the
   outage entirely.
 - **A 200 that is not a Composer document** — a proxy's login page, an HTML
-  error, a v1 repository — is treated as the upstream being broken and cached
+  error — is treated as the upstream being broken and cached
   neither way.
 - **An archive whose sha1 does not match** what the upstream published is
   refused, not stored, and answered `404`. Composer would have caught it too,
@@ -328,6 +355,33 @@ it is the knob that decides what the mirror costs.
 The sweep also deletes mirrored files on the disk that no row claims — what a
 deleted upstream's cascade leaves behind, and what a crash between storing an
 archive and recording it leaves.
+
+### Keeping versions
+
+An upstream with **Keep every cached version** on is a store rather than a
+cache — the setting for a commercial upstream (a paid component library, say)
+whose releases you want to be able to roll back to whatever the vendor does:
+
+- **A release, once cached, stays exactly as first cached.** New releases still
+  appear on the usual metadata TTL, but one the upstream withdraws stays
+  listed, and one it re-tags onto a different commit keeps pointing at the
+  commit — and the archive — this registry first verified.
+- **A package the upstream deletes (404) keeps being served**, as does
+  everything when the upstream stops answering or the licence lapses (401/403
+  is already treated as the upstream being down).
+- **`mirror:prune` leaves it alone.**
+- **Branches follow the upstream.** Freezing `dev-main` is not a rollback.
+
+"Cached" means the metadata. The archive for a release is fetched the first
+time something installs it — a release nobody has installed yet is only as
+durable as the upstream's copy of its zip.
+
+The only way out is by hand:
+
+```bash
+php artisan mirror:forget livewire/flux-pro 2.1.0   # one release: refetched fresh next time
+php artisan mirror:forget livewire/flux-pro         # the whole package
+```
 
 ### It does not collide with `archives:clean`
 

@@ -26,7 +26,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @see docs/mirroring.md
  */
-#[Fillable(['name', 'url', 'token', 'ecosystem', 'enabled', 'position'])]
+#[Fillable(['name', 'url', 'username', 'token', 'ecosystem', 'protocol', 'enabled', 'keep_versions', 'position'])]
 class Upstream extends Model
 {
     /** @use HasFactory<UpstreamFactory> */
@@ -43,6 +43,7 @@ class Upstream extends Model
      */
     protected $attributes = [
         'enabled' => true,
+        'keep_versions' => false,
         'position' => 0,
         // Restated for the same reason: which surface consults an upstream is
         // read off rows built in memory, by the factories among others.
@@ -59,7 +60,7 @@ class Upstream extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'url', 'ecosystem', 'enabled', 'repository_id'];
+        return ['name', 'url', 'username', 'ecosystem', 'protocol', 'enabled', 'keep_versions', 'repository_id'];
     }
 
     /**
@@ -70,6 +71,7 @@ class Upstream extends Model
         return [
             'token' => 'encrypted',
             'enabled' => 'boolean',
+            'keep_versions' => 'boolean',
             'ecosystem' => Ecosystem::class,
         ];
     }
@@ -88,6 +90,18 @@ class Upstream extends Model
     public function repository(): BelongsTo
     {
         return $this->belongsTo(Repository::class);
+    }
+
+    /**
+     * The HTTP Basic username the token is sent under.
+     *
+     * `token` unless the operator named one: most Composer repositories ignore
+     * the username, but a licence server such as Flux's checks it against the
+     * key (it wants the licensee's email).
+     */
+    public function basicUsername(string $default = 'token'): string
+    {
+        return filled($this->username) ? (string) $this->username : $default;
     }
 
     /**

@@ -17,6 +17,16 @@
 
 @import '../../../../vendor/filament/filament/resources/css/theme.css';
 
+/*
+ * Flux overrides, which must come after Filament's base theme so they win.
+ *
+ * The theme is an optional, separately licensed package. Installations without
+ * it never see this line: vite.config.js strips it from the source before
+ * Tailwind resolves imports, because a missing file is otherwise a hard build
+ * error. Keep the package name in the line itself — that is what it matches on.
+ */
+@import '../../../../vendor/alwayscurious/filament-flux-theme/resources/css/theme.css';
+
 @source '../../../../app/Filament/**/*';
 @source '../../../../resources/views/filament/**/*';
 /* Blade components the panel's own views render — x-copy-line and friends. */

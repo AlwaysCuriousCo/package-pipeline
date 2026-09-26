@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Pages\ApiTokens;
 use App\Models\Token;
 use App\Models\User;
+use App\Support\ClaudeSkill;
 use Filament\Actions\Testing\TestAction;
 use Filament\Forms\Components\CheckboxList;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -36,6 +37,21 @@ class ApiTokensPageTest extends TestCase
         $role->givePermissionTo(['ViewAny:Package', 'View:Package']);
 
         return tap(User::factory()->create())->assignRole($role);
+    }
+
+    public function test_any_user_can_download_a_read_only_claude_skill_of_their_own(): void
+    {
+        $this->actingAs($user = $this->scopedUser());
+
+        Livewire::test(ApiTokens::class)
+            ->callAction('claudeSkill')
+            ->assertHasNoActionErrors()
+            ->assertFileDownloaded(ClaudeSkill::FILENAME);
+
+        $token = $user->tokens()->sole();
+
+        $this->assertSame(['repository:read', 'api:read'], $token->abilities);
+        $this->assertTrue($token->expires_at->isFuture());
     }
 
     public function test_the_username_defaults_to_the_owners_email_and_can_be_set(): void

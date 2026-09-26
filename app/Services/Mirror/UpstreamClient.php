@@ -8,11 +8,13 @@ use App\Support\EgressPolicy;
 use App\Support\EgressRefused;
 use App\Support\HttpTimeouts;
 use Closure;
+use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Psr\Http\Message\ResponseInterface;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -63,13 +65,15 @@ final class UpstreamClient
      *
      * @param  int|null  $budget  seconds this discovery may take, when the
      *                            caller is working inside one
-     * @return array{metadata: string, advisories: ?string}
+     * @return array{protocol?: string, metadata: ?string, advisories: ?string}
      */
     public function endpoints(?int $budget = null): array
     {
-        $key = "mirror:endpoints:{$this->upstream->getKey()}:".md5($this->upstream->url);
+        // The protocol is in the key so that changing it in the panel takes
+        // effect on the next request rather than an hour later.
+        $key = "mirror:endpoints:{$this->upstream->getKey()}:".md5($this->upstream->url.'|'.$this->upstream->protocol);
 
-        /** @var array{metadata: string, advisories: ?string}|null $cached */
+        /** @var array{protocol?: string, metadata: ?string, advisories: ?string}|null $cached */
         $cached = cache()->get($key);
 
         if (is_array($cached)) {
@@ -88,7 +92,7 @@ final class UpstreamClient
         // metadata requests attempted rather than skipped — the metadata fetch
         // is the one that matters, and it is about to fail or succeed on its
         // own merits.
-        $endpoints = $discovered ?? ['metadata' => '/p2/%package%.json', 'advisories' => null];
+        $endpoints = $discovered ?? ['protocol' => 'v2', 'metadata' => '/p2/%package%.json', 'advisories' => null];
 
         cache()->put($key, $endpoints, now()->addMinutes($minutes));
 
@@ -112,7 +116,14 @@ final class UpstreamClient
      */
     public function metadata(string $package, ?string $etag, ?string $lastModified, BoundedSink $sink): Response
     {
-        $url = str_replace('%package%', $package, $this->endpoints()['metadata']);
+        $endpoints = $this->endpoints();
+
+        // Endpoints cached before v1 support carry no protocol, and were v2.
+        if (($endpoints['protocol'] ?? 'v2') === 'v1') {
+            return $this->v1Metadata($package, $sink);
+        }
+
+        $url = str_replace('%package%', $package, (string) $endpoints['metadata']);
 
         $absolute = $this->absolute($url);
 
@@ -233,35 +244,339 @@ final class UpstreamClient
     }
 
     /**
-     * The upstream's root document, reduced to the two URLs this app uses.
+     * The upstream's root document, reduced to the protocol to speak and the
+     * URLs this app uses.
      *
-     * @return array{metadata: string, advisories: ?string}|null
+     * The operator's choice is taken strictly. Detected, v2 is preferred,
+     * because a repository that serves both (Satis does) answers
+     * v2 one package at a time instead of in one index.
+     *
+     * @return array{protocol: string, metadata: ?string, advisories: ?string}|null
      */
     private function discover(?int $budget = null): ?array
     {
-        $root = $this->upstream->url('/packages.json');
-
-        $response = rescue(fn (): Response => $this->request($root, $budget)->acceptJson()->get($root));
+        $response = $this->root($budget);
 
         if (! $response instanceof Response || ! $response->successful()) {
             return null;
         }
 
-        $metadata = $response->json('metadata-url');
+        $root = $response->json();
 
-        // A repository with no metadata-url is not a Composer v2 repository at
-        // all — a v1 `packages.json` with everything inlined, or an HTML error
-        // page that happened to parse. Neither is something to mirror from.
-        if (! is_string($metadata) || ! str_contains($metadata, '%package%')) {
+        // An HTML error page that happened to parse, or a document that is
+        // neither protocol, is not something to mirror from.
+        if (! is_array($root)) {
             return null;
         }
 
-        $advisories = $response->json('security-advisories.api-url');
+        $supports = self::supports($root);
+
+        $protocol = match ($this->upstream->protocol) {
+            'v1', 'v2' => $supports[$this->upstream->protocol] ? $this->upstream->protocol : null,
+            default => $supports['v2'] ? 'v2' : ($supports['v1'] ? 'v1' : null),
+        };
+
+        if ($protocol === null) {
+            return null;
+        }
+
+        $advisories = $root['security-advisories']['api-url'] ?? null;
 
         return [
-            'metadata' => $metadata,
+            'protocol' => $protocol,
+            'metadata' => $protocol === 'v2' ? (string) $root['metadata-url'] : null,
             'advisories' => is_string($advisories) && $advisories !== '' ? $advisories : null,
         ];
+    }
+
+    private function root(?int $budget = null): ?Response
+    {
+        $root = $this->upstream->url('/packages.json');
+
+        return rescue(fn (): Response => $this->request($root, $budget)->acceptJson()->get($root), report: false);
+    }
+
+    /**
+     * Which Composer protocols a root document can be read with.
+     *
+     * v2 is a `metadata-url` template. v1 is any of the ways a v1 repository
+     * can say where its packages are: listed inline (a hand-written or small
+     * repository), in `includes` files (Satis), behind a `providers-lazy-url`
+     * (Private Packagist, old packagist.org), or in hashed `providers` files.
+     *
+     * @param  array<mixed>  $root
+     * @return array{v2: bool, v1: bool}
+     */
+    public static function supports(array $root): array
+    {
+        $metadata = $root['metadata-url'] ?? null;
+
+        return [
+            'v2' => is_string($metadata) && str_contains($metadata, '%package%'),
+            'v1' => ! empty($root['packages'])
+                || ! empty($root['includes'])
+                || is_string($root['providers-lazy-url'] ?? null)
+                || (is_string($root['providers-url'] ?? null) && (! empty($root['providers']) || ! empty($root['provider-includes']))),
+        ];
+    }
+
+    /**
+     * Ask the upstream what it is, without caching anything — what the
+     * panel's Test button shows the operator.
+     *
+     * @return array{status: ?int, error: ?string, v2: bool, v1: bool, recommended: ?string, details: list<string>}
+     */
+    public function probe(): array
+    {
+        $response = $this->root(HttpTimeouts::API);
+        $result = ['status' => $response?->status(), 'error' => null, 'v2' => false, 'v1' => false, 'recommended' => null, 'details' => []];
+
+        if (! $response instanceof Response) {
+            return [...$result, 'error' => 'The upstream could not be reached.'];
+        }
+
+        if (in_array($response->status(), [401, 403], true)) {
+            return [...$result, 'error' => "The upstream refused the credentials ({$response->status()}). Check the username and token."];
+        }
+
+        $root = $response->successful() ? $response->json() : null;
+
+        if (! is_array($root)) {
+            return [...$result, 'error' => "packages.json answered {$response->status()} with something that is not a Composer repository."];
+        }
+
+        $supports = self::supports($root);
+        $details = [];
+
+        if ($supports['v2']) {
+            $details[] = "v2 metadata-url: {$root['metadata-url']}";
+        }
+
+        if (! empty($root['packages']) && is_array($root['packages'])) {
+            $details[] = 'v1: '.count($root['packages']).' package(s) listed in packages.json';
+        }
+
+        if (! empty($root['includes']) && is_array($root['includes'])) {
+            $details[] = 'v1: '.count($root['includes']).' include file(s)';
+        }
+
+        if (is_string($root['providers-lazy-url'] ?? null)) {
+            $details[] = "v1 providers-lazy-url: {$root['providers-lazy-url']}";
+        } elseif ($supports['v1'] && is_string($root['providers-url'] ?? null)) {
+            $details[] = "v1 providers-url: {$root['providers-url']}";
+        }
+
+        return [
+            ...$result,
+            ...$supports,
+            'recommended' => $supports['v2'] ? 'v2' : ($supports['v1'] ? 'v1' : null),
+            'details' => $details,
+            'error' => $supports['v2'] || $supports['v1'] ? null : 'packages.json names no packages, includes, providers or metadata-url.',
+        ];
+    }
+
+    /**
+     * One package's v1 metadata, answered in the shape a v2 `/p2` request
+     * gets, so everything downstream — caching, kept versions, rewriting —
+     * stays one code path.
+     *
+     * v1 serves releases and branches together; v2 asks for them apart
+     * (`name` and `name~dev`), so the split is made here.
+     */
+    private function v1Metadata(string $package, BoundedSink $sink): Response
+    {
+        $dev = str_ends_with($package, '~dev');
+        $name = $dev ? substr($package, 0, -4) : $package;
+
+        $versions = $this->v1Versions($name);
+
+        if ($versions === null) {
+            return new Response(new Psr7Response(404));
+        }
+
+        $versions = array_values(array_filter(
+            $versions,
+            fn (mixed $version): bool => is_array($version) && self::isBranch($version) === $dev,
+        ));
+
+        fwrite($sink->stream(), json_encode(['packages' => [$name => $versions]], JSON_THROW_ON_ERROR));
+
+        if ($sink->exceeded()) {
+            throw new OversizedResponse('The upstream answered with more bytes than this registry accepts.');
+        }
+
+        return new Response(new Psr7Response(200));
+    }
+
+    /**
+     * @param  array<mixed>  $version
+     */
+    private static function isBranch(array $version): bool
+    {
+        $name = (string) ($version['version'] ?? '');
+
+        return str_starts_with($name, 'dev-') || str_ends_with($name, '-dev');
+    }
+
+    /**
+     * Every version a v1 repository holds for one package, or null when it
+     * holds none.
+     *
+     * @return list<mixed>|null
+     */
+    private function v1Versions(string $name): ?array
+    {
+        $index = $this->v1Index();
+
+        if (isset($index['packages'][$name])) {
+            return $index['packages'][$name];
+        }
+
+        if ($index['lazy'] !== null) {
+            $document = $this->v1Json(str_replace('%package%', $name, $index['lazy']), missing: true);
+
+            return $document === null ? null : self::v1Package($document, $name);
+        }
+
+        $hash = $index['providers'][$name] ?? null;
+
+        if ($hash === null || $index['providers-url'] === null) {
+            return null;
+        }
+
+        $document = $this->v1Json(str_replace(['%package%', '%hash%'], [$name, $hash], $index['providers-url']), 'sha256', $hash, missing: true);
+
+        return $document === null ? null : self::v1Package($document, $name);
+    }
+
+    /**
+     * Everything a v1 root says about where its packages are, with the
+     * inline and included packages read in full.
+     *
+     * Cached for the metadata TTL, per upstream, because every package on the
+     * upstream is answered out of the same index and fetching it once per
+     * package per hour would be fetching it once per package per hour.
+     *
+     * ponytail: the whole index sits in the cache store — fine for a vendor's
+     * private repository, not for a Satis build of thousands of packages.
+     * Store it per package if one of those ever needs mirroring.
+     *
+     * @return array{packages: array<string, list<mixed>>, providers: array<string, string>, providers-url: ?string, lazy: ?string}
+     */
+    private function v1Index(): array
+    {
+        $key = "mirror:v1index:{$this->upstream->getKey()}:".md5($this->upstream->url);
+
+        /** @var array{packages: array<string, list<mixed>>, providers: array<string, string>, providers-url: ?string, lazy: ?string}|null $cached */
+        $cached = cache()->get($key);
+
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $root = $this->v1Json('/packages.json') ?? [];
+
+        $index = ['packages' => [], 'providers' => [], 'providers-url' => null, 'lazy' => null];
+
+        $documents = [$root];
+
+        foreach (is_array($root['includes'] ?? null) ? $root['includes'] : [] as $path => $hashes) {
+            $sha1 = is_array($hashes) && is_string($hashes['sha1'] ?? null) ? $hashes['sha1'] : null;
+            $documents[] = $this->v1Json((string) $path, $sha1 === null ? null : 'sha1', $sha1) ?? [];
+        }
+
+        foreach ($documents as $document) {
+            foreach (is_array($document['packages'] ?? null) ? $document['packages'] : [] as $package => $versions) {
+                if (is_string($package) && is_array($versions)) {
+                    $index['packages'][mb_strtolower($package)] = array_values($versions);
+                }
+            }
+        }
+
+        $providerDocuments = [$root];
+
+        foreach (is_array($root['provider-includes'] ?? null) ? $root['provider-includes'] : [] as $path => $hashes) {
+            $sha256 = is_array($hashes) ? ($hashes['sha256'] ?? null) : null;
+
+            if (is_string($sha256) && preg_match('/^[a-f0-9]{64}$/', $sha256) === 1) {
+                $providerDocuments[] = $this->v1Json(str_replace('%hash%', $sha256, (string) $path), 'sha256', $sha256) ?? [];
+            }
+        }
+
+        foreach ($providerDocuments as $document) {
+            foreach (is_array($document['providers'] ?? null) ? $document['providers'] : [] as $package => $hashes) {
+                $sha256 = is_array($hashes) ? ($hashes['sha256'] ?? null) : null;
+
+                // Validated because it is spliced into a URL.
+                if (is_string($package) && is_string($sha256) && preg_match('/^[a-f0-9]{64}$/', $sha256) === 1) {
+                    $index['providers'][mb_strtolower($package)] = $sha256;
+                }
+            }
+        }
+
+        $index['providers-url'] = is_string($root['providers-url'] ?? null) ? $root['providers-url'] : null;
+        $index['lazy'] = is_string($root['providers-lazy-url'] ?? null) ? $root['providers-lazy-url'] : null;
+
+        cache()->put($key, $index, now()->addMinutes((int) config('registry.mirror.metadata_ttl_minutes')));
+
+        return $index;
+    }
+
+    /**
+     * One v1 document's versions for a package, matched case-insensitively.
+     *
+     * @param  array<mixed>  $document
+     * @return list<mixed>|null
+     */
+    private static function v1Package(array $document, string $name): ?array
+    {
+        foreach (is_array($document['packages'] ?? null) ? $document['packages'] : [] as $package => $versions) {
+            if (is_string($package) && mb_strtolower($package) === $name && is_array($versions)) {
+                return array_values($versions);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Fetch, bound, verify and decode one v1 JSON document.
+     *
+     * A failure throws, so the caller treats the upstream as down rather than
+     * the package as missing — the same rule the v2 path follows. The one
+     * exception is a per-package document, where a 404 *is* "no such package".
+     *
+     * @return array<mixed>|null
+     */
+    private function v1Json(string $path, ?string $algorithm = null, ?string $hash = null, bool $missing = false): ?array
+    {
+        $url = $this->absolute($path);
+        $sink = BoundedSink::to('php://temp', (int) config('registry.mirror.max_metadata_kilobytes') * 1024);
+
+        $response = $this->bounded($sink, fn (): Response => $this->request($url)->withOptions($this->into($sink))->get($url));
+
+        if ($missing && in_array($response->status(), [404, 410], true)) {
+            return null;
+        }
+
+        if (! $response->successful()) {
+            throw new RuntimeException("{$url} responded {$response->status()}.");
+        }
+
+        $body = $sink->contents();
+
+        // What the index published is what Composer itself would verify.
+        if ($algorithm !== null && ! hash_equals(mb_strtolower((string) $hash), hash($algorithm, $body))) {
+            throw new RuntimeException("{$url} does not match its published {$algorithm}.");
+        }
+
+        $decoded = json_decode($body, true);
+
+        if (! is_array($decoded)) {
+            throw new RuntimeException("{$url} is not a Composer document.");
+        }
+
+        return $decoded;
     }
 
     /**
@@ -317,11 +632,11 @@ final class UpstreamClient
             return $request;
         }
 
-        // The username is ignored by every Composer repository that reads a
-        // token this way — including this app, whose own instructions are
-        // `composer config http-basic.<host> token <your-token>` — so one
-        // credential field is all an upstream needs.
-        return $request->withBasicAuth('token', (string) $this->upstream->token);
+        // Most Composer repositories ignore the username — this app's own
+        // instructions are `composer config http-basic.<host> token <token>` —
+        // so `token` is the default. Licence servers that check it get the one
+        // the operator configured.
+        return $request->withBasicAuth($this->upstream->basicUsername(), (string) $this->upstream->token);
     }
 
     /**

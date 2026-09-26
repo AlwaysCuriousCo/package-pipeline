@@ -51,10 +51,12 @@ class PruneMirror extends Command
         $cutoff = now()->subDays($days);
         $dryRun = (bool) $this->option('dry-run');
 
-        $documents = MirroredPackage::query()->where('used_at', '<', $cutoff);
+        // An upstream that keeps its versions is a store, not a cache: only
+        // mirror:forget removes what it holds.
+        $documents = MirroredPackage::query()->where('used_at', '<', $cutoff)->whereRelation('upstream', 'keep_versions', false);
         $documentCount = $documents->clone()->count();
 
-        $stale = MirroredArchive::query()->where('used_at', '<', $cutoff)->get();
+        $stale = MirroredArchive::query()->where('used_at', '<', $cutoff)->whereRelation('upstream', 'keep_versions', false)->get();
 
         $disk = $archives->disk();
 

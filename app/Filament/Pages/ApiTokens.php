@@ -6,6 +6,7 @@ use App\Enums\TokenAbility;
 use App\Filament\Resources\AccessTokens\AccessTokenResource;
 use App\Models\Token;
 use App\Models\User;
+use App\Support\ClaudeSkill;
 use BackedEnum;
 use Carbon\CarbonImmutable;
 use Closure;
@@ -19,6 +20,7 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Self-service personal access tokens, reached from the user menu.
@@ -81,8 +83,42 @@ class ApiTokens extends Page implements HasTable
     protected function getHeaderActions(): array
     {
         return [
+            $this->claudeSkillAction(),
             $this->createTokenAction(),
         ];
+    }
+
+    /**
+     * A Claude Skill carrying a fresh token of this user's own, so Claude
+     * sees exactly what they see and nothing more. Read-only whatever their
+     * role: repository:read to install, api:read to list.
+     *
+     * @see ClaudeSkill
+     */
+    private function claudeSkillAction(): Action
+    {
+        return Action::make('claudeSkill')
+            ->label('Download Claude skill')
+            ->icon(Heroicon::OutlinedArrowDownTray)
+            ->color('gray')
+            ->modalHeading('Download a Claude skill')
+            ->modalDescription('Creates a read-only token that can list and install the packages you can see, expiring in 90 days, and packs it into a skill to upload under Settings → Capabilities → Skills on claude.ai. The file contains the token, so keep it private.')
+            ->modalIcon(Heroicon::OutlinedSparkles)
+            ->modalSubmitActionLabel('Download')
+            ->action(function (): StreamedResponse {
+                $new = Token::issue(
+                    $this->user(),
+                    'Claude skill',
+                    [TokenAbility::RepositoryRead, TokenAbility::ApiRead],
+                    now()->addDays(90)->endOfDay(),
+                );
+
+                $zip = ClaudeSkill::zip($new->plainText);
+
+                return response()->streamDownload(function () use ($zip): void {
+                    echo $zip;
+                }, ClaudeSkill::FILENAME);
+            });
     }
 
     /**

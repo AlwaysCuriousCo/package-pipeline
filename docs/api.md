@@ -173,6 +173,7 @@ curl -H "Authorization: Bearer $PP_TOKEN" \
     {
       "id": 12,
       "name": "acme/widgets",
+      "ecosystem": "composer",
       "description": "Widgets for Acme.",
       "type": "library",
       "url": "https://github.com/acme/widgets",

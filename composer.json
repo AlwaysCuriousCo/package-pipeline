@@ -2,8 +2,14 @@
     "$schema": "https://getcomposer.org/schema.json",
     "name": "alwayscurious/package-pipeline",
     "type": "project",
-    "description": "Package Pipeline — a self-hosted private Composer registry with a Filament admin panel.",
-    "keywords": ["composer", "registry", "packages", "laravel", "filament"],
+    "description": "Package Pipeline \u2014 a self-hosted private Composer registry with a Filament admin panel.",
+    "keywords": [
+        "composer",
+        "registry",
+        "packages",
+        "laravel",
+        "filament"
+    ],
     "license": "MIT",
     "require": {
         "php": "^8.4",
@@ -17,6 +23,7 @@
         "laravel/socialite": "^5.29",
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
+        "mrfelipemartins/wirebones": "^0.1.1",
         "resend/resend-php": "^1.0",
         "spatie/laravel-activitylog": "^4.12",
         "stripe/stripe-php": "^21.2"
@@ -33,6 +40,9 @@
         "nunomaduro/collision": "^8.6",
         "phpstan/phpstan-mockery": "^2.0",
         "phpunit/phpunit": "^12.5.12"
+    },
+    "suggest": {
+        "alwayscurious/filament-flux-theme": "Optional, separately licensed Filament theme. Register the repository it is served from, add your token to auth.json, and require it: the panel plugin registers itself on sight and the stylesheet import activates at build time. Without it the panel runs the stock Filament theme."
     },
     "autoload": {
         "psr-4": {

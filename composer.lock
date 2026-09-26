@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "940d1649fb7acfe66d7bcba22dc0c596",
+    "content-hash": "e9ab4a09f604c38ab2083dbcf1deaf60",
     "packages": [
         {
             "name": "anourvalar/eloquent-serialize",
@@ -4488,6 +4488,60 @@
                 }
             ],
             "time": "2026-01-02T08:56:05+00:00"
+        },
+        {
+            "name": "mrfelipemartins/wirebones",
+            "version": "v0.1.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/mrfelipemartins/wirebones.git",
+                "reference": "441f20619545815d11b0ebae85664a99bc1a3c1f"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/mrfelipemartins/wirebones/zipball/441f20619545815d11b0ebae85664a99bc1a3c1f",
+                "reference": "441f20619545815d11b0ebae85664a99bc1a3c1f",
+                "shasum": ""
+            },
+            "require": {
+                "illuminate/console": "^12.0|^13.0",
+                "illuminate/filesystem": "^12.0|^13.0",
+                "illuminate/support": "^12.0|^13.0",
+                "illuminate/view": "^12.0|^13.0",
+                "livewire/livewire": "^4.0",
+                "php": "^8.2",
+                "symfony/process": "^7.0|^8.0"
+            },
+            "require-dev": {
+                "larastan/larastan": "^3.9",
+                "orchestra/testbench": "^10.0|^11.0",
+                "pestphp/pest": "^3.8|^4.0",
+                "pestphp/pest-plugin-laravel": "^3.2|^4.0",
+                "phpunit/phpunit": "^11.5|^12.0"
+            },
+            "type": "library",
+            "extra": {
+                "laravel": {
+                    "providers": [
+                        "MrFelipeMartins\\Wirebones\\WirebonesServiceProvider"
+                    ]
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "MrFelipeMartins\\Wirebones\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Automatic skeleton placeholders for lazy Livewire components.",
+            "support": {
+                "issues": "https://github.com/mrfelipemartins/wirebones/issues",
+                "source": "https://github.com/mrfelipemartins/wirebones/tree/v0.1.1"
+            },
+            "time": "2026-04-27T21:06:35+00:00"
         },
         {
             "name": "mtdowling/jmespath.php",
