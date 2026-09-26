@@ -347,6 +347,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | `user:reset-password [email]` | Print a fresh single-use password link for an existing user. The recovery path when someone is locked out and there is no mail configured. |
 | `token:add <name>` | Issue an access token. `--user=` for a personal token, `--deploy=` for a deploy token (created if it doesn't exist), `--ability=` (repeatable, read by default; `read` and `write` are the Composer abilities, or name one in full — `api:read`, `api:write`, `api:delete`), `--expires-days=`. Prints the plain token once. |
 | `token:revoke <prefix>` | Revoke a token by the prefix shown in listings (`pp_ab1cd`). What you run when a credential leaks and you have only the log line naming it. |
+| `claude:skill` | Build a Claude Skill zip that lets Claude list and install this registry's packages. Issues a read-only token for the `claude` deploy token (`--deploy=` to change it), expiring in 90 days (`--expires-days=`). See [docs/claude-ai.md](docs/claude-ai.md). |
 
 `php artisan shield:generate --all --panel=admin` and `php artisan db:seed --force` round these out — see [Roles and permissions](#roles-and-permissions).
 
@@ -477,7 +478,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/ecosystems.md](docs/ecosystems.md) — serving npm and Python packages beside Composer: client configuration, publishing, name rules, and what is not implemented yet.
-- [docs/claude.md](docs/claude.md) — letting Claude find and install packages from this registry through a Claude Skill.
+- [docs/claude-ai.md](docs/claude-ai.md) — letting Claude find and install packages from this registry through a Claude Skill.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/merchant-drivers.md](docs/merchant-drivers.md) — adding a payment merchant other than Stripe: the driver contract, the rules a translation must keep, and what shared machinery a driver inherits.
 - [docs/licensing.md](docs/licensing.md) — the license report, what a version declaring none means, and the CycloneDX SBOM export: its shape, the choices behind it, and what was verified against the spec.
