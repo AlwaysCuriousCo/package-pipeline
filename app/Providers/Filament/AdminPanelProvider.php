@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use AlwaysCurious\FilamentFluxTheme\FluxTheme;
 use App\Filament\Auth\ResetPassword;
 use App\Filament\Livewire\EmailNotificationsForm;
 use App\Filament\Pages\ApiTokens;
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\Route as RouteFacade;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Joaopaulolndev\FilamentEditProfile\FilamentEditProfilePlugin;
 use Joaopaulolndev\FilamentEditProfile\Pages\EditProfilePage;
+use MrFelipeMartins\Wirebones\Runtime\BuildModeMiddleware;
 
 class AdminPanelProvider extends PanelProvider
 {
@@ -130,6 +132,13 @@ class AdminPanelProvider extends PanelProvider
                             : null,
                     ]))
             )
+            // The Flux theme is an optional, separately licensed package. An
+            // installation that holds a licence requires it itself and the
+            // plugin registers on sight; everyone else runs the stock Filament
+            // theme, with the stylesheet import stripped at build time to
+            // match. Nothing here asks for a licence key, and nothing breaks
+            // when the package is absent.
+            ->plugins(class_exists(FluxTheme::class) ? [FluxTheme::make()] : [])
             ->userMenuItems([
                 'profile' => MenuItem::make()
                     ->label(fn (): string => auth()->user()->name)
@@ -148,6 +157,12 @@ class AdminPanelProvider extends PanelProvider
             // often nobody watching the page it happened on.
             ->databaseNotifications()
             ->middleware([
+                // The panel lists the web middleware individually rather than
+                // using the group, so Wirebones' build-mode middleware — which
+                // it prepends to `web` — would never run on /admin. Named here
+                // so skeleton captures can authenticate. It is inert unless the
+                // capture query parameter is present on a local/token request.
+                BuildModeMiddleware::class,
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,

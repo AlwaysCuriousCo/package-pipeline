@@ -29,6 +29,8 @@ class PackageResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            // Which client installs it: composer, npm or pypi.
+            'ecosystem' => $this->ecosystem->value,
             'description' => $this->description,
             'type' => $this->type,
             // The VCS repository this package syncs from — null for one

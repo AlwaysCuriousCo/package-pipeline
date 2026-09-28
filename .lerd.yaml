@@ -1,0 +1,11 @@
+domains:
+  - package-pipeline
+php_version: "8.5"
+node_version: "22"
+framework: laravel
+framework_version: "13"
+secured: true
+services:
+  - mailpit
+  - mysql
+  - redis

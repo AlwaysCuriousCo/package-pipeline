@@ -8,6 +8,7 @@ use App\Models\User;
 use Carbon\CarbonImmutable;
 use Filament\Widgets\ChartWidget;
 use Illuminate\Database\Eloquent\Builder;
+use MrFelipeMartins\Wirebones\Attributes\Wirebone;
 
 /**
  * Downloads per day over the last 30 days, scoped like everything else on
@@ -16,6 +17,7 @@ use Illuminate\Database\Eloquent\Builder;
  * The window and the query are seams: the package page's chart is this one
  * with both dials turned.
  */
+#[Wirebone(route: '/admin')]
 class DownloadsChart extends ChartWidget
 {
     protected ?string $heading = 'Downloads';

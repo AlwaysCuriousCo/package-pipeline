@@ -16,6 +16,7 @@ use App\Models\User;
 use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -91,6 +92,27 @@ class RepositoryResourceTest extends TestCase
         $this->assertSame('https://repo.packagist.org', $upstream->url);
         $this->assertSame('upstream-secret', $upstream->token);
         $this->assertTrue($repository->refresh()->mirrors());
+    }
+
+    public function test_testing_an_upstream_recommends_its_protocol_using_the_stored_token(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+        $upstream = $repository->upstreams()->create([
+            'name' => 'flux',
+            'url' => 'https://composer.fluxui.test',
+            'username' => 'me@example.com',
+            'token' => 'licence-key',
+        ]);
+
+        Http::fake(['composer.fluxui.test/packages.json' => Http::response(['includes' => ['all.json' => []]])]);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->callAction(TestAction::make('test')->schemaComponent('upstreams')->arguments(['item' => 'record-'.$upstream->getKey()]))
+            ->assertNotified('Upstream reachable — recommended: v1')
+            ->assertSchemaStateSet(['upstreams.record-'.$upstream->getKey().'.protocol' => 'v1']);
+
+        // The blank token field meant the stored credential, as saving would.
+        Http::assertSent(fn ($request): bool => $request->header('Authorization') === ['Basic '.base64_encode('me@example.com:licence-key')]);
     }
 
     public function test_the_stored_upstream_token_is_never_echoed_back_to_the_browser(): void

@@ -14,6 +14,21 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Composer v1 upstreams, and a Test button.** Mirroring now reads v1
+  repositories (inline `packages`, Satis `includes`, lazy and hashed
+  `providers`), with a per-upstream protocol choice that defaults to detecting
+  it. **Test** on an upstream reports what it supports and recommends one.
+- **Licensed upstreams and kept versions.** An upstream now takes an optional
+  HTTP Basic **username** (blank still sends `token`) for licence servers that
+  check it, such as Flux's. A Composer upstream can **keep every cached
+  version**: releases survive the upstream withdrawing or re-tagging them and
+  are skipped by `mirror:prune`; `php artisan mirror:forget <package> [version]`
+  removes one. See [docs/mirroring.md](docs/mirroring.md#keeping-versions).
+- **Claude integration.** **API tokens → Download Claude skill** in the panel
+  (or `php artisan claude:skill` for a shared one) builds a Claude Skill that
+  carries a read-only token, so Claude can list and install this registry's
+  packages from its sandbox. The management API now returns each package's
+  `ecosystem`. See [docs/claude-ai.md](docs/claude-ai.md).
 - **npm and Python packages.** The same deployment now answers as an npm
   registry (`/npm/`, with `npm publish` accepted) and a PEP 503 Python package
   index (`/pypi/simple/`, with `twine upload` at `/pypi/legacy/`) — one URL and

@@ -347,6 +347,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | `user:reset-password [email]` | Print a fresh single-use password link for an existing user. The recovery path when someone is locked out and there is no mail configured. |
 | `token:add <name>` | Issue an access token. `--user=` for a personal token, `--deploy=` for a deploy token (created if it doesn't exist), `--ability=` (repeatable, read by default; `read` and `write` are the Composer abilities, or name one in full — `api:read`, `api:write`, `api:delete`), `--expires-days=`. Prints the plain token once. |
 | `token:revoke <prefix>` | Revoke a token by the prefix shown in listings (`pp_ab1cd`). What you run when a credential leaks and you have only the log line naming it. |
+| `claude:skill` | Build a Claude Skill zip that lets Claude list and install this registry's packages. Issues a read-only token for the `claude` deploy token (`--deploy=` to change it), expiring in 90 days (`--expires-days=`). See [docs/claude-ai.md](docs/claude-ai.md). |
 
 `php artisan shield:generate --all --panel=admin` and `php artisan db:seed --force` round these out — see [Roles and permissions](#roles-and-permissions).
 
@@ -376,6 +377,22 @@ npm run dev
 The admin panel loads `resources/css/filament/admin/theme.css`, compiled by Vite and registered with `->viteTheme()` in `AdminPanelProvider`. It replaces the `app.css` that `filament:upgrade` publishes rather than loading beside it, and it exists because Filament's shipped build has no Tailwind utility layer — only the `fi-*` classes Filament's own views use.
 
 Tailwind generates utilities only for files named by the `@source` globs in that file, which currently cover `app/Filament/` and `resources/views/filament/`. **A Blade view outside those paths that uses a utility class renders unstyled** — no build error, nothing in the browser console, just a `div` that ignored `grid` and `p-4`. Add an `@source` line when you add a view root.
+
+#### The optional Flux theme
+
+`alwayscurious/filament-flux-theme` is a separately licensed package that restyles the panel to match the Flux design language. It is not required, it is not bundled, and no licence key is checked anywhere — the registry ships no token and asks for none. Installations that hold a licence simply install the package, and both halves of the wiring notice on their own:
+
+- `AdminPanelProvider` registers the plugin behind a `class_exists()` check, so the panel picks it up with no configuration.
+- `theme.css` imports the package's stylesheet, and the `optional-flux-theme` plugin in `vite.config.js` strips that import when the package is absent. Tailwind resolves `@import` with enhanced-resolve, which throws on a missing file and never reaches Vite's resolver, so the line has to go before Tailwind is handed the source — an alias or a virtual module cannot stand in for it.
+
+To install it, register the repository it is served from, put your token in `auth.json` (which is gitignored — never commit it), then require it and rebuild:
+
+```bash
+composer require alwayscurious/filament-flux-theme
+npm run build
+```
+
+Without it the panel renders in the stock Filament theme, and every test still passes. Removing it later is `composer remove` plus a rebuild; nothing else references it.
 
 Neither `npm run dev` nor `npm run build` is optional in a fresh checkout. `->viteTheme()` resolves the stylesheet through Laravel's Vite helper, which throws `ViteManifestNotFoundException` when there is no `public/build/manifest.json` and no dev server running — so every admin page returns a 500 rather than rendering unstyled. That is the loud failure; the quiet one is the `@source` glob above.
 
@@ -461,6 +478,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/ecosystems.md](docs/ecosystems.md) — serving npm and Python packages beside Composer: client configuration, publishing, name rules, and what is not implemented yet.
+- [docs/claude-ai.md](docs/claude-ai.md) — letting Claude find and install packages from this registry through a Claude Skill.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/merchant-drivers.md](docs/merchant-drivers.md) — adding a payment merchant other than Stripe: the driver contract, the rules a translation must keep, and what shared machinery a driver inherits.
 - [docs/licensing.md](docs/licensing.md) — the license report, what a version declaring none means, and the CycloneDX SBOM export: its shape, the choices behind it, and what was verified against the spec.

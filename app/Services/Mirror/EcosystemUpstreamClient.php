@@ -136,6 +136,7 @@ final class EcosystemUpstreamClient
      *
      * The token travels the way each ecosystem's own clients send theirs:
      * npm as a bearer token, PyPI as the basic password behind `__token__`.
+     * A configured username turns either into HTTP Basic under that name.
      */
     private function request(string $url): PendingRequest
     {
@@ -148,8 +149,8 @@ final class EcosystemUpstreamClient
             return $request;
         }
 
-        return $this->upstream->ecosystem === Ecosystem::Pypi
-            ? $request->withBasicAuth('__token__', (string) $this->upstream->token)
+        return $this->upstream->ecosystem === Ecosystem::Pypi || filled($this->upstream->username)
+            ? $request->withBasicAuth($this->upstream->basicUsername('__token__'), (string) $this->upstream->token)
             : $request->withToken((string) $this->upstream->token);
     }
 

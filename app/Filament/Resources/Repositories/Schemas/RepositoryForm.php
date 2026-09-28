@@ -5,11 +5,16 @@ namespace App\Filament\Resources\Repositories\Schemas;
 use App\Enums\Ecosystem;
 use App\Models\Repository;
 use App\Models\ReservedVendor;
+use App\Models\Upstream;
+use App\Services\Mirror\UpstreamClient;
+use App\Support\EgressPolicy;
+use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
@@ -143,6 +148,12 @@ class RepositoryForm
                     ->orderColumn('position')
                     ->defaultItems(0)
                     ->itemLabel(fn (array $state): ?string => $state['name'] ?? null)
+                    ->extraItemActions([
+                        Action::make('test')
+                            ->label('Test')
+                            ->icon(Heroicon::OutlinedSignal)
+                            ->action(fn (array $arguments, Repeater $component) => self::testUpstream($arguments['item'], $component)),
+                    ])
                     ->schema([
                         TextInput::make('name')
                             ->required()
@@ -154,6 +165,7 @@ class RepositoryForm
                             ->default(Ecosystem::Composer)
                             ->required()
                             ->native(false)
+                            ->live()
                             ->helperText('Which protocol this upstream speaks — and therefore which of this repository\'s surfaces consults it.'),
                         TextInput::make('url')
                             ->label('Repository URL')
@@ -162,6 +174,17 @@ class RepositoryForm
                             ->maxLength(255)
                             ->placeholder('https://repo.packagist.org')
                             ->helperText('The root the protocol resolves from: a Composer v2 repository (https://repo.packagist.org), an npm registry (https://registry.npmjs.org), or a PEP 691 simple index (https://pypi.org/simple).'),
+                        Select::make('protocol')
+                            ->label('Composer protocol')
+                            ->options(['v2' => 'v2 — metadata-url', 'v1' => 'v1 — packages, includes or providers'])
+                            ->placeholder('Detect automatically')
+                            ->native(false)
+                            ->visible(fn (Get $get): bool => self::isComposer($get('ecosystem')))
+                            ->helperText('Blank reads packages.json and prefers v2. Use Test to see what the upstream supports.'),
+                        TextInput::make('username')
+                            ->maxLength(255)
+                            ->placeholder('token')
+                            ->helperText('The HTTP Basic username sent with the token. Leave blank unless the upstream checks it — a licence server such as Flux wants your licence email.'),
                         TextInput::make('token')
                             ->label('Access token')
                             ->password()
@@ -177,11 +200,74 @@ class RepositoryForm
                             // because this is the field that creates the
                             // hazard: everything an upstream serves is served
                             // on through this repository's own read rules.
-                            ->helperText('Sent as the HTTP Basic password. Anything a credentialed upstream serves is served on under this repository\'s access rules — so a public repository with a private upstream republishes it to everyone.'),
+                            ->helperText('Sent as the HTTP Basic password (a bearer token for npm, unless a username is set). Anything a credentialed upstream serves is served on under this repository\'s access rules — so a public repository with a private upstream republishes it to everyone.'),
                         Toggle::make('enabled')
                             ->helperText('Turning an upstream off stops it being consulted but keeps what is already cached.'),
+                        Toggle::make('keep_versions')
+                            ->label('Keep every cached version')
+                            ->visible(fn (Get $get): bool => self::isComposer($get('ecosystem')))
+                            ->helperText('A release cached from this upstream stays installable exactly as first cached — even after the upstream withdraws or re-tags it, or stops answering — and mirror:prune leaves it alone. Remove one with mirror:forget.'),
                     ]),
             ]);
+    }
+
+    private static function isComposer(mixed $ecosystem): bool
+    {
+        return ($ecosystem instanceof Ecosystem ? $ecosystem : Ecosystem::tryFrom((string) $ecosystem)) === Ecosystem::Composer;
+    }
+
+    /**
+     * Probe one upstream as currently typed, report what it supports, and
+     * pre-select the recommended protocol when none is chosen.
+     *
+     * Runs against the unsaved form so a URL or credential can be checked
+     * before it is committed; a blank token field means "the stored one",
+     * exactly as saving would treat it.
+     */
+    private static function testUpstream(string $item, Repeater $component): void
+    {
+        $state = $component->getRawItemState($item);
+
+        if (! self::isComposer($state['ecosystem'] ?? null)) {
+            Notification::make()->title('Only Composer upstreams can be tested yet.')->warning()->send();
+
+            return;
+        }
+
+        $stored = $component->getCachedExistingRecords()->get($item);
+
+        $upstream = new Upstream([
+            'url' => rtrim(trim((string) ($state['url'] ?? '')), '/'),
+            'username' => $state['username'] ?? null,
+            'token' => filled($state['token'] ?? null) ? $state['token'] : ($stored instanceof Upstream ? $stored->token : null),
+        ]);
+
+        if (blank($upstream->url)) {
+            Notification::make()->title('Enter the repository URL first.')->warning()->send();
+
+            return;
+        }
+
+        $result = (new UpstreamClient($upstream, app(EgressPolicy::class)))->probe();
+
+        if ($result['error'] !== null) {
+            Notification::make()->title('Upstream test failed')->body($result['error'])->danger()->send();
+
+            return;
+        }
+
+        $all = $component->getState();
+
+        if (blank($all[$item]['protocol'] ?? null)) {
+            $all[$item]['protocol'] = $result['recommended'];
+            $component->state($all);
+        }
+
+        Notification::make()
+            ->title('Upstream reachable — recommended: '.$result['recommended'])
+            ->body(implode(' · ', $result['details']))
+            ->success()
+            ->send();
     }
 
     /**
