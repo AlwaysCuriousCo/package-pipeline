@@ -118,6 +118,7 @@ final class UpstreamClient
      * ceiling was so much as consulted.
      *
      * @throws OversizedResponse
+     * @throws UnconfirmedAbsence
      */
     public function metadata(string $package, ?string $etag, ?string $lastModified, BoundedSink $sink): Response
     {
@@ -140,10 +141,9 @@ final class UpstreamClient
 
         // A 404 from a layout nobody confirmed says nothing about the package:
         // a v1-only upstream whose packages.json was briefly down answers 404
-        // for every /p2 URL. Reported as the upstream failing, so what is
-        // cached keeps being served and nothing is remembered as missing.
+        // for every /p2 URL. See UnconfirmedAbsence.
         if (($endpoints['guessed'] ?? false) && in_array($response->status(), [404, 410], true)) {
-            return new Response(new Psr7Response(502));
+            throw new UnconfirmedAbsence("{$absolute} answered {$response->status()} on a guessed layout.");
         }
 
         return $response;

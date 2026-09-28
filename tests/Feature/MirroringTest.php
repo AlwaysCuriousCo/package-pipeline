@@ -1279,6 +1279,22 @@ class MirroringTest extends TestCase
         $this->assertDatabaseCount('mirrored_packages', 0);
     }
 
+    public function test_a_guessed_404_does_not_stop_other_packages_resolving_through_the_guess(): void
+    {
+        $this->mirroring();
+
+        Http::fake([
+            'upstream.test/packages.json' => Http::response('', 503),
+            'upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument()),
+            'upstream.test/p2/*' => Http::response('', 404),
+        ]);
+
+        $this->getJson('/p2/nope/nothing.json')->assertNotFound();
+
+        // The upstream answered, so it is not in backoff: the next name is asked.
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+    }
+
     public function test_a_v1_upstream_whose_root_is_down_is_never_asked_a_v2_question(): void
     {
         $repository = $this->mirroring();

@@ -718,6 +718,9 @@ class MirrorService
             // it about other packages: it answered, and what it answered is
             // not something this registry will hold.
             return $cached;
+        } catch (UnconfirmedAbsence) {
+            // Neither missing nor down: serve what is held, remember nothing.
+            return $cached;
         } catch (Throwable $exception) {
             $this->markUnreachable($upstream, $exception->getMessage());
 
