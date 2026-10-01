@@ -12,6 +12,7 @@ use App\Support\NewToken;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -36,6 +37,16 @@ class RepositoryForm
                     ->unique(ignoreRecord: true)
                     ->placeholder('Internal packages')
                     ->helperText('A label for this repository; only shown in the admin.'),
+                TextInput::make('composer_key')
+                    ->label('Composer key')
+                    ->maxLength(64)
+                    ->regex('/^[A-Za-z0-9_-]+$/')
+                    ->validationMessages([
+                        'regex' => 'Only letters, numbers, hyphens and underscores — it becomes a key in composer.json.',
+                    ])
+                    ->unique(ignoreRecord: true)
+                    ->placeholder(fn (?Repository $record): string => $record?->defaultComposerKey() ?? 'Derived from the app name and URL path')
+                    ->helperText('The name the install command gives this repository in a project\'s composer.json (composer config repositories.<key> …). Blank uses the default shown. Keep it different from your other repositories, or adding one will overwrite the other.'),
                 TextInput::make('path')
                     ->label('URL path')
                     ->prefix(url('/r').'/')
@@ -220,6 +231,12 @@ class RepositoryForm
                             ->native(false)
                             ->visible(fn (Get $get): bool => self::isComposer($get('ecosystem')))
                             ->helperText('Blank reads packages.json and prefers v2. Use Test to see what the upstream supports.'),
+                        TagsInput::make('packages')
+                            ->label('Packages')
+                            ->placeholder('livewire/flux*')
+                            ->visible(fn (Get $get): bool => self::isComposer($get('ecosystem')))
+                            ->nestedRecursiveRules(['regex:/^[A-Za-z0-9_.*-]+\/[A-Za-z0-9_.*-]+$/'])
+                            ->helperText('Only these names are asked of this upstream, and * matches anything (ralphjsmit/*). Blank answers for any package. When every upstream lists its packages, Composer is told so and stops asking this repository about the rest — no "only" needed in client composer.json.'),
                         TextInput::make('username')
                             ->maxLength(255)
                             ->placeholder('token')

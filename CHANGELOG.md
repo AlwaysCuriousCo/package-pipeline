@@ -14,6 +14,14 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Upstreams limited to their packages, and per-repository Composer keys.**
+  An upstream can list the package patterns it serves (`livewire/flux*`);
+  it is only asked about those, and when every upstream lists its packages
+  `packages.json` advertises them instead of `*/*`, so consuming projects stop
+  asking about everything else. A repository can also set its own
+  **Composer key** — the `repositories.<key>` name in its install command —
+  overriding `COMPOSER_REPOSITORY_KEY`, so several repositories no longer
+  share one entry in a project's composer.json.
 - **Composer v1 upstreams, and a Test button.** Mirroring now reads v1
   repositories (inline `packages`, Satis `includes`, lazy and hashed
   `providers`), with a per-upstream protocol choice that defaults to detecting

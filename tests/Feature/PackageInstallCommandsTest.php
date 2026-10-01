@@ -122,6 +122,17 @@ class PackageInstallCommandsTest extends TestCase
         );
     }
 
+    public function test_a_repositorys_own_key_overrides_the_configured_one(): void
+    {
+        config(['registry.composer_repository_key' => 'alwayscurious']);
+
+        $fluxui = Repository::create(['name' => 'Flux UI', 'path' => 'fluxui', 'composer_key' => 'alwayscurious-fluxui']);
+        $other = Repository::create(['name' => 'Composer', 'path' => 'composer']);
+
+        $this->assertSame('composer config repositories.alwayscurious-fluxui composer '.url('/r/fluxui'), $fluxui->configureCommand());
+        $this->assertSame('composer config repositories.alwayscurious composer '.url('/r/composer'), $other->configureCommand());
+    }
+
     public function test_the_details_page_shows_the_install_commands(): void
     {
         $this->actingAs(User::factory()->superAdmin()->create());

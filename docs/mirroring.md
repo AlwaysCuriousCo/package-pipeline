@@ -53,6 +53,7 @@ one.
 | Name | A label for the admin. The URL is the identity. |
 | Repository URL | The root of a Composer repository, v2 or v1 — `https://repo.packagist.org` for packagist.org, or another private registry, a corporate proxy, or another installation of this app. |
 | Composer protocol | Blank detects it from `packages.json`, preferring v2. Set `v1` or `v2` to insist. See [v1 and v2 upstreams](#v1-and-v2-upstreams). |
+| Packages | Composer names this upstream may be asked about, `*` matching anything: `livewire/flux*`, `ralphjsmit/*`. Blank means any package. See [Limiting an upstream to its packages](#limiting-an-upstream-to-its-packages). |
 | Username | The HTTP Basic username sent with the token. Blank sends `token`, which most Composer repositories ignore; set it for a licence server that checks it — Flux, for example, wants your licence email. |
 | Access token | Sent as the HTTP Basic password. Only needed for an upstream that requires one. |
 | Enabled | Turning an upstream off stops it being consulted but keeps what is already cached. |
@@ -62,6 +63,21 @@ one.
 as typed (a blank token field uses the stored one), reports which protocols it
 supports, and pre-selects the recommended one when none is chosen. It saves
 nothing; the form still has to be saved.
+
+### Limiting an upstream to its packages
+
+A vendor's licence server only has that vendor's packages. Give its upstream
+a **Packages** list and two things change:
+
+- **It is only asked about matching names.** A repository mirroring Flux and
+  Ralph's media library sends `livewire/flux-pro` to Flux and
+  `ralphjsmit/*` to Ralph's Satis, and neither hears about `symfony/console`.
+- **Composer is told.** When every upstream on a repository lists its
+  packages, `packages.json` advertises those patterns (plus the repository's
+  own vendors) instead of `*/*`. A consuming project then only asks this
+  repository about those names, with no `only` needed in its composer.json.
+  One upstream left blank puts it back to `*/*`, because that one may have
+  anything.
 
 ### v1 and v2 upstreams
 
