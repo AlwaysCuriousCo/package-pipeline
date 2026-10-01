@@ -8,16 +8,19 @@ use App\Models\ReservedVendor;
 use App\Models\Upstream;
 use App\Services\Mirror\UpstreamClient;
 use App\Support\EgressPolicy;
+use App\Support\NewToken;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Validation\Rules\Unique;
 
@@ -60,9 +63,45 @@ class RepositoryForm
                 Textarea::make('description')
                     ->rows(3)
                     ->columnSpanFull(),
+                self::connect(),
                 self::page(),
                 self::reservedVendors(),
                 self::upstreams(),
+            ]);
+    }
+
+    /**
+     * The lines a consuming project runs to install from this repository —
+     * the package pages' Install card, without a package to require.
+     */
+    private static function connect(): Section
+    {
+        return Section::make('Connect a project')
+            ->description('Run these in the consuming project. Click a command to copy it. A mirrored package is fetched the first time a project asks for it, so this is also how an upstream starts serving.')
+            ->icon(Heroicon::OutlinedCommandLine)
+            ->columnSpanFull()
+            ->visible(fn (?Repository $record): bool => $record !== null)
+            ->schema([
+                TextEntry::make('connect_repository')
+                    ->label('1. Register this Composer repository (once per project)')
+                    ->state(fn (Repository $record): string => $record->configureCommand())
+                    ->fontFamily(FontFamily::Mono)
+                    ->copyable()
+                    ->copyMessage('Command copied'),
+                TextEntry::make('connect_auth')
+                    ->label('2. Authenticate (this repository is private)')
+                    ->visible(fn (Repository $record): bool => ! $record->public)
+                    ->state(fn (Repository $record): string => NewToken::composerCommandFor('<username>', '<access token>', host: parse_url($record->url(), PHP_URL_HOST)))
+                    ->fontFamily(FontFamily::Mono)
+                    ->copyable()
+                    ->copyMessage('Command copied')
+                    ->helperText('Issue a deploy or access token that reads this repository; its username is shown when it is created.'),
+                TextEntry::make('connect_require')
+                    ->label(fn (Repository $record): string => ($record->public ? '2' : '3').'. Require a package')
+                    ->state('composer require vendor/package')
+                    ->fontFamily(FontFamily::Mono)
+                    ->copyable()
+                    ->copyMessage('Command copied'),
             ]);
     }
 

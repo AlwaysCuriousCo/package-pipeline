@@ -2,9 +2,10 @@
     Scoped <style> rather than utility classes: app-level Tailwind never
     reaches the panel's pre-built stylesheet (see the sync progress widget).
 --}}
-@php
-    use App\Filament\Resources\Packages\PackageResource;
-@endphp
+{{--
+    $current: the record shown; $items: id => name of everything switchable;
+    $href: fn (id) => URL. Packages and repositories both use it.
+--}}
 
 <style>
     .pp-package-switcher-trigger {
@@ -57,7 +58,7 @@
 
 <x-filament::dropdown placement="bottom-start" width="sm" max-height="20rem">
     <x-slot name="trigger">
-        <button type="button" class="pp-package-switcher-trigger" aria-label="Switch package">
+        <button type="button" class="pp-package-switcher-trigger" aria-label="Switch {{ $label }}">
             @php [$vendor, $name] = array_pad(explode('/', $current->name, 2), 2, null); @endphp
             @if ($name !== null)
                 <span class="pp-vendor">{{ $vendor }}</span><span class="pp-slash">/</span><span class="pp-name">{{ $name }}</span>
@@ -73,19 +74,19 @@
             <x-filament::input.wrapper>
                 <x-filament::input
                     type="search"
-                    placeholder="Find a package…"
+                    placeholder="Find a {{ $label }}…"
                     x-model="q"
                 />
             </x-filament::input.wrapper>
         </div>
 
         <x-filament::dropdown.list>
-            @foreach ($packages as $id => $name)
+            @foreach ($items as $id => $name)
                 <x-filament::dropdown.list.item
                     tag="a"
-                    :href="PackageResource::getUrl('view', ['record' => $id])"
+                    :href="$href($id)"
                     :color="$id === $current->getKey() ? 'primary' : 'gray'"
-                    x-show="@js($name).includes(q.toLowerCase())"
+                    x-show="@js(mb_strtolower($name)).includes(q.toLowerCase())"
                 >
                     {{ $name }}
                 </x-filament::dropdown.list.item>
