@@ -687,15 +687,6 @@ final class UpstreamClient
      */
     private function isUpstreamHost(string $url): bool
     {
-        $target = parse_url($url);
-        $upstream = parse_url($this->upstream->url);
-
-        if (! is_array($target) || ! is_array($upstream)) {
-            return false;
-        }
-
-        return ($target['scheme'] ?? null) === ($upstream['scheme'] ?? null)
-            && mb_strtolower((string) ($target['host'] ?? '')) === mb_strtolower((string) ($upstream['host'] ?? ''))
-            && ($target['port'] ?? null) === ($upstream['port'] ?? null);
+        return $this->upstream->ownsUrl($url);
     }
 }

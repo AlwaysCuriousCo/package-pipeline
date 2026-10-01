@@ -113,6 +113,27 @@ class Upstream extends Model
      * the username, but a licence server such as Flux's checks it against the
      * key (it wants the licensee's email).
      */
+    /**
+     * Whether a URL is on this upstream's own origin — scheme, host and port
+     * as the operator typed them. A destination they chose is one their
+     * credential may travel to and one whose bytes this registry may take on
+     * its word; anything else was chosen by the upstream, or by whoever
+     * published a package on it.
+     */
+    public function ownsUrl(string $url): bool
+    {
+        $target = parse_url($url);
+        $own = parse_url((string) $this->url);
+
+        if (! is_array($target) || ! is_array($own)) {
+            return false;
+        }
+
+        return ($target['scheme'] ?? null) === ($own['scheme'] ?? null)
+            && mb_strtolower((string) ($target['host'] ?? '')) === mb_strtolower((string) ($own['host'] ?? ''))
+            && ($target['port'] ?? null) === ($own['port'] ?? null);
+    }
+
     public function basicUsername(string $default = 'token'): string
     {
         return filled($this->username) ? (string) $this->username : $default;

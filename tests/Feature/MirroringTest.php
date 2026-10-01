@@ -600,6 +600,44 @@ class MirroringTest extends TestCase
             || ! $request->hasHeader('Authorization'));
     }
 
+    public function test_a_shasum_less_dist_on_the_upstreams_own_origin_is_mirrored_and_hashed_on_fetch(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        // A licence server: no shasum, archive on the same host as the API.
+        $document = $this->upstreamDocument(shasum: '', url: self::UPSTREAM.'/composer/10/125/download');
+        unset($document['packages']['symfony/console'][0]['dist']['shasum']);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($document),
+            'upstream.test/composer/*' => Http::response(self::ZIP),
+        ]);
+
+        $versions = $this->versionsOf($this->getJson('/p2/symfony/console.json')->assertOk());
+
+        $this->assertSame(url('/dist/symfony/console/'.self::REFERENCE.'.zip'), $versions[0]['dist']['url']);
+
+        $download = $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertOk();
+
+        $this->assertSame(self::ZIP, $download->streamedContent());
+        $this->assertSame(sha1(self::ZIP), MirroredArchive::query()->sole()->shasum);
+    }
+
+    public function test_a_shasum_less_dist_on_a_third_party_host_keeps_the_upstreams_url(): void
+    {
+        $document = $this->upstreamDocument();
+        unset($document['packages']['symfony/console'][0]['dist']['shasum']);
+
+        $this->mirroring();
+        $this->fakeUpstream(['upstream.test/p2/symfony/console.json' => Http::response($document)]);
+
+        $versions = $this->versionsOf($this->getJson('/p2/symfony/console.json')->assertOk());
+
+        $this->assertSame('https://cdn.upstream.test/zipball/'.self::REFERENCE, $versions[0]['dist']['url']);
+        $this->get('/dist/symfony/console/'.self::REFERENCE.'.zip')->assertNotFound();
+    }
+
     public function test_an_archive_that_does_not_match_the_published_shasum_is_refused(): void
     {
         Storage::fake(config('filesystems.dists'));

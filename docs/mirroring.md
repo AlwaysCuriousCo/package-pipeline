@@ -186,10 +186,17 @@ those URLs fetches the archive, checks it against that `shasum`, and stores it;
 every request afterwards is served from the dist disk. Composer's own
 verification then confirms a claim that was already checked.
 
-One exception: a version whose dist is not a zip, or carries no `shasum`, keeps
-the upstream's URL and is fetched by Composer directly. This registry will not
-advertise a dist URL it cannot stand behind — and if the bytes cannot be
-verified, it would be vouching for whatever arrived.
+One exception: a version whose dist is not a zip, or carries no `shasum` and
+lives on some other host, keeps the upstream's URL and is fetched by Composer
+directly. This registry will not advertise a dist URL it cannot stand behind —
+and if the bytes cannot be verified, it would be vouching for whatever arrived.
+
+A `shasum`-less zip served from the **upstream's own origin** is the one case
+taken on trust: licence servers such as Filament's publish none, and refusing
+them would mean every install still needs that vendor's credentials. The
+archive comes from the host the operator typed in, over the credential they
+configured, and the sha1 taken on first fetch is what every later install is
+checked against.
 
 ## Where a mirrored fetch may go
 
