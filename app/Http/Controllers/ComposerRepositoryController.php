@@ -185,7 +185,7 @@ class ComposerRepositoryController extends Controller
             $repository->updated_at?->getTimestamp() ?? 0,
             // Whether the patterns are this registry's own vendors or the
             // universal one, which no count of packages would ever reveal.
-            $repository->mirrors() ? 'mirror' : 'local',
+            $repository->mirrors() ? 'mirror:'.implode(',', $repository->mirroredPatterns() ?? ['*/*']) : 'local',
             $scope,
             (int) ($packages['package_count'] ?? 0),
             (string) ($packages['changed_at'] ?? ''),
@@ -253,6 +253,10 @@ class ComposerRepositoryController extends Controller
      * themselves, which is the feature rather than the waste, and each one is
      * answered from the cache or a cached absence rather than a database miss.
      *
+     * Unless every upstream is limited to named packages — a vendor's licence
+     * server — in which case those patterns are a true answer, and they are
+     * advertised next to the local vendors instead.
+     *
      * Vendor patterns rather than `available-packages` in either case: an
      * inline list of every name would have to be rebuilt and re-sent on each
      * root fetch, and it is the one document Composer cannot lazily skip.
@@ -267,7 +271,14 @@ class ComposerRepositoryController extends Controller
      */
     private function availablePackagePatterns(Request $request, string $fingerprint): array
     {
-        if ($this->repository($request)->mirrors()) {
+        $repository = $this->repository($request);
+
+        // An unrestricted upstream may have anything, so nothing narrower is
+        // true. Upstreams limited to named patterns can be advertised as
+        // exactly that, next to this repository's own vendors below.
+        $mirrored = $repository->mirrors() ? $repository->mirroredPatterns() : [];
+
+        if ($mirrored === null) {
             return ['*/*'];
         }
 
@@ -279,7 +290,7 @@ class ComposerRepositoryController extends Controller
             return array_values(array_map(strval(...), $cached));
         }
 
-        $patterns = $this->servedVendorPatterns($request);
+        $patterns = array_values(array_unique([...$this->servedVendorPatterns($request), ...$mirrored]));
 
         cache()->put($key, $patterns, now()->addDays((int) config('registry.metadata_cache.days')));
 

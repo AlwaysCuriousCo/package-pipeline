@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;
 
 /**
  * Another Composer repository this one mirrors packages from on demand.
@@ -26,7 +27,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @see docs/mirroring.md
  */
-#[Fillable(['name', 'url', 'username', 'token', 'ecosystem', 'protocol', 'enabled', 'keep_versions', 'position'])]
+#[Fillable(['name', 'url', 'username', 'token', 'ecosystem', 'protocol', 'packages', 'enabled', 'keep_versions', 'position'])]
 class Upstream extends Model
 {
     /** @use HasFactory<UpstreamFactory> */
@@ -60,7 +61,7 @@ class Upstream extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'url', 'username', 'ecosystem', 'protocol', 'enabled', 'keep_versions', 'repository_id'];
+        return ['name', 'url', 'username', 'ecosystem', 'protocol', 'packages', 'enabled', 'keep_versions', 'repository_id'];
     }
 
     /**
@@ -72,6 +73,7 @@ class Upstream extends Model
             'token' => 'encrypted',
             'enabled' => 'boolean',
             'keep_versions' => 'boolean',
+            'packages' => 'array',
             'ecosystem' => Ecosystem::class,
         ];
     }
@@ -81,7 +83,19 @@ class Upstream extends Model
         // A URL with a trailing slash and one without are the same upstream,
         // and every path below joins onto it — so it is normalised once here
         // rather than defended against everywhere it is used.
-        static::saving(fn (self $upstream) => $upstream->url = rtrim(trim((string) $upstream->url), '/'));
+        static::saving(function (self $upstream): void {
+            $upstream->url = rtrim(trim((string) $upstream->url), '/');
+
+            // Stored lowercase and de-duplicated, because they are compared
+            // against lowercase names and advertised to Composer as they are.
+            // An empty list means the same as none: answer for anything.
+            $patterns = array_values(array_unique(array_filter(array_map(
+                fn (mixed $pattern): string => mb_strtolower(trim((string) $pattern)),
+                (array) ($upstream->packages ?? []),
+            ))));
+
+            $upstream->packages = $patterns === [] ? null : $patterns;
+        });
     }
 
     /**
@@ -102,6 +116,19 @@ class Upstream extends Model
     public function basicUsername(string $default = 'token'): string
     {
         return filled($this->username) ? (string) $this->username : $default;
+    }
+
+    /**
+     * Whether this upstream may be asked about a package.
+     *
+     * An upstream with no patterns answers for anything — packagist.org, a
+     * corporate proxy. One with patterns is a vendor's licence server, and
+     * asking it about anything else only spends requests against somebody
+     * else's rate limit to be told no.
+     */
+    public function covers(string $name): bool
+    {
+        return $this->packages === null || Str::is($this->packages, mb_strtolower($name));
     }
 
     /**

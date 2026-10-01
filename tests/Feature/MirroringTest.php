@@ -1310,4 +1310,73 @@ class MirroringTest extends TestCase
         $this->assertDatabaseCount('mirrored_packages', 0);
         Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/p2/'));
     }
+
+    public function test_an_upstream_limited_to_named_packages_is_never_asked_about_anything_else(): void
+    {
+        $repository = $this->mirroring();
+        $repository->upstreams->first()?->update(['packages' => ['symfony/*']]);
+
+        // Nothing stubbed for this name: a request to the upstream would fail the test.
+        $this->getJson('/p2/livewire/flux-pro.json')->assertNotFound();
+        Http::assertNothingSent();
+
+        $this->fakeUpstream(['upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument())]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+    }
+
+    public function test_each_name_is_routed_only_to_the_upstreams_that_cover_it(): void
+    {
+        $repository = Repository::default();
+
+        Upstream::factory()->create([
+            'repository_id' => $repository->getKey(),
+            'name' => 'flux',
+            'url' => 'https://flux.test',
+            'packages' => ['livewire/flux*'],
+            'position' => 0,
+        ]);
+        Upstream::factory()->create([
+            'repository_id' => $repository->getKey(),
+            'name' => 'symfony mirror',
+            'url' => self::UPSTREAM,
+            'packages' => ['symfony/*'],
+            'position' => 1,
+        ]);
+
+        $this->fakeUpstream(['upstream.test/p2/symfony/console.json' => Http::response($this->upstreamDocument())]);
+
+        $this->getJson('/p2/symfony/console.json')->assertOk();
+
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), 'flux.test'));
+    }
+
+    public function test_packages_json_advertises_upstream_patterns_when_every_upstream_names_its_packages(): void
+    {
+        $repository = $this->mirroring();
+        $this->makeLocalPackage('acme/widgets');
+
+        $repository->upstreams->first()?->update(['packages' => ['Livewire/Flux*', 'ralphjsmit/*', '']]);
+
+        $this->getJson('/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['acme/*', 'livewire/flux*', 'ralphjsmit/*']);
+
+        // One unrestricted upstream may have anything, so nothing narrower is true.
+        Upstream::factory()->create(['repository_id' => $repository->getKey(), 'url' => 'https://other.test']);
+
+        $this->getJson('/packages.json')
+            ->assertOk()
+            ->assertJsonPath('available-package-patterns', ['*/*']);
+    }
+
+    public function test_an_empty_package_list_answers_for_anything(): void
+    {
+        $repository = $this->mirroring();
+        $upstream = $repository->upstreams->first();
+        $upstream?->update(['packages' => ['', ' ']]);
+
+        $this->assertNull($upstream?->refresh()->packages);
+        $this->assertTrue((bool) $upstream?->covers('symfony/console'));
+    }
 }

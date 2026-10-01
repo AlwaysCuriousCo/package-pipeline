@@ -27,7 +27,7 @@ use Illuminate\Support\Str;
  * so one installation can serve independent registries — a public one and an
  * internal one, say — with independent access rules.
  */
-#[Fillable(['name', 'path', 'description', 'public', 'page_enabled', 'page_body', 'page_image', 'page_lists_packages'])]
+#[Fillable(['name', 'path', 'composer_key', 'description', 'public', 'page_enabled', 'page_body', 'page_image', 'page_lists_packages'])]
 class Repository extends Model
 {
     /** @use HasFactory<RepositoryFactory> */
@@ -168,6 +168,31 @@ class Repository extends Model
     public function mirroredArchives(): HasManyThrough
     {
         return $this->hasManyThrough(MirroredArchive::class, Upstream::class);
+    }
+
+    /**
+     * The Composer name patterns this repository's upstreams answer for, or
+     * null when any of them answers for anything.
+     *
+     * What packages.json advertises: if every upstream is limited to a vendor
+     * or two, Composer can be told so and will stop asking about the rest of
+     * a project's dependency graph.
+     *
+     * @return list<string>|null
+     */
+    public function mirroredPatterns(): ?array
+    {
+        $patterns = [];
+
+        foreach ($this->activeUpstreams() as $upstream) {
+            if ($upstream->packages === null) {
+                return null;
+            }
+
+            array_push($patterns, ...$upstream->packages);
+        }
+
+        return array_values(array_unique($patterns));
     }
 
     /**
@@ -424,17 +449,34 @@ class Repository extends Model
      */
     public function configureCommand(): string
     {
+        return "composer config repositories.{$this->composerKey()} composer ".rtrim($this->url(), '/');
+    }
+
+    /**
+     * The entry name a consuming project's composer.json gives this
+     * repository: the one set on the repository, or the derived default.
+     */
+    public function composerKey(): string
+    {
+        return filled($this->composer_key) ? (string) $this->composer_key : $this->defaultComposerKey();
+    }
+
+    /**
+     * The installation-wide key when one is configured, or else the
+     * application name with a named repository's path appended — which is
+     * what keeps two mounts from claiming the same entry.
+     */
+    public function defaultComposerKey(): string
+    {
         $key = (string) config('registry.composer_repository_key');
 
-        if ($key === '') {
-            $key = Str::slug(config('app.name')) ?: 'private';
-
-            if (! $this->isDefault()) {
-                $key .= "-{$this->path}";
-            }
+        if ($key !== '') {
+            return $key;
         }
 
-        return "composer config repositories.{$key} composer ".rtrim($this->url(), '/');
+        $key = Str::slug(config('app.name')) ?: 'private';
+
+        return $this->isDefault() ? $key : "{$key}-{$this->path}";
     }
 
     /**

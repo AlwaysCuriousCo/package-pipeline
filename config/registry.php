@@ -41,6 +41,9 @@ return [
     | repository installation whose registry is known by a different name than
     | its panel is, and leave it alone otherwise.
     |
+    | Either way, a repository's own "Composer key" in the panel overrides
+    | this for that repository.
+    |
     */
 
     'composer_repository_key' => env('COMPOSER_REPOSITORY_KEY'),

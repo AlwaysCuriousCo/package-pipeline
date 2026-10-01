@@ -94,6 +94,58 @@ class RepositoryResourceTest extends TestCase
         $this->assertTrue($repository->refresh()->mirrors());
     }
 
+    public function test_a_repository_key_can_be_overridden_but_not_shared(): void
+    {
+        $first = Repository::factory()->create(['path' => 'fluxui']);
+        $second = Repository::factory()->create(['path' => 'ralph']);
+
+        Livewire::test(EditRepository::class, ['record' => $first->getKey()])
+            ->fillForm(['composer_key' => 'alwayscurious-fluxui'])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertStringContainsString('repositories.alwayscurious-fluxui ', $first->refresh()->configureCommand());
+
+        Livewire::test(EditRepository::class, ['record' => $second->getKey()])
+            ->fillForm(['composer_key' => 'alwayscurious-fluxui'])
+            ->call('save')
+            ->assertHasFormErrors(['composer_key' => 'unique']);
+
+        Livewire::test(EditRepository::class, ['record' => $second->getKey()])
+            ->fillForm(['composer_key' => 'has.dots'])
+            ->call('save')
+            ->assertHasFormErrors(['composer_key' => 'regex']);
+    }
+
+    public function test_an_upstream_can_be_limited_to_named_packages(): void
+    {
+        $repository = Repository::factory()->create(['path' => 'internal']);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->fillForm(['upstreams' => [[
+                'name' => 'flux',
+                'url' => 'https://composer.fluxui.test',
+                'ecosystem' => Ecosystem::Composer->value,
+                'packages' => ['livewire/flux*'],
+                'enabled' => true,
+            ]]])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame(['livewire/flux*'], $repository->upstreams()->sole()->packages);
+
+        Livewire::test(EditRepository::class, ['record' => $repository->getKey()])
+            ->fillForm(['upstreams' => [[
+                'name' => 'flux',
+                'url' => 'https://composer.fluxui.test',
+                'ecosystem' => Ecosystem::Composer->value,
+                'packages' => ['not a pattern'],
+                'enabled' => true,
+            ]]])
+            ->call('save')
+            ->assertHasFormErrors();
+    }
+
     public function test_testing_an_upstream_recommends_its_protocol_using_the_stored_token(): void
     {
         $repository = Repository::factory()->create(['path' => 'internal']);

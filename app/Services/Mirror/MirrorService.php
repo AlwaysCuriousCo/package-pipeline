@@ -188,11 +188,26 @@ class MirrorService
             ->pluck('vendor')
             ->flip();
 
+        $upstreams = $repository->activeUpstreams();
+
         return array_values(array_filter(
             $candidates,
             fn (string $name): bool => ! $published->has($name)
-                && ! $reserved->has(ReservedVendor::normalize($name)),
+                && ! $reserved->has(ReservedVendor::normalize($name))
+                && $upstreams->contains(fn (Upstream $upstream): bool => $upstream->covers($name)),
         ));
+    }
+
+    /**
+     * The upstreams that may be asked about one name, in order.
+     *
+     * @return Collection<int, Upstream>
+     */
+    private function upstreamsFor(Repository $repository, string $name): Collection
+    {
+        return $repository->activeUpstreams()
+            ->filter(fn (Upstream $upstream): bool => $upstream->covers($name))
+            ->values();
     }
 
     /**
@@ -210,7 +225,7 @@ class MirrorService
             return null;
         }
 
-        foreach ($repository->activeUpstreams() as $upstream) {
+        foreach ($this->upstreamsFor($repository, $name) as $upstream) {
             $mirrored = $this->resolve($upstream, $name, $dev);
 
             if ($mirrored instanceof MirroredPackage && $mirrored->found()) {
@@ -385,7 +400,7 @@ class MirrorService
             return null;
         }
 
-        $upstreams = $repository->activeUpstreams();
+        $upstreams = $this->upstreamsFor($repository, $name);
 
         $stored = $this->storedArchive($upstreams, $name, $reference);
 
@@ -511,13 +526,19 @@ class MirrorService
         $deadline = microtime(true) + HttpTimeouts::ADVISORY * 2;
 
         foreach ($repository->activeUpstreams() as $upstream) {
-            $outstanding = array_values(array_diff($wanted, array_keys($found)));
+            $outstanding = array_diff($wanted, array_keys($found));
 
             if ($outstanding === [] || microtime(true) >= $deadline) {
                 break;
             }
 
-            $found += $this->upstreamAdvisories($upstream, $outstanding);
+            // Only the names this upstream may be asked about; one covering
+            // none of them is skipped, not the end of the list.
+            $ask = array_values(array_filter($outstanding, $upstream->covers(...)));
+
+            if ($ask !== []) {
+                $found += $this->upstreamAdvisories($upstream, $ask);
+            }
         }
 
         return $found;
