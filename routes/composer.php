@@ -56,6 +56,9 @@ $composer = function (): void {
             ->where('package', '[^/]+')
             ->name('metadata');
         Route::get('/dist/{vendor}/{package}/{reference}.zip', [ComposerRepositoryController::class, 'dist'])
+            // Greedy segment: a reference that is a version string carries
+            // dots, and the default pattern stops at the first one.
+            ->where('reference', '[^/]+')
             ->name('dist');
     });
 

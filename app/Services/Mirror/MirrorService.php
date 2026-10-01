@@ -347,7 +347,7 @@ class MirrorService
 
                 foreach ((is_array($decoded) ? $this->versionsIn($decoded, $name) : null) ?? [] as $entry) {
                     if (is_array($entry) && ltrim((string) ($entry['version'] ?? ''), 'v') === ltrim($version, 'v')) {
-                        $references[] = $entry['dist']['reference'] ?? null;
+                        $references[] = self::referenceFor($entry);
 
                         continue;
                     }
@@ -1021,7 +1021,7 @@ class MirrorService
             return $version;
         }
 
-        $reference = $dist['reference'] ?? null;
+        $reference = self::referenceFor($version);
 
         // Only pointed here when this registry could actually stand behind the
         // bytes: a zip, named by a usable reference, with the sha1 to check it
@@ -1122,7 +1122,7 @@ class MirrorService
 
                 $url = $dist['url'] ?? null;
 
-                if (($dist['reference'] ?? null) !== $reference || ! is_string($url) || ! self::verifiable($upstream, $dist)) {
+                if (self::referenceFor($version) !== $reference || ! is_string($url) || ! self::verifiable($upstream, $dist)) {
                     continue;
                 }
 
@@ -1133,6 +1133,24 @@ class MirrorService
         }
 
         return null;
+    }
+
+    /**
+     * What names a version's archive under `/dist/vendor/name/`.
+     *
+     * The dist reference where the upstream published one — a commit sha on
+     * every git-backed registry. Licence servers (Filament's) publish a dist
+     * with a URL and nothing else, so for those the version string stands in:
+     * it is unique within the package, it is what the operator would look for
+     * on the dist disk, and REFERENCE_PATTERN already admits it.
+     *
+     * @param  array<mixed>  $version
+     */
+    private static function referenceFor(array $version): ?string
+    {
+        $reference = $version['dist']['reference'] ?? $version['version'] ?? null;
+
+        return is_string($reference) && $reference !== '' ? $reference : null;
     }
 
     /**
