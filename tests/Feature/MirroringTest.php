@@ -624,6 +624,30 @@ class MirroringTest extends TestCase
         $this->assertSame(sha1(self::ZIP), MirroredArchive::query()->sole()->shasum);
     }
 
+    public function test_a_dist_with_no_reference_on_the_upstreams_own_origin_is_named_by_its_version(): void
+    {
+        Storage::fake(config('filesystems.dists'));
+
+        // Filament's licence server: a dist with a URL and nothing else.
+        $document = $this->upstreamDocument(url: self::UPSTREAM.'/composer/10/989/download');
+        unset($document['packages']['symfony/console'][0]['dist']['shasum'], $document['packages']['symfony/console'][0]['dist']['reference']);
+
+        $this->mirroring();
+        $this->fakeUpstream([
+            'upstream.test/p2/symfony/console.json' => Http::response($document),
+            'upstream.test/composer/*' => Http::response(self::ZIP),
+        ]);
+
+        $versions = $this->versionsOf($this->getJson('/p2/symfony/console.json')->assertOk());
+
+        $this->assertSame(url('/dist/symfony/console/v6.0.0.zip'), $versions[0]['dist']['url']);
+
+        $download = $this->get('/dist/symfony/console/v6.0.0.zip')->assertOk();
+
+        $this->assertSame(self::ZIP, $download->streamedContent());
+        $this->assertSame('v6.0.0', MirroredArchive::query()->sole()->reference);
+    }
+
     public function test_a_shasum_less_dist_on_a_third_party_host_keeps_the_upstreams_url(): void
     {
         $document = $this->upstreamDocument();

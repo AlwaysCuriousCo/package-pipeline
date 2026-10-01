@@ -213,6 +213,8 @@ class RepositoryForm
                     ->orderColumn('position')
                     ->defaultItems(0)
                     ->itemLabel(fn (array $state): ?string => $state['name'] ?? null)
+                    ->collapsed()
+                    ->deleteAction(fn (Action $action) => $action->requiresConfirmation())
                     ->extraItemActions([
                         Action::make('test')
                             ->label('Test')
