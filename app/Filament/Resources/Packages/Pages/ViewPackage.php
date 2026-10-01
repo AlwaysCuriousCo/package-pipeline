@@ -65,7 +65,9 @@ class ViewPackage extends ViewRecord
         // move the search server-side when a registry outgrows a few thousand.
         return view('filament.resources.packages.package-switcher', [
             'current' => $this->getRecord(),
-            'packages' => PackageResource::getEloquentQuery()->orderBy('name')->pluck('name', 'id'),
+            'label' => 'package',
+            'items' => PackageResource::getEloquentQuery()->orderBy('name')->pluck('name', 'id'),
+            'href' => fn (int $id): string => PackageResource::getUrl('view', ['record' => $id]),
         ]);
     }
 
