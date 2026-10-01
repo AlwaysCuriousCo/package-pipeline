@@ -985,7 +985,7 @@ class MirrorService
         $versions = is_array($document) ? $this->versionsIn($document, $name) : null;
 
         $rewritten = array_map(
-            fn (mixed $version): array => $this->rewriteVersion($repository, $name, is_array($version) ? $version : []),
+            fn (mixed $version): array => $this->rewriteVersion($repository, $mirrored->upstream, $name, is_array($version) ? $version : []),
             $versions ?? [],
         );
 
@@ -1007,7 +1007,7 @@ class MirrorService
      * @param  array<mixed>  $version
      * @return array<mixed>
      */
-    private function rewriteVersion(Repository $repository, string $name, array $version): array
+    private function rewriteVersion(Repository $repository, Upstream $upstream, string $name, array $version): array
     {
         // Restated rather than trusted. Composer reads `name` off the version
         // it resolved, so an upstream answering our question about
@@ -1022,7 +1022,6 @@ class MirrorService
         }
 
         $reference = $dist['reference'] ?? null;
-        $shasum = $dist['shasum'] ?? null;
 
         // Only pointed here when this registry could actually stand behind the
         // bytes: a zip, named by a usable reference, with the sha1 to check it
@@ -1033,8 +1032,7 @@ class MirrorService
         if (($dist['type'] ?? null) !== 'zip'
             || ! is_string($reference)
             || preg_match(self::REFERENCE_PATTERN, $reference) !== 1
-            || ! is_string($shasum)
-            || $shasum === ''
+            || ! self::verifiable($upstream, $dist)
         ) {
             return $version;
         }
@@ -1102,7 +1100,7 @@ class MirrorService
      * address an upstream published" and "an address worth reaching" are two
      * different sets, and only one of them is checked here.
      *
-     * @return array{url: string, shasum: string}|null
+     * @return array{url: string, shasum: ?string}|null
      */
     private function distFor(Upstream $upstream, string $name, string $reference): ?array
     {
@@ -1123,17 +1121,44 @@ class MirrorService
                 }
 
                 $url = $dist['url'] ?? null;
-                $shasum = $dist['shasum'] ?? null;
 
-                if (($dist['reference'] ?? null) !== $reference || ! is_string($url) || ! is_string($shasum) || $shasum === '') {
+                if (($dist['reference'] ?? null) !== $reference || ! is_string($url) || ! self::verifiable($upstream, $dist)) {
                     continue;
                 }
 
-                return ['url' => $url, 'shasum' => $shasum];
+                $shasum = $dist['shasum'] ?? null;
+
+                return ['url' => $url, 'shasum' => is_string($shasum) && $shasum !== '' ? $shasum : null];
             }
         }
 
         return null;
+    }
+
+    /**
+     * Whether this registry can stand behind a version's bytes: a published
+     * sha1 to check them against, or — failing that — a dist URL on the
+     * upstream's own origin. Licence servers (Filament's, Anystack's) publish
+     * no shasum, so without the second case none of what they serve could
+     * ever be cached here, and every install would need their credentials.
+     * The bytes then come from the host the operator typed into the admin
+     * panel, over the credential they configured for it, and the sha1 stored
+     * on first fetch is what every later install is checked against. Not
+     * extended to third-party hosts: an archive published by a stranger with
+     * no hash to check it against is exactly what this registry must not
+     * vouch for.
+     *
+     * @param  array<mixed>  $dist
+     */
+    private static function verifiable(Upstream $upstream, array $dist): bool
+    {
+        $shasum = $dist['shasum'] ?? null;
+
+        if (is_string($shasum) && $shasum !== '') {
+            return true;
+        }
+
+        return is_string($dist['url'] ?? null) && $upstream->ownsUrl($dist['url']);
     }
 
     /**
@@ -1144,9 +1169,11 @@ class MirrorService
      * read, and that metadata now comes from here — so if this app stored
      * whatever arrived, a compromised or merely broken upstream would have its
      * bytes served under a hash this registry vouched for. Verified here, the
-     * consumer's own check confirms a claim that was already true.
+     * consumer's own check confirms a claim that was already true. A dist with
+     * no published sha1 (see verifiable()) is hashed here instead, and that
+     * hash is what the stored row vouches for from then on.
      *
-     * @param  array{url: string, shasum: string}  $dist
+     * @param  array{url: string, shasum: ?string}  $dist
      */
     private function fetchArchive(Upstream $upstream, string $name, string $reference, array $dist): ?MirroredArchive
     {
@@ -1217,7 +1244,9 @@ class MirrorService
             // in this process until the handle is.
             $sink->close();
 
-            if (! hash_equals($dist['shasum'], (string) sha1_file($temporary))) {
+            $shasum = (string) sha1_file($temporary);
+
+            if ($dist['shasum'] !== null && ! hash_equals($dist['shasum'], $shasum)) {
                 Log::warning('Upstream archive did not match the sha1 the upstream published for it; refusing to store it.', [
                     'upstream' => $upstream->url,
                     'package' => $name,
@@ -1241,7 +1270,7 @@ class MirrorService
                 'reference' => $reference,
             ], [
                 'path' => $path,
-                'shasum' => $dist['shasum'],
+                'shasum' => $shasum,
                 'size' => $size,
                 'used_at' => now(),
             ]);
