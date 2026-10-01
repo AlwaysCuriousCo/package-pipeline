@@ -53,7 +53,7 @@ class MirrorService
      * number, so nothing else would tell a client whose copy predates a deploy
      * that what this code now sends is different.
      */
-    private const PAYLOAD_REVISION = 2;
+    private const PAYLOAD_REVISION = 3;
 
     /**
      * When PAYLOAD_REVISION last moved, for the clients that never see it.
@@ -66,7 +66,7 @@ class MirrorService
      * vocabulary that is actually spoken. Bumped with the revision, never on
      * its own.
      */
-    private const REVISION_EPOCH = '2026-08-10T00:00:00Z';
+    private const REVISION_EPOCH = '2026-10-01T20:00:00Z';
 
     /**
      * What may stand between `/dist/vendor/name/` and `.zip`.
