@@ -86,7 +86,7 @@
                     tag="a"
                     :href="$href($id)"
                     :color="$id === $current->getKey() ? 'primary' : 'gray'"
-                    x-show="@js($name).includes(q.toLowerCase())"
+                    x-show="@js(mb_strtolower($name)).includes(q.toLowerCase())"
                 >
                     {{ $name }}
                 </x-filament::dropdown.list.item>
