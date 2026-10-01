@@ -109,12 +109,31 @@ class RepositoryResourceTest extends TestCase
         Livewire::test(EditRepository::class, ['record' => $second->getKey()])
             ->fillForm(['composer_key' => 'alwayscurious-fluxui'])
             ->call('save')
-            ->assertHasFormErrors(['composer_key' => 'unique']);
+            ->assertHasFormErrors(['composer_key']);
 
         Livewire::test(EditRepository::class, ['record' => $second->getKey()])
             ->fillForm(['composer_key' => 'has.dots'])
             ->call('save')
             ->assertHasFormErrors(['composer_key' => 'regex']);
+
+        // A custom key equal to another mount's derived default collides too.
+        Livewire::test(EditRepository::class, ['record' => $first->getKey()])
+            ->fillForm(['composer_key' => $second->defaultComposerKey()])
+            ->call('save')
+            ->assertHasFormErrors(['composer_key']);
+
+        // Blank is the default, stored as null so a second blank can follow.
+        Livewire::test(EditRepository::class, ['record' => $first->getKey()])
+            ->fillForm(['composer_key' => ''])
+            ->call('save')
+            ->assertHasNoFormErrors();
+        Livewire::test(EditRepository::class, ['record' => $second->getKey()])
+            ->fillForm(['composer_key' => ''])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertNull($first->refresh()->composer_key);
+        $this->assertNull($second->refresh()->composer_key);
     }
 
     public function test_an_upstream_can_be_limited_to_named_packages(): void

@@ -9,6 +9,7 @@ use App\Models\Upstream;
 use App\Services\Mirror\UpstreamClient;
 use App\Support\EgressPolicy;
 use App\Support\NewToken;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -44,7 +45,21 @@ class RepositoryForm
                     ->validationMessages([
                         'regex' => 'Only letters, numbers, hyphens and underscores — it becomes a key in composer.json.',
                     ])
-                    ->unique(ignoreRecord: true)
+                    // Blank means the derived default, and must be stored as
+                    // null: the column is unique, and only one row can hold ''.
+                    ->dehydrateStateUsing(fn (?string $state): ?string => filled($state) ? $state : null)
+                    // Checked against every other repository's *effective* key
+                    // rather than the column: a custom key that equals another
+                    // mount's derived default collides just the same.
+                    ->rule(fn (?Repository $record, Get $get): Closure => function (string $attribute, mixed $value, Closure $fail) use ($record, $get): void {
+                        $candidate = $record ? clone $record : new Repository;
+                        $candidate->path = $get('path');
+                        $candidate->composer_key = filled($value) ? $value : null;
+
+                        if ($taken = Repository::composerKeyTakenBy($candidate->composerKey(), $record)) {
+                            $fail("{$taken->name} already uses the key {$candidate->composerKey()}.");
+                        }
+                    })
                     ->placeholder(fn (?Repository $record): string => $record?->defaultComposerKey() ?? 'Derived from the app name and URL path')
                     ->helperText('The name the install command gives this repository in a project\'s composer.json (composer config repositories.<key> …). Blank uses the default shown. Keep it different from your other repositories, or adding one will overwrite the other.'),
                 TextInput::make('path')
@@ -233,14 +248,14 @@ class RepositoryForm
                             ->helperText('Blank reads packages.json and prefers v2. Use Test to see what the upstream supports.'),
                         TagsInput::make('packages')
                             ->label('Packages')
-                            ->placeholder('livewire/flux*')
+                            ->placeholder('vendor/*')
                             ->visible(fn (Get $get): bool => self::isComposer($get('ecosystem')))
                             ->nestedRecursiveRules(['regex:/^[A-Za-z0-9_.*-]+\/[A-Za-z0-9_.*-]+$/'])
-                            ->helperText('Only these names are asked of this upstream, and * matches anything (ralphjsmit/*). Blank answers for any package. When every upstream lists its packages, Composer is told so and stops asking this repository about the rest — no "only" needed in client composer.json.'),
+                            ->helperText('Only these names are asked of this upstream, and * matches anything (vendor/*, vendor/prefix-*). Blank answers for any package. When every upstream lists its packages, Composer is told so and stops asking this repository about the rest — no "only" needed in client composer.json.'),
                         TextInput::make('username')
                             ->maxLength(255)
                             ->placeholder('token')
-                            ->helperText('The HTTP Basic username sent with the token. Leave blank unless the upstream checks it — a licence server such as Flux wants your licence email.'),
+                            ->helperText('The HTTP Basic username sent with the token. Leave blank unless the upstream checks it — some licence servers want your licence email.'),
                         TextInput::make('token')
                             ->label('Access token')
                             ->password()

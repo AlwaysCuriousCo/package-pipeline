@@ -462,6 +462,19 @@ class Repository extends Model
     }
 
     /**
+     * The other repository already using a Composer key, custom or derived,
+     * so that two mounts never print the same repositories.<key> entry.
+     */
+    public static function composerKeyTakenBy(string $key, ?self $except = null): ?self
+    {
+        // ponytail: every repository is loaded; there are only ever a handful.
+        return static::query()
+            ->when($except?->exists, fn ($query) => $query->whereKeyNot($except->getKey()))
+            ->get()
+            ->first(fn (self $other): bool => $other->composerKey() === $key);
+    }
+
+    /**
      * The installation-wide key when one is configured, or else the
      * application name with a named repository's path appended — which is
      * what keeps two mounts from claiming the same entry.
