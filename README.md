@@ -299,6 +299,14 @@ None of these publishes anything — a page is a per-package or per-repository d
 | `PAGE_ASSET_CACHE_MINUTES` | How long an image fetched out of a package's repository is kept (default `1440`). A page's screenshots are re-served by this app rather than linked to the provider — the only way a private repository's images render for a reader who has no credential for it — so without a cache every visitor costs a provider request. |
 | `PAGE_MAX_ASSET_KB` | Largest image served or cached (default `4096`). |
 
+**Plumb scores**
+
+Off by default. See [docs/plumb.md](docs/plumb.md).
+
+| Variable | Purpose |
+| --- | --- |
+| `PLUMB_ENABLED` | Fetch each Composer package's [Plumb](https://plumbphp.dev) scores nightly and show them in the panel, per package and per scanned release (default `false`). Every lookup sends a package's name to plumbphp.dev, private packages included, and Plumb only has scores for packages on Packagist or registered with it. |
+
 **Queue timing**
 
 | Variable | Purpose |
@@ -327,6 +335,7 @@ The panel is the usual way in, but everything an operator needs can be done with
 | `package:add <url>` | Create a package from a VCS repository URL and queue its first sync. `--name=`, `--repo=` (which Composer repository to serve it from), `--subdirectory=` (for a monorepo), `--token=`, `--no-webhook`, `--no-sync`. The scriptable equivalent of the create wizard. |
 | `package:serve <name> <repo>` | Serve an existing package from another Composer repository — `root` names the registry root. `--remove` stops serving it there; `--home=` disambiguates a name that lives in more than one repository. See [docs/shared-packages.md](docs/shared-packages.md). |
 | `package:delete <name>` | Delete a package, its versions and its stored archives. `--repo=` disambiguates a name served in more than one repository; `--force` skips the confirmation. |
+| `plumb:refresh [name]` | Fetch Plumb's scores for every Composer package, or one, and record them on the package and on each release Plumb has scanned. Does nothing unless `PLUMB_ENABLED` is set. See [docs/plumb.md](docs/plumb.md). |
 
 **Archives**
 
@@ -412,6 +421,7 @@ The short version is below. **[docs/deployment.md](docs/deployment.md)** is the 
   | `queue:prune-batches` | 03:40 | One row per sync, kept 48 hours (72 unfinished). |
   | `cache:prune` | 03:45 | The database cache store expires an entry only when its key is next read, and this app supersedes entries rather than invalidating them — so what it leaves behind are rows nothing will ever ask for again. A no-op on `redis`. |
   | `downloads:prune` | 03:50 | The largest table in the schema, one row per zip served. Rows past `DOWNLOAD_RETENTION_DAYS` (400) are counted into the packages' and versions' totals and then deleted, so `total_downloads` and `downloads:recalculate` still answer with a lifetime figure. `0` keeps everything. |
+  | `plumb:refresh` | 04:30 | Plumb rescans a package days apart and asks readers to hold an answer for a day, so nightly is as often as it is worth asking. One request per Composer package, paced under Plumb's rate limit. A no-op unless `PLUMB_ENABLED` is set. |
 
   Every task is `onOneServer()`, which needs a shared cache store that supports locks — the default `database`, or `redis`. `CACHE_STORE=file` defeats that once there is more than one container, each holding its own lock; `CACHE_STORE=array` defeats it on *any* deployment, because `schedule:run` is a fresh process every minute and an in-memory lock does not outlive it. That is a correctness problem rather than a performance one — concurrent rebuilds of one package end with the loser's prune deleting the winner's rows. `php artisan about` reports which you have under **Registry → Scheduler locking**; see [The cache store is not just a cache](docs/deployment.md#the-cache-store-is-not-just-a-cache).
 
@@ -486,6 +496,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/monorepos.md](docs/monorepos.md) — publishing several packages from one repository: the subdirectory field, how a dist for part of a repository is built, and what a push to a monorepo syncs.
 - [docs/mirroring.md](docs/mirroring.md) — serving packagist.org's packages through this registry: enabling it, what consumers see, failure behaviour, and what it costs in disk.
 - [docs/outgoing-webhooks.md](docs/outgoing-webhooks.md) — telling a deploy pipeline or a non-Slack chat tool that a version published or a sync failed: the events, the payloads, and how to verify a signature.
+- [docs/plumb.md](docs/plumb.md) — showing Plumb's security, maintenance and ecosystem scores beside Composer packages and their versions: what gets a score, what cannot, and what turning it on tells a third party.
 - [docs/public-pages.md](docs/public-pages.md) — publishing a readable page for a package or a repository: the toggles, where the content comes from, what a private package withholds, and the social-preview and search tags.
 - [docs/shared-packages.md](docs/shared-packages.md) — serving one package from several Composer repositories: how to, what decides access under each mount, and what stays with the repository the package lives in.
 - [docs/teams.md](docs/teams.md) — granting access to a group rather than a person: what a team holds, how effective access composes, and what it costs on the Composer hot path.

@@ -8,6 +8,7 @@ use App\Filament\Resources\Packages\Actions\QueueSyncsBulkAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
 use App\Models\Package;
+use App\Support\Plumb;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
@@ -93,6 +94,18 @@ class PackagesTable
                     ->searchable()
                     ->sortable()
                     ->placeholder('Unreleased')
+                    ->toggleable(),
+                TextColumn::make('plumb')
+                    ->label('Plumb')
+                    ->state(fn (Package $record): ?int => Plumb::score($record->plumb))
+                    ->badge()
+                    ->color(fn (?int $state): string => Plumb::color($state))
+                    ->tooltip(fn (Package $record): ?string => Plumb::breakdown($record->plumb))
+                    // The checks behind the number live on Plumb's own page.
+                    ->url(fn (Package $record): ?string => $record->plumb ? Plumb::pageUrl($record->name) : null)
+                    ->openUrlInNewTab()
+                    ->placeholder('Not scored')
+                    ->visible(Plumb::enabled())
                     ->toggleable(),
                 TextColumn::make('type')
                     ->badge()

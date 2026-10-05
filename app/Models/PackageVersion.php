@@ -117,6 +117,7 @@ class PackageVersion extends Model
             'released_at' => 'immutable_datetime',
             'released_at_unknown' => 'boolean',
             'metadata' => 'array',
+            'plumb' => 'array',
         ];
     }
 

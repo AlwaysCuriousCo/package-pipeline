@@ -139,6 +139,7 @@ class Package extends Model
             'page_badges' => PageBadges::class,
             'page_body_source' => PageBodySource::class,
             'page_source_synced_at' => 'datetime',
+            'plumb' => 'array',
         ];
     }
 

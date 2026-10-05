@@ -369,6 +369,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Plumb Scores
+    |--------------------------------------------------------------------------
+    |
+    | Plumb (plumbphp.dev) scores PHP packages on security, maintenance and
+    | ecosystem health. Enabled, `plumb:refresh` asks its public API about
+    | every Composer package here each night and the panel shows the answer
+    | beside the package and its versions.
+    |
+    | Off by default, because asking is telling: each lookup sends a package's
+    | name to a third party, private packages included. Plumb only has scores
+    | for packages on Packagist or registered with it by their owner, so a
+    | registry of purely private packages gains nothing by turning this on.
+    |
+    */
+
+    'plumb' => [
+        'enabled' => (bool) env('PLUMB_ENABLED', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Billing
     |--------------------------------------------------------------------------
     |

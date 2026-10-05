@@ -70,6 +70,14 @@ class ScheduleTest extends TestCase
         $this->assertSame('15 3 * * *', $this->event('mirror:prune')->expression);
     }
 
+    /**
+     * Plumb asks its readers to hold an answer for at least a day.
+     */
+    public function test_plumb_scores_are_refreshed_nightly(): void
+    {
+        $this->assertSame('30 4 * * *', $this->event('plumb:refresh')->expression);
+    }
+
     public function test_the_append_only_tables_are_pruned_daily(): void
     {
         $notifications = $this->event('model:prune');

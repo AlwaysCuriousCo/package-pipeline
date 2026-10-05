@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\Ecosystem;
 use App\Enums\SourceProvider;
 use App\Enums\TokenAbility;
 use App\Enums\WebhookCoverage;
@@ -15,6 +16,7 @@ use App\Models\Repository;
 use App\Models\Token;
 use App\Services\GitHub\WebhookRegistrar;
 use App\Support\NewToken;
+use App\Support\Plumb;
 use Filament\Actions\Action;
 use Filament\Actions\SelectAction;
 use Filament\Forms\Components\DatePicker;
@@ -61,6 +63,19 @@ class PackageInfolist
                             ->label('Latest version')
                             ->badge()
                             ->placeholder('Unreleased'),
+                        TextEntry::make('plumb')
+                            ->label('Plumb score')
+                            ->state(fn (Package $record): ?int => Plumb::score($record->plumb))
+                            ->badge()
+                            ->color(fn (?int $state): string => Plumb::color($state))
+                            ->url(fn (Package $record): ?string => $record->plumb ? Plumb::pageUrl($record->name) : null)
+                            ->openUrlInNewTab()
+                            ->helperText(fn (Package $record): ?string => Plumb::breakdown($record->plumb))
+                            // Plumb only scans what is on Packagist or was
+                            // registered with it, so for a private package
+                            // this is the normal answer rather than a fault.
+                            ->placeholder('Not scored — Plumb has no scan of this package')
+                            ->visible(fn (Package $record): bool => Plumb::enabled() && $record->ecosystem === Ecosystem::Composer),
                         TextEntry::make('type')
                             ->badge()
                             ->placeholder('-'),

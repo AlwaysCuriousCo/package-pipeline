@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Packages\RelationManagers;
 use App\Filament\Resources\Packages\Actions\DownloadArchiveAction;
 use App\Models\Package;
 use App\Models\PackageVersion;
+use App\Support\Plumb;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\TextEntry;
@@ -58,6 +59,16 @@ class VersionsRelationManager extends RelationManager
                 ->state(fn (PackageVersion $record): array => $record->licenses())
                 ->badge()
                 ->placeholder('Unlicensed'),
+            TextEntry::make('plumb')
+                ->label('Plumb score')
+                ->state(fn (PackageVersion $record): ?int => Plumb::score($record->plumb))
+                ->badge()
+                ->color(fn (?int $state): string => Plumb::color($state))
+                ->helperText(fn (PackageVersion $record): ?string => Plumb::breakdown($record->plumb))
+                // Plumb scans the latest stable release, so a version it
+                // never saw in that position has no score of its own.
+                ->placeholder('Not scored — Plumb did not scan this release')
+                ->visible(Plumb::enabled()),
             TextEntry::make('authors')
                 ->state(fn (PackageVersion $record): array => $record->authorLines())
                 ->listWithLineBreaks()
@@ -122,6 +133,14 @@ class VersionsRelationManager extends RelationManager
                     ->label('Commit')
                     ->limit(12)
                     ->copyable(),
+                TextColumn::make('plumb')
+                    ->label('Plumb')
+                    ->state(fn (PackageVersion $record): ?int => Plumb::score($record->plumb))
+                    ->badge()
+                    ->color(fn (?int $state): string => Plumb::color($state))
+                    ->tooltip(fn (PackageVersion $record): ?string => Plumb::breakdown($record->plumb))
+                    ->placeholder('—')
+                    ->visible(Plumb::enabled()),
                 TextColumn::make('total_downloads')
                     ->label('Downloads')
                     // The per-version counter the download listener keeps and

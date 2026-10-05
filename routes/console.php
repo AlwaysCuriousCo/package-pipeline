@@ -144,3 +144,13 @@ Schedule::command('cache:prune')
 Schedule::command('queue:prune-batches --hours=48 --unfinished=72 --cancelled=72')
     ->dailyAt('03:40')
     ->onOneServer();
+
+// Plumb rescans a package on its own cadence — days apart — and asks its
+// readers to hold an answer for at least a day, so nightly is as often as this
+// is worth asking. One request per Composer package, paced under Plumb's rate
+// limit, and a no-op unless PLUMB_ENABLED is set.
+Schedule::command('plumb:refresh')
+    ->dailyAt('04:30')
+    // Half a second a package: three hours covers twenty thousand of them.
+    ->withoutOverlapping(180)
+    ->onOneServer();

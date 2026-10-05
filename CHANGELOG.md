@@ -14,6 +14,13 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Plumb scores for Composer packages.** With `PLUMB_ENABLED=true`, a nightly
+  `plumb:refresh` reads each Composer package's scan history from
+  [Plumb](https://plumbphp.dev) and the panel shows the composite, security,
+  maintenance and ecosystem scores beside the package and beside each release
+  Plumb scanned. Off by default: a lookup sends the package's name to
+  plumbphp.dev, and Plumb only scores packages on Packagist or registered with
+  it. See [docs/plumb.md](docs/plumb.md).
 - **Upstreams limited to their packages, and per-repository Composer keys.**
   An upstream can list the package patterns it serves (`livewire/flux*`);
   it is only asked about those, and when every upstream lists its packages
