@@ -9,6 +9,7 @@ use App\Services\GitHub\GitHubApp;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 
 class SourceInfolist
 {
@@ -16,61 +17,93 @@ class SourceInfolist
     {
         return $schema
             ->components([
-                TextEntry::make('name'),
-                TextEntry::make('provider')
-                    ->badge(),
-                TextEntry::make('account')
-                    ->label('Organisation or user')
-                    ->url(fn (Source $record): ?string => $record->account
-                        ? "https://{$record->provider->host()}/{$record->account}"
-                        : null)
-                    ->openUrlInNewTab()
-                    ->color('primary')
-                    ->placeholder('Not connected yet'),
-                TextEntry::make('account_type')
-                    ->label('Account type')
-                    ->placeholder('-'),
-                TextEntry::make('connected_at')
-                    ->label('Connected')
-                    ->since()
-                    ->placeholder('Never'),
-                TextEntry::make('installation_id')
-                    ->label('Authentication')
-                    ->badge()
-                    ->color(fn (Source $record): string => $record->usesInstallation() ? 'success' : 'warning')
-                    // Token-based sources have no installation id, so the
-                    // state is filled in from the record rather than the
-                    // column to keep the entry from falling back to a dash.
-                    ->state(fn (Source $record): string => match (true) {
-                        $record->usesInstallation() => "GitHub App installation #{$record->installation_id}",
-                        filled($record->token) => 'Access token',
-                        default => 'None',
-                    }),
-                TextEntry::make('metadata.repository_selection')
-                    ->label('Repository access')
-                    ->formatStateUsing(fn (string $state): string => $state === 'all'
-                        ? 'All repositories in the account'
-                        : 'Only the selected repositories')
-                    ->placeholder('-'),
-                TextEntry::make('metadata.repository_count')
-                    ->label('Repositories reachable')
-                    ->placeholder('Unknown — run "Test connection"'),
-                TextEntry::make('base_url')
-                    ->label('API base URL')
-                    ->placeholder('https://api.github.com'),
-                TextEntry::make('connection_error')
-                    ->label('Connection error')
-                    ->color('danger')
-                    ->placeholder('None')
-                    ->columnSpanFull(),
-                TextEntry::make('created_at')
-                    ->dateTime()
-                    ->placeholder('-'),
-                TextEntry::make('updated_at')
-                    ->dateTime()
-                    ->placeholder('-'),
+                Section::make('Source')
+                    ->icon(Heroicon::OutlinedCloud)
+                    ->description('The account packages are pulled from.')
+                    ->columnSpanFull()
+                    ->columns(4)
+                    ->schema([
+                        TextEntry::make('name'),
+                        TextEntry::make('provider')
+                            ->badge(),
+                        TextEntry::make('account')
+                            ->label('Organisation or user')
+                            ->url(fn (Source $record): ?string => $record->account
+                                ? "https://{$record->provider->host()}/{$record->account}"
+                                : null)
+                            ->openUrlInNewTab()
+                            ->color('primary')
+                            ->placeholder('Not connected yet'),
+                        TextEntry::make('account_type')
+                            ->label('Account type')
+                            ->placeholder('-'),
+                    ]),
+                Section::make('Connection')
+                    ->icon(Heroicon::OutlinedSignal)
+                    ->description('How this instance signs in to the account, and what it can reach there.')
+                    ->columnSpanFull()
+                    ->columns(3)
+                    ->schema([
+                        self::authentication(),
+                        TextEntry::make('connected_at')
+                            ->label('Connected')
+                            ->since()
+                            ->placeholder('Never'),
+                        TextEntry::make('base_url')
+                            ->label('API base URL')
+                            ->placeholder('https://api.github.com'),
+                        TextEntry::make('metadata.repository_selection')
+                            ->label('Repository access')
+                            ->formatStateUsing(fn (string $state): string => $state === 'all'
+                                ? 'All repositories in the account'
+                                : 'Only the selected repositories')
+                            ->placeholder('-'),
+                        TextEntry::make('metadata.repository_count')
+                            ->label('Repositories reachable')
+                            ->placeholder('Unknown — run "Test connection"'),
+                        TextEntry::make('connection_error')
+                            ->label('Connection error')
+                            ->color('danger')
+                            // A row that only ever says "None" is a row nobody
+                            // reads, so it appears when there is something in it.
+                            ->visible(fn (Source $record): bool => filled($record->connection_error))
+                            ->columnSpanFull(),
+                    ]),
                 self::webhook(),
+                Section::make('Record')
+                    ->icon(Heroicon::OutlinedClock)
+                    ->columnSpanFull()
+                    ->compact()
+                    ->columns(2)
+                    ->schema([
+                        TextEntry::make('created_at')
+                            ->dateTime()
+                            ->placeholder('-'),
+                        TextEntry::make('updated_at')
+                            ->dateTime()
+                            ->placeholder('-'),
+                    ]),
             ]);
+    }
+
+    /**
+     * Which credential the source signs in with. Shared with the edit form,
+     * where it heads the card the token is typed into.
+     */
+    public static function authentication(): TextEntry
+    {
+        return TextEntry::make('installation_id')
+            ->label('Authentication')
+            ->badge()
+            ->color(fn (Source $record): string => $record->usesInstallation() ? 'success' : 'warning')
+            // Token-based sources have no installation id, so the
+            // state is filled in from the record rather than the
+            // column to keep the entry from falling back to a dash.
+            ->state(fn (Source $record): string => match (true) {
+                $record->usesInstallation() => "GitHub App installation #{$record->installation_id}",
+                filled($record->token) => 'Access token',
+                default => 'None',
+            });
     }
 
     /**
@@ -86,6 +119,7 @@ class SourceInfolist
     {
         return Section::make('Auto-sync')
             ->key('webhook')
+            ->icon(Heroicon::OutlinedArrowPath)
             ->visible(fn (Source $record): bool => $record->usesInstallation())
             ->description('One webhook on the GitHub App covers every repository in every installation. Without it, each package carries a webhook on its own repository instead, which needs the app to have "Webhooks: Read and write".')
             ->headerActions([RecheckWebhookAction::make()])
