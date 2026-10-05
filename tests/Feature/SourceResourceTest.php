@@ -11,6 +11,7 @@ use App\Filament\Resources\Sources\Pages\EditSource;
 use App\Filament\Resources\Sources\Pages\ListSources;
 use App\Filament\Resources\Sources\Pages\ViewSource;
 use App\Filament\Resources\Sources\RelationManagers\PackagesRelationManager;
+use App\Filament\Resources\Sources\SourceResource;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
 use App\Models\Source;
@@ -192,6 +193,25 @@ class SourceResourceTest extends TestCase
         Livewire::test(ViewSource::class, ['record' => $source->getKey()])
             ->assertOk()
             ->assertSee($source->account)
+            ->assertSee('GitHub App installation #'.$source->installation_id);
+    }
+
+    /**
+     * The heading is a switcher, and it stays on the page it was opened from:
+     * someone editing sources moves between edit forms, not back to a view.
+     */
+    public function test_the_heading_switches_to_the_same_page_of_another_source(): void
+    {
+        $source = Source::factory()->create(['name' => 'Acme']);
+        $other = Source::factory()->create(['name' => 'Globex']);
+
+        Livewire::test(ViewSource::class, ['record' => $source->getKey()])
+            ->assertSee('Switch source')
+            ->assertSee(SourceResource::getUrl('view', ['record' => $other]));
+
+        Livewire::test(EditSource::class, ['record' => $source->getKey()])
+            ->assertSee(SourceResource::getUrl('edit', ['record' => $other]))
+            // The edit form says what the source signs in with today.
             ->assertSee('GitHub App installation #'.$source->installation_id);
     }
 

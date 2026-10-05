@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Sources\Pages;
 
+use App\Filament\Concerns\SwitchesRecords;
 use App\Filament\Resources\Sources\Actions\ConnectSourceAction;
 use App\Filament\Resources\Sources\Actions\TestSourceAction;
 use App\Filament\Resources\Sources\SourceResource;
@@ -11,6 +12,8 @@ use Filament\Resources\Pages\EditRecord;
 
 class EditSource extends EditRecord
 {
+    use SwitchesRecords;
+
     protected static string $resource = SourceResource::class;
 
     protected function getHeaderActions(): array

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Packages\Pages;
 
+use App\Filament\Concerns\SwitchesRecords;
 use App\Filament\Resources\Packages\Actions\CreateWebhookAction;
 use App\Filament\Resources\Packages\Actions\ExportSbomAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
@@ -15,10 +16,11 @@ use App\Services\GitHub\WebhookRegistrar;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
-use Illuminate\Contracts\Support\Htmlable;
 
 class ViewPackage extends ViewRecord
 {
+    use SwitchesRecords;
+
     protected static string $resource = PackageResource::class;
 
     /**
@@ -52,23 +54,6 @@ class ViewPackage extends ViewRecord
         if ($package instanceof Package) {
             app(WebhookRegistrar::class)->verify($package);
         }
-    }
-
-    /**
-     * The heading is a GitHub-style switcher: the package name opens a
-     * searchable list of every package the user can see, and picking one
-     * jumps to its view page. The title (breadcrumb, browser tab) stays text.
-     */
-    public function getHeading(): string|Htmlable|null
-    {
-        // ponytail: every visible package is rendered and filtered client-side;
-        // move the search server-side when a registry outgrows a few thousand.
-        return view('filament.resources.packages.package-switcher', [
-            'current' => $this->getRecord(),
-            'label' => 'package',
-            'items' => PackageResource::getEloquentQuery()->orderBy('name')->pluck('name', 'id'),
-            'href' => fn (int $id): string => PackageResource::getUrl('view', ['record' => $id]),
-        ]);
     }
 
     protected function getHeaderActions(): array
