@@ -32,6 +32,22 @@ class RepositoryForm
     {
         return $schema
             ->components([
+                self::details(),
+                self::connect(),
+                self::page(),
+                self::reservedVendors(),
+                self::upstreams(),
+            ]);
+    }
+
+    private static function details(): Section
+    {
+        return Section::make('Repository')
+            ->description('What this repository is called, where it is served, and who may read it.')
+            ->icon(Heroicon::OutlinedArchiveBox)
+            ->columnSpanFull()
+            ->columns(2)
+            ->schema([
                 TextInput::make('name')
                     ->required()
                     ->maxLength(255)
@@ -89,10 +105,6 @@ class RepositoryForm
                 Textarea::make('description')
                     ->rows(3)
                     ->columnSpanFull(),
-                self::connect(),
-                self::page(),
-                self::reservedVendors(),
-                self::upstreams(),
             ]);
     }
 
