@@ -50,8 +50,13 @@ class RegisterController extends Controller
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            // RFC 2606 names can never receive mail, and the provider rejects
+            // them outright — the verification link would fail on the queue.
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email',
+                'not_regex:/@(.+\.)?example\.(com|net|org)$|\.(test|example|invalid|localhost)$/i'],
             'password' => ['required', 'string', 'min:12', 'confirmed'],
+        ], [
+            'email.not_regex' => 'That address cannot receive mail.',
         ]);
 
         $user = User::query()->create([

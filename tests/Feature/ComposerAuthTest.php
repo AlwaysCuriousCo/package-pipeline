@@ -87,6 +87,15 @@ class ComposerAuthTest extends TestCase
             ->assertExactJson(['packageNames' => ['acme/widgets']]);
     }
 
+    public function test_the_suggested_username_authenticates_when_the_chosen_one_has_a_colon(): void
+    {
+        $new = Token::issue(User::factory()->superAdmin()->create(), 'test token', [TokenAbility::RepositoryRead], username: 'user:codearachnid');
+
+        $this->withBasicAuth($new->token->composerUsername(), $new->plainText)
+            ->getJson('/r/internal/list.json')
+            ->assertOk();
+    }
+
     public function test_a_valid_token_authenticates_as_a_bearer_token(): void
     {
         $new = $this->issueToken();
