@@ -129,16 +129,21 @@ class Token extends Model
      *
      * Only the password authenticates, so this is free to be whatever reads
      * best in auth.json — the owner's email, or whatever was set instead.
+     *
+     * Except a colon. HTTP Basic joins the pair as "username:password" and
+     * the server splits at the first colon (RFC 7617 forbids one in the
+     * username), so a deploy token named "user:ci" would send "ci:pp_…" as
+     * its password and never authenticate.
      */
     public function composerUsername(): string
     {
         $principal = $this->tokenable;
 
-        return $this->username ?: match (true) {
+        return str_replace(':', '-', $this->username ?: match (true) {
             $principal instanceof User => $principal->email,
             $principal instanceof DeployToken => $principal->name,
             default => 'token',
-        };
+        });
     }
 
     /**

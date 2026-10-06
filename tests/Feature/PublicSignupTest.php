@@ -42,12 +42,12 @@ class PublicSignupTest extends TestCase
 
         $this->post('/register', [
             'name' => 'Buyer',
-            'email' => 'buyer@example.com',
+            'email' => 'buyer@acme.io',
             'password' => 'a-long-enough-password',
             'password_confirmation' => 'a-long-enough-password',
         ])->assertRedirect(route('billing.index'));
 
-        $user = User::query()->where('email', 'buyer@example.com')->sole();
+        $user = User::query()->where('email', 'buyer@acme.io')->sole();
 
         $this->assertAuthenticatedAs($user);
         $this->assertFalse($user->canAccessPanel(filament()->getDefaultPanel()));
@@ -55,6 +55,23 @@ class PublicSignupTest extends TestCase
 
         // Signed in, but the panel's front door stays shut.
         $this->get('/admin')->assertForbidden();
+    }
+
+    public function test_reserved_example_domains_are_refused(): void
+    {
+        Notification::fake();
+
+        foreach (['buyer@example.com', 'buyer@mail.example.org', 'buyer@shop.test'] as $email) {
+            $this->post('/register', [
+                'name' => 'Buyer',
+                'email' => $email,
+                'password' => 'a-long-enough-password',
+                'password_confirmation' => 'a-long-enough-password',
+            ])->assertSessionHasErrors('email');
+        }
+
+        $this->assertDatabaseCount('users', 0);
+        Notification::assertNothingSent();
     }
 
     public function test_the_honeypot_swallows_bots_without_creating_anything(): void
@@ -76,12 +93,12 @@ class PublicSignupTest extends TestCase
 
         $this->post('/register', [
             'name' => 'Buyer',
-            'email' => 'buyer@example.com',
+            'email' => 'buyer@acme.io',
             'password' => 'a-long-enough-password',
             'password_confirmation' => 'a-long-enough-password',
         ]);
 
-        $user = User::query()->where('email', 'buyer@example.com')->sole();
+        $user = User::query()->where('email', 'buyer@acme.io')->sole();
         $this->assertNull($user->email_verified_at);
 
         $url = URL::temporarySignedRoute('billing.verify', now()->addDay(), ['user' => $user->getKey()]);
