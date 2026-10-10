@@ -1023,7 +1023,10 @@ class ComposerRepositoryController extends Controller
         // and the body is dropped far below this method, so a `curl -I`, an
         // uptime check or a proxy probing the URL would otherwise land in
         // total_downloads as an install that took no bytes.
-        if ($request->isMethod('GET')) {
+        //
+        // Nor is an installation test, which makes this exact request to
+        // prove the registry works and then deletes its token.
+        if ($request->isMethod('GET') && ! $this->token($request)?->installation_test) {
             PackageDownloaded::dispatch(
                 $record->id,
                 $version->id,

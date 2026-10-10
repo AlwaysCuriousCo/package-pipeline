@@ -2,6 +2,8 @@
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Actions\TestInstallationAction;
+use App\Filament\Concerns\RunsInstallationTests;
 use App\Filament\Pages\Dashboard;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Sources\Actions\ConnectGitHubAction;
@@ -9,6 +11,7 @@ use App\Models\Download;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
+use App\Services\InstallationTest;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -26,14 +29,16 @@ use Filament\Widgets\Widget;
  * the steps link to already existed — it was only scattered across Sources
  * and Packages for somebody who did not know to look there. Each step ticks
  * itself off from the registry's own state, so there is nothing to dismiss:
- * the card goes away once a package has been installed from here, which is
- * the moment the registry has done its job once. Anybody done with it sooner
+ * the card goes away once a package has been installed from here, or an
+ * installation test has passed, which is the moment the registry has done
+ * its job once. Anybody done with it sooner
  * can dismiss it for themselves.
  */
 class GettingStarted extends Widget implements HasActions, HasSchemas
 {
     use InteractsWithActions;
     use InteractsWithSchemas;
+    use RunsInstallationTests;
 
     protected string $view = 'filament.widgets.getting-started';
 
@@ -48,7 +53,16 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
         return $user instanceof User
             && $user->can('viewAny', Source::class)
             && $user->getting_started_dismissed_at === null
-            && ! Download::query()->exists();
+            && ! self::installed();
+    }
+
+    /**
+     * The last step is done once a package has really been installed, or an
+     * installation test has passed — whichever comes first.
+     */
+    private static function installed(): bool
+    {
+        return Download::query()->exists() || InstallationTest::hasPassed();
     }
 
     /**
@@ -90,14 +104,11 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
             ->url(PackageResource::getUrl('index', ['action' => 'importFromSource']));
     }
 
-    public function installAction(): Action
+    public function testInstallationAction(): Action
     {
-        return Action::make('install')
-            ->label('Open its install steps')
-            ->icon(Heroicon::OutlinedCommandLine)
-            ->url(fn (): ?string => ($package = $this->firstPackage())
-                ? PackageResource::getUrl('view', ['record' => $package])
-                : null);
+        return TestInstallationAction::make(fn (): ?Package => $this->installablePackage(), chooseVersion: false)
+            ->label('Test an installation')
+            ->color('primary');
     }
 
     /**
@@ -124,13 +135,15 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
                 'available' => $connected,
             ],
             [
-                'key' => 'install',
-                'title' => 'Install one',
-                'description' => $package === null
-                    ? 'Each package page has the composer commands, and a read token for a private repository.'
-                    : "{$package->name}'s page has the composer commands, and a read token for a private repository.",
-                'done' => false,
-                'available' => $package !== null,
+                'key' => 'testInstallation',
+                'title' => 'Test an installation',
+                'description' => ($installable = $this->installablePackage()) === null
+                    ? ($package === null
+                        ? 'Installs a package the way Composer would, through this registry\'s public address, and shows each request.'
+                        : "Waiting for {$package->name}'s first sync to finish — the queue worker builds its versions.")
+                    : "Installs {$installable->name} the way Composer would, through this registry's public address, and shows each request. Its page has the commands for your own projects.",
+                'done' => self::installed(),
+                'available' => $installable !== null,
             ],
         ];
     }
@@ -138,5 +151,13 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
     private function firstPackage(): ?Package
     {
         return Package::query()->oldest('id')->first();
+    }
+
+    /**
+     * The first package with a version to install.
+     */
+    private function installablePackage(): ?Package
+    {
+        return Package::query()->whereHas('versions')->oldest('id')->first();
     }
 }

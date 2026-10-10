@@ -8,6 +8,7 @@ use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Filament\Widgets\GettingStarted;
 use App\Models\Download;
 use App\Models\Package;
+use App\Models\PackageVersion;
 use App\Models\Source;
 use App\Models\User;
 use Filament\Forms\Components\Select;
@@ -68,7 +69,7 @@ class FirstRunOnboardingTest extends TestCase
             ->assertSee('Connect GitHub')
             ->assertSee('also registers this registry&#039;s GitHub App', false)
             ->assertSee('Import your packages')
-            ->assertSee('Install one')
+            ->assertSee('Test an installation')
             ->assertSeeHtml('wire:click="mountAction(\'connectGithub\'')
             // Not until there is something to import from.
             ->assertDontSee('?action=importFromSource', false);
@@ -85,8 +86,14 @@ class FirstRunOnboardingTest extends TestCase
         $package = Package::factory()->create(['source_id' => $source->id]);
 
         Livewire::test(GettingStarted::class)
-            ->assertSee("{$package->name}&#039;s page has the composer commands", false)
-            ->assertSeeHtml(e(PackageResource::getUrl('view', ['record' => $package])));
+            ->assertSee("Waiting for {$package->name}&#039;s first sync to finish", false)
+            ->assertDontSeeHtml("mountAction('testInstallation'");
+
+        PackageVersion::factory()->create(['package_id' => $package->id]);
+
+        Livewire::test(GettingStarted::class)
+            ->assertSee("Installs {$package->name} the way Composer would", false)
+            ->assertSeeHtml("mountAction('testInstallation'");
     }
 
     public function test_the_steps_go_away_once_a_package_has_been_installed(): void

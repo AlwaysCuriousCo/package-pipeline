@@ -78,6 +78,20 @@ class DownloadStatsTest extends TestCase
         $this->assertSame($new->token->token_prefix, Download::query()->sole()->token_prefix);
     }
 
+    public function test_an_installation_test_is_not_a_download(): void
+    {
+        // The test makes exactly the request Composer makes, to prove the
+        // registry works; counting it would be an install nobody made.
+        $new = Token::issueForInstallationTest(User::factory()->superAdmin()->create());
+
+        $this->withBasicAuth('token', $new->plainText)
+            ->get('/dist/acme/widgets/'.str_repeat('a', 40).'.zip')
+            ->assertOk();
+
+        $this->assertSame(0, Download::query()->count());
+        $this->assertSame(0, $this->package->fresh()->total_downloads);
+    }
+
     public function test_a_head_request_is_not_a_download(): void
     {
         // Laravel answers HEAD on every GET route, so `curl -I`, an uptime
