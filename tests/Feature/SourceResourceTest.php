@@ -69,9 +69,20 @@ class SourceResourceTest extends TestCase
             ->assertSee(route('sources.connect.new'));
     }
 
-    public function test_connecting_is_disabled_when_no_github_app_is_registered(): void
+    public function test_connecting_registers_the_app_first_when_none_is_registered(): void
     {
         config()->set('services.github.app', ['id' => null, 'slug' => null, 'private_key' => null]);
+
+        Livewire::test(ListSources::class)
+            ->assertActionExists('connectGithub')
+            ->assertActionEnabled('connectGithub')
+            ->mountAction('connectGithub')
+            ->assertMountedActionModalSee('a one-time step');
+    }
+
+    public function test_connecting_is_disabled_when_the_environment_names_half_an_app(): void
+    {
+        config()->set('services.github.app', ['id' => '123456', 'slug' => null, 'private_key' => null]);
 
         Livewire::test(ListSources::class)
             ->assertActionExists('connectGithub')

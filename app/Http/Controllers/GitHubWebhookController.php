@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
+use App\Services\GitHub\GitHubApp;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -41,7 +42,7 @@ class GitHubWebhookController extends Controller
      */
     public function app(Request $request): Response|JsonResponse
     {
-        $secret = config('services.github.app.webhook_secret');
+        $secret = app(GitHubApp::class)->webhookSecret();
 
         if (blank($secret)) {
             // Refusing is the honest answer: unverified deliveries are not

@@ -12,5 +12,8 @@ final readonly class Project
         public string $id,
         public string $fullName,
         public string $webUrl,
+        // A copy of someone else's project, which is rarely what anybody
+        // means to publish; only offered, never assumed.
+        public bool $fork = false,
     ) {}
 }

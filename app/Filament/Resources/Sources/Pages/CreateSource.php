@@ -19,14 +19,14 @@ class CreateSource extends CreateRecord
     public function getSubheading(): ?string
     {
         return ConnectGitHubAction::isAvailable()
-            ? 'Most accounts are added with "Connect GitHub account", which fills all of this in from GitHub. Use this form for a GitHub Enterprise instance, or an account you authenticate with an access token.'
-            : 'No GitHub App is registered for this instance, so sources authenticate with an access token. Register one (see docs/github-app.md) to connect accounts in a click instead.';
+            ? 'Most accounts are added with Connect GitHub → Connect an account, which fills all of this in from GitHub. Use this form for a GitHub Enterprise instance, or an account you authenticate with an access token.'
+            : 'No GitHub App is registered for this instance, so sources authenticate with an access token. Register one with Connect GitHub → Register GitHub App to connect accounts in a click instead.';
     }
 
     protected function getHeaderActions(): array
     {
         return [
-            ConnectGitHubAction::make(),
+            ConnectGitHubAction::group(),
         ];
     }
 

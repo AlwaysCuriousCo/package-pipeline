@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
 use App\Models\Source;
 use App\Services\GitHub\GitHubApp;
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -30,6 +32,12 @@ class SourceConnectionController extends Controller
     private const SESSION_KEY = 'sources.github.pending';
 
     /**
+     * The app registered on the panel just before this install, when there
+     * was one, which every outcome of the install mentions.
+     */
+    private ?string $registered = null;
+
+    /**
      * Connect a GitHub account that has no source yet. The source is created
      * from whatever GitHub reports back, so nothing has to be typed first.
      */
@@ -51,7 +59,7 @@ class SourceConnectionController extends Controller
         $app = app(GitHubApp::class);
 
         if (! $app->isConfigured()) {
-            return $this->back($source, 'danger', 'No GitHub App configured', 'Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY to connect accounts from here. See docs/github-app.md.');
+            return $this->back($source, 'danger', 'No GitHub App configured', 'Register one under Sources → Connect GitHub → Register GitHub App, or set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, to connect accounts from here. See docs/github-app.md.');
         }
 
         $state = Str::random(40);
@@ -59,6 +67,9 @@ class SourceConnectionController extends Controller
         $request->session()->put(self::SESSION_KEY, [
             'state' => $state,
             'source_id' => $source?->id,
+            // Set when this install directly follows registering the app on
+            // the panel, so the outcome can say both happened.
+            'registered' => $request->session()->pull(GitHubAppRegistrationController::REGISTERED_KEY),
         ]);
 
         return redirect()->away($app->installationUrl($state));
@@ -98,6 +109,8 @@ class SourceConnectionController extends Controller
         // at all — is the "connect an account we have no source for yet" flow;
         // the source is resolved from the installation below.
         $sourceId = $unsolicited ? null : $pending['source_id'];
+
+        $this->registered = $unsolicited ? null : ($pending['registered'] ?? null);
 
         $source = $sourceId === null ? null : Source::find($sourceId);
 
@@ -200,7 +213,31 @@ class SourceConnectionController extends Controller
 
     private function back(?Source $source, string $status, string $title, string $body): RedirectResponse
     {
-        Notification::make()->{$status}()->title($title)->body($body)->send();
+        if (filled($this->registered)) {
+            $body = "Registered the GitHub App {$this->registered}. {$body}";
+        }
+
+        Notification::make()->{$status}()->title($title)->body($body)
+            // A connected account is only the means; its packages are the
+            // point, so the next step is offered where the admin is looking.
+            ->actions($status === 'success' && $source !== null ? [
+                Action::make('importPackages')
+                    ->label('Import packages')
+                    ->button()
+                    ->url(PackageResource::getUrl('index', [
+                        'action' => 'importFromSource',
+                        'actionArguments' => ['source' => $source->id],
+                    ])),
+            ] : [])
+            // Carrying the next step, it stays until it is used or closed
+            // rather than fading while the admin reads the source page.
+            // persistent() takes no argument, so the condition goes through
+            // when(), as elsewhere.
+            ->when(
+                $status === 'success' && $source !== null,
+                fn (Notification $notification): Notification => $notification->persistent(),
+            )
+            ->send();
 
         return redirect($source
             ? SourceResource::getUrl('view', ['record' => $source])
