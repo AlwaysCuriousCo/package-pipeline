@@ -40,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
             require __DIR__.'/../routes/composer.php';
             require __DIR__.'/../routes/npm.php';
             require __DIR__.'/../routes/pypi.php';
+            require __DIR__.'/../routes/wordpress.php';
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -93,6 +94,10 @@ return Application::configure(basePath: dirname(__DIR__))
                 // can show beats a redirect it cannot follow.
                 || $request->is('pypi/*')
                 || $request->is('r/*/pypi/*')
+                // A WordPress site reads JSON or nothing; a 404 rendered as
+                // an HTML error page is neither.
+                || $request->is('wp/*')
+                || $request->is('r/*/wp/*')
                 || $request->is('incoming/*')
                 // Composer sends no Accept header when it posts a package
                 // list, and a validation failure answered with a redirect
