@@ -39,6 +39,38 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   version**: releases survive the upstream withdrawing or re-tagging them and
   are skipped by `mirror:prune`; `php artisan mirror:forget <package> [version]`
   removes one. See [docs/mirroring.md](docs/mirroring.md#keeping-versions).
+- **Register the GitHub App from the panel, and a first run that stays in
+  it.** On a fresh install, **Sources → Connect GitHub account** registers this
+  registry's app for a user or organisation from a manifest — GitHub creates it
+  with the right setup URL, webhook, permissions and events and hands the ID,
+  private key and webhook secret straight back, stored encrypted once GitHub
+  confirms the key is the app's — then carries on to installing it. An
+  enterprise, which GitHub does not allow manifests for, gets three steps:
+  its form prefilled, the `.pem` uploaded rather than pasted, and the webhook
+  secret set by the registry itself. **Get started** (`/admin/get-started`,
+  linked from the dashboard's **Getting started** card) takes a fresh install
+  from connecting GitHub through choosing packages and their first sync to a
+  passing installation test, as one wizard that resumes from the registry's
+  own state after each trip to GitHub, and sits in the navigation until a
+  package has been installed. **Import from source** becomes **Add packages**,
+  also on a source's page: it lists repositories with a `composer.json` first
+  and ticks the ones that are packages, and for an app installed on only
+  selected repositories it first links to the installation's settings on
+  GitHub, in a new tab, and reads the grant back. Importing a single package
+  opens it, and a package's page shows **Test installation** as soon as its
+  first versions land, without a reload.
+  `GITHUB_APP_*` still wins when set, so a deployment configured that way is
+  unchanged. See [docs/github-app.md](docs/github-app.md#1-register-the-app).
+- **Test installation.** A package's page, and the last step of Get started,
+  can install a package the way Composer would, through the registry's
+  own public address, and stream a transcript of each request: anonymous and
+  authenticated `packages.json`, the package's metadata, and the archive
+  checked against its size and `shasum`. A package with only pre-releases is
+  installed at the newest one, with the constraint a project needs to require
+  it (`:^0.1@alpha`). A failure names the step, quotes the
+  response (with any Cloudflare error code) and says what to check. The run's
+  token is deleted afterwards and its download is not counted. See
+  [Testing an installation](README.md#testing-an-installation).
 - **Claude integration.** **API tokens → Download Claude skill** in the panel
   (or `php artisan claude:skill` for a shared one) builds a Claude Skill that
   carries a read-only token, so Claude can list and install this registry's
@@ -456,7 +488,7 @@ release looks after itself.
   change, but a rollback that reaches it has already unwound the migrations
   after it. Restoring the backup is the recovery path; plan the upgrade that
   way.
-- **Run `php artisan migrate`.** Twenty-one migrations, all safe on a populated
+- **Run `php artisan migrate`.** Twenty-five migrations, all safe on a populated
   database, and none of them rewrites a row except the name normalization
   below. Two are worth knowing about: `notifications.data` becomes a json
   column, which is what stops the panel answering `500` on every page under
@@ -476,7 +508,8 @@ release looks after itself.
   affected in practice; run `archives:clean --dry-run` once if yours is one.
   See [The dist disk has to be case-sensitive](docs/deployment.md#the-dist-disk-has-to-be-case-sensitive).
 - **Re-seed the permissions** with `php artisan db:seed --force`. This release
-  adds panel resources — activity, teams and outgoing webhooks — and Shield
+  adds panel resources — activity, teams, outgoing webhooks and the GitHub
+  App — and Shield
   denies what has no permission row, including to a super admin.
 - **Restart queue workers with `--timeout=310`.** The queue's `retry_after` is
   now 330 seconds, above the longest job's own timeout. Left at the old 90, a
