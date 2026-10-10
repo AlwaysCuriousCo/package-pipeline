@@ -492,4 +492,20 @@ class WordPressRegistryTest extends TestCase
             ->assertSee('Header version')
             ->assertSee('1.1.0');
     }
+
+    public function test_the_management_api_reports_the_wordpress_zip(): void
+    {
+        $package = $this->syncedPlugin();
+        $version = $package->versions()->where('version', '1.1.0')->sole();
+
+        $token = Token::issue(User::factory()->superAdmin()->create(), 'provisioner', [TokenAbility::ApiRead])->plainText;
+
+        $versions = collect($this->withToken($token)->getJson("/api/v1/packages/{$package->id}")->assertOk()->json('data.versions'));
+
+        $this->assertSame([
+            'version' => '1.1.0',
+            'shasum' => $version->wordpress['shasum'],
+            'size' => $version->wordpress['size'],
+        ], $versions->firstWhere('version', '1.1.0')['wordpress']);
+    }
 }
