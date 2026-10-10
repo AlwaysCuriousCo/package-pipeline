@@ -127,7 +127,7 @@ class VersionsRelationManager extends RelationManager
                     ->color(fn (PackageVersion $record): string => isset($record->wordpress['version'])
                         && (new VersionNormalizer)->order($record->wordpress['version']) === (new VersionNormalizer)->order($record->version) ? 'gray' : 'danger')
                     ->placeholder('No WordPress zip')
-                    ->visible(fn (): bool => $this->getOwnerRecord()->isWordPress()),
+                    ->visible(fn (): bool => ($owner = $this->getOwnerRecord()) instanceof Package && $owner->isWordPress()),
                 TextColumn::make('reference')
                     ->label('Commit')
                     ->limit(12)
