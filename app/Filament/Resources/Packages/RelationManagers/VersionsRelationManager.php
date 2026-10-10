@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Packages\RelationManagers;
 use App\Filament\Resources\Packages\Actions\DownloadArchiveAction;
 use App\Models\Package;
 use App\Models\PackageVersion;
+use App\Support\VersionNormalizer;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\TextEntry;
@@ -118,6 +119,15 @@ class VersionsRelationManager extends RelationManager
                         $this->isLatestRelease($record) => 'Latest release',
                         default => 'Past release',
                     }),
+                TextColumn::make('wordpress.version')
+                    ->label('Header version')
+                    ->badge()
+                    // Red where the plugin or theme header disagrees with the
+                    // tag; the sync says the same in its warning.
+                    ->color(fn (PackageVersion $record): string => isset($record->wordpress['version'])
+                        && (new VersionNormalizer)->order($record->wordpress['version']) === (new VersionNormalizer)->order($record->version) ? 'gray' : 'danger')
+                    ->placeholder('No WordPress zip')
+                    ->visible(fn (): bool => $this->getOwnerRecord()->isWordPress()),
                 TextColumn::make('reference')
                     ->label('Commit')
                     ->limit(12)
