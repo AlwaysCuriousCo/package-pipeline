@@ -75,10 +75,19 @@ class CleanArchives extends Command
                 ));
             });
 
+        // A WordPress package's version holds a second zip, rooted at its
+        // slug, referenced from the `wordpress` column. @see WordPressArchive
+        $wordpressFiles = PackageVersion::query()
+            ->whereNotNull('wordpress')
+            ->pluck('wordpress')
+            ->map(fn (mixed $wordpress): mixed => (is_string($wordpress) ? json_decode($wordpress, true) : $wordpress)['path'] ?? null)
+            ->filter(fn (mixed $path): bool => is_string($path));
+
         $referenced = PackageVersion::query()
             ->whereNotNull('archive_path')
             ->pluck('archive_path')
             ->merge($pypiFiles)
+            ->merge($wordpressFiles)
             ->flip();
 
         $unreferenced = array_filter(

@@ -8,6 +8,7 @@ use App\Sources\RepositoryClient;
 use App\Support\ComposerName;
 use App\Support\VersionNormalizer;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Throwable;
@@ -40,6 +41,7 @@ class PackageSynchronizer
         private readonly ArchiveSubtree $subtrees = new ArchiveSubtree,
         private readonly VersionNormalizer $normalizer = new VersionNormalizer,
         private readonly PackagePage $pages = new PackagePage,
+        private readonly WordPressArchive $wordpress = new WordPressArchive,
     ) {}
 
     /**
@@ -205,7 +207,8 @@ class PackageSynchronizer
 
         return array_filter(
             $refs,
-            fn (array $ref, string|int $version): bool => ! $this->unchanged($known->get((string) $version), $ref),
+            fn (array $ref, string|int $version): bool => ! $this->unchanged($known->get((string) $version), $ref)
+                || ! $this->servesWordPress($package, $known->get((string) $version)),
             ARRAY_FILTER_USE_BOTH,
         );
     }
@@ -224,7 +227,13 @@ class PackageSynchronizer
      */
     public function import(Package $package, string $version, array $ref, bool $force = false): bool
     {
-        if (! $force && $this->unchanged($this->imported($package)->where('version', $version)->first(), $ref)) {
+        $known = $this->imported($package)->where('version', $version)->first();
+
+        if (! $force && $this->unchanged($known, $ref)) {
+            if (! $this->servesWordPress($package, $known)) {
+                $this->backfillWordPress($package, $known, $package->client(), $ref['reference'], $version);
+            }
+
             return true;
         }
 
@@ -261,6 +270,8 @@ class PackageSynchronizer
                 $model = $package->versions()->updateOrCreate(['version' => $version], $data);
 
                 $this->archives->store($model->setRelation('package', $package), $zip);
+
+                $this->storeWordPress($package, $model, $zip);
             });
         } finally {
             File::delete($zip);
@@ -282,7 +293,7 @@ class PackageSynchronizer
         // Three columns rather than the whole row: what follows counts these
         // versions and sorts their names, and every one of them carries a
         // composer.json in `metadata` that would be decoded to be ignored.
-        $versions = $package->versions()->orderBy('id')->get(['id', 'version', 'is_dev']);
+        $versions = $package->versions()->orderBy('id')->get(['id', 'version', 'is_dev', 'wordpress']);
 
         if ($versions->isEmpty()) {
             throw new \RuntimeException($failed > 0
@@ -323,7 +334,7 @@ class PackageSynchronizer
         // publishes, so a change to any of them is a change clients must see.
         $bookkeeping = [
             'last_synced_at' => now(),
-            'sync_error' => $this->syncError($package, $attempted, $failed, $refused),
+            'sync_error' => $this->syncError($package, $attempted, $failed, $refused, $this->headerMismatches($package, $versions)),
         ];
 
         $package->isClean(self::PUBLISHED_COLUMNS)
@@ -422,7 +433,7 @@ class PackageSynchronizer
      * `sync_error` — the red timestamp, the "Sync failing" filter, the
      * navigation badge — points at it for free.
      */
-    private function syncError(Package $package, int $attempted, int $failed, ?string $refusedRename): ?string
+    private function syncError(Package $package, int $attempted, int $failed, ?string $refusedRename, ?string $headerMismatches = null): ?string
     {
         $notes = array_filter([
             $package->hasUnserveableName() ? Package::unserveableNameNotice((string) $package->name) : null,
@@ -430,6 +441,7 @@ class PackageSynchronizer
                 ? "{$failed} of {$attempted} version imports failed; the next sync will retry them."
                 : null,
             $refusedRename,
+            $headerMismatches,
         ]);
 
         return $notes === [] ? null : implode(' ', $notes);
@@ -586,8 +598,85 @@ class PackageSynchronizer
             ->whereNotNull('metadata->name')
             ->select([
                 'id', 'package_id', 'version', 'reference', 'is_dev',
-                'released_at', 'released_at_unknown', 'archive_path', 'shasum',
+                'released_at', 'released_at_unknown', 'archive_path', 'shasum', 'wordpress',
             ]);
+    }
+
+    /**
+     * Whether a stored version already has the WordPress zip its package
+     * needs — trivially, for a package WordPress is not served. The slug is
+     * compared because it is the zip's top-level directory: renaming it
+     * makes every stored zip wrong.
+     */
+    private function servesWordPress(Package $package, ?PackageVersion $known): bool
+    {
+        return ! $package->isWordPress()
+            || ($known?->wordpress['slug'] ?? null) === $package->wordpress_slug;
+    }
+
+    /**
+     * Build and store the WordPress zip from a version's Composer-shaped zip,
+     * when the package is served to WordPress at all.
+     */
+    private function storeWordPress(Package $package, PackageVersion $version, string $zip): void
+    {
+        if (! $package->isWordPress()) {
+            return;
+        }
+
+        [$wordpress, $header] = $this->wordpress->build($zip, (string) $package->wordpress_slug, $package->wordpress_kind);
+
+        try {
+            $this->archives->storeWordPress($version->setRelation('package', $package), $wordpress, $header);
+        } finally {
+            File::delete($wordpress);
+        }
+    }
+
+    /**
+     * Give an otherwise complete version the WordPress zip it lacks — a
+     * package newly marked as a plugin or theme, or one whose slug changed.
+     *
+     * Only the WordPress zip is written. Re-importing the version would store
+     * a new Composer archive too, and a provider's zipball is not promised to
+     * be byte-identical twice: the sha1 consumers' lockfiles pin would move.
+     */
+    private function backfillWordPress(Package $package, PackageVersion $version, RepositoryClient $client, string $reference, string $versionString): void
+    {
+        $zip = $this->downloadArchive($package, $client, $reference, $versionString);
+
+        try {
+            $this->storeWordPress($package, $version, $zip);
+        } finally {
+            File::delete($zip);
+        }
+    }
+
+    /**
+     * The tagged versions whose WordPress header disagrees with the tag, said
+     * as a sync warning: the release is still served, but a site told about
+     * 1.3.0 that installs a header saying 1.2.9 is offered the update again.
+     *
+     * @param  Collection<int, PackageVersion>  $versions
+     */
+    private function headerMismatches(Package $package, Collection $versions): ?string
+    {
+        if (! $package->isWordPress()) {
+            return null;
+        }
+
+        $mismatched = $versions
+            ->reject(fn (PackageVersion $version): bool => $version->is_dev || ! is_array($version->wordpress))
+            ->filter(function (PackageVersion $version): bool {
+                $header = $version->wordpress['version'] ?? null;
+
+                return $header === null || $this->normalizer->order($header) !== $this->normalizer->order((string) $version->version);
+            })
+            ->map(fn (PackageVersion $version): string => "{$version->version} (header: ".($version->wordpress['version'] ?? 'none').')');
+
+        return $mismatched->isEmpty()
+            ? null
+            : 'WordPress header Version disagrees with the tag for '.$mismatched->implode(', ').'.';
     }
 
     /**
