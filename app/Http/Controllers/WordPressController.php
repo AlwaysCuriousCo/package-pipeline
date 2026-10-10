@@ -14,7 +14,6 @@ use App\Services\ArchiveStore;
 use App\Services\Billing\VersionCeiling;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -34,7 +33,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * serves; docs/wordpress.md gives it.
  *
  * @see AuthenticateWordPress
- * @see ComposerRepositoryController::dist() the archive serving this mirrors
+ * @see ComposerRepositoryController::dist() the archive serving this follows
  */
 class WordPressController extends Controller
 {
@@ -82,10 +81,16 @@ class WordPressController extends Controller
 
     /**
      * A version's WordPress zip, rooted at the slug: visibility first, the
-     * ceiling, the download counted only for a GET, and the transfer handed
-     * to the disk when it signs URLs of its own — exactly as a Composer dist.
+     * ceiling, and the download counted only for a GET, as a Composer dist.
+     *
+     * Always streamed, never redirected to a signed disk URL. WordPress's HTTP
+     * client re-sends the request's headers to wherever a redirect points, so
+     * the site's bearer token would reach the storage service beside the
+     * URL's own signature, and S3 refuses a request carrying two. ponytail:
+     * pins a worker per download, fine at update and provisioning volume;
+     * redirect to a signed URL if WordPress downloads ever dominate.
      */
-    public function dist(Request $request, string $slug, string $version): StreamedResponse|RedirectResponse
+    public function dist(Request $request, string $slug, string $version): StreamedResponse
     {
         $package = $this->servedPackages($request, slugs: [$slug])->first();
 
@@ -109,15 +114,7 @@ class WordPressController extends Controller
             PackageDownloaded::dispatch($package->id, $release->id, $release->version, $this->token($request)?->token_prefix);
         }
 
-        $filename = ArchiveStore::downloadFilename($slug, $release->version);
-
-        $url = $this->archives->temporaryUrl($path, $filename);
-
-        if ($url !== null) {
-            return redirect()->away($url, headers: ['Cache-Control' => 'no-store']);
-        }
-
-        return $this->archives->disk()->download($path, $filename, [
+        return $this->archives->disk()->download($path, ArchiveStore::downloadFilename($slug, $release->version), [
             'Content-Type' => 'application/zip',
             'Cache-Control' => 'private, max-age=31536000, immutable',
         ]);
