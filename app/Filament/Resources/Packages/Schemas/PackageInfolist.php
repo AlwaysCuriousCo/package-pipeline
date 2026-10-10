@@ -64,6 +64,23 @@ class PackageInfolist
                         TextEntry::make('type')
                             ->badge()
                             ->placeholder('-'),
+                        TextEntry::make('wordpress_slug')
+                            ->label(fn (Package $record): string => "{$record->wordpress_kind?->getLabel()} slug")
+                            ->badge()
+                            ->color('gray')
+                            ->fontFamily(FontFamily::Mono)
+                            ->visible(fn (Package $record): bool => $record->isWordPress()),
+                        TextEntry::make('wordpress_dist')
+                            ->label('WordPress zip')
+                            // The URL of the latest release, as a site's update
+                            // check would hand it out; any version swaps in.
+                            ->state(fn (Package $record): string => $record->composerRepository->url(
+                                "/wp/dist/{$record->wordpress_slug}/".($record->latest_version ?? '{version}').'.zip'
+                            ))
+                            ->fontFamily(FontFamily::Mono)
+                            ->copyable()
+                            ->visible(fn (Package $record): bool => $record->isWordPress())
+                            ->helperText('Rooted at the slug, with the same access tokens as Composer dists. See docs/wordpress.md.'),
                         TextEntry::make('description')
                             ->placeholder('-')
                             ->columnSpanFull(),
