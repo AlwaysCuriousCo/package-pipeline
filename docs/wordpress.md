@@ -71,8 +71,8 @@ compares the header version, so the update API advertises the header's version
 rather than the tag's (see below), and a release whose header was never bumped
 is one a site already running the previous header will not be offered.
 
-Marking an already-synced package as a plugin or theme, or changing its slug,
-builds the missing zips on the next sync without touching the Composer
+Marking an already-synced package as a plugin or theme, or changing its slug
+or its kind, builds the missing zips on the next sync without touching the Composer
 archives. Composer lockfiles pin each archive's sha1, so those are never
 rebuilt behind a consumer's back.
 
@@ -179,7 +179,12 @@ The response has the same shape as wordpress.org's:
   `no_update`, with the same fields.
 - **Anything this registry does not serve to WordPress is left out**, so
   wordpress.org can answer for it. That includes a served package that has no
-  release with a WordPress zip yet.
+  release with a WordPress zip yet, and one whose **WordPress** field has been
+  cleared (its zips stop being served too, though the slug is kept).
+- **A release whose header has no `Version` is never offered.** The site
+  would still read no version after installing it, and would be offered it
+  again on every check. The sync warns about such a release; the previous one
+  stays the newest on offer.
 
 `new_version` is the header `Version` of the newest release, not its tag,
 because that is what WordPress compares with the installed header. The newest

@@ -508,4 +508,64 @@ class WordPressRegistryTest extends TestCase
             'size' => $version->wordpress['size'],
         ], $versions->firstWhere('version', '1.1.0')['wordpress']);
     }
+
+    public function test_clearing_the_kind_stops_serving_the_zips_too(): void
+    {
+        $package = $this->syncedPlugin();
+        $token = $this->readToken();
+
+        $this->withToken($token)->get('/wp/dist/acme-forms/1.1.0.zip')->assertOk();
+
+        // The slug is kept so switching back does not ask for it again.
+        $package->update(['wordpress_kind' => null]);
+
+        $this->withToken($token)->get('/wp/dist/acme-forms/1.1.0.zip')->assertNotFound();
+    }
+
+    public function test_a_release_without_a_header_version_is_never_offered(): void
+    {
+        $unversioned = "<?php\n/**\n * Plugin Name: Acme Forms\n */\n";
+
+        $this->fakeGitHub([
+            'v1.0.0' => $this->zipball(['composer.json' => '{}', 'acme-forms.php' => $this->pluginFile('1.0.0')]),
+            'v1.1.0' => $this->zipball(['composer.json' => '{}', 'acme-forms.php' => $unversioned]),
+        ]);
+
+        app(PackageSynchronizer::class)->sync($this->makePackage());
+
+        // Offering 1.1.0 would loop: once installed, its header still says
+        // nothing, and the site would be offered it again on every check.
+        $response = $this->withToken($this->readToken())->post('/wp/plugins/update-check/1.1', [
+            'plugins' => $this->pluginsField([self::PLUGIN_FILE => '1.0.0']),
+        ])->assertOk();
+
+        $this->assertSame([], (array) $response->json('plugins'));
+        $this->assertSame('1.0.0', $response->json('no_update')[self::PLUGIN_FILE]['new_version']);
+    }
+
+    public function test_changing_the_kind_rebuilds_the_header(): void
+    {
+        $style = "/*\nTheme Name: Acme Forms Theme\nVersion: 1.0.0\n*/\n";
+
+        $this->fakeGitHub([
+            'v1.0.0' => $this->zipball([
+                'composer.json' => '{}',
+                'acme-forms.php' => $this->pluginFile('1.0.0'),
+                'style.css' => $style,
+            ]),
+        ]);
+
+        $package = $this->makePackage();
+        app(PackageSynchronizer::class)->sync($package);
+
+        $this->assertSame('Acme Forms', $package->versions()->sole()->wordpress['name']);
+
+        $package->update(['wordpress_kind' => WordPressKind::Theme]);
+        app(PackageSynchronizer::class)->sync($package->refresh());
+
+        $wordpress = $package->versions()->sole()->wordpress;
+
+        $this->assertSame('wordpress-theme', $wordpress['kind']);
+        $this->assertSame('Acme Forms Theme', $wordpress['name']);
+    }
 }

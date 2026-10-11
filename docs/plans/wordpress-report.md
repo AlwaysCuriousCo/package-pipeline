@@ -16,8 +16,8 @@ How to use it: [docs/wordpress.md](../wordpress.md).
   `ArchiveSubtree`. Path, sha1 and size are stored in
   `package_versions.wordpress`, a new column, so the composer.json in
   `metadata` that `/p2` serves is untouched. The Composer archive is never
-  rewritten: marking a synced package, or changing its slug, backfills only the
-  WordPress zips. `archives:clean` counts them as referenced.
+  rewritten: marking a synced package, or changing its slug or kind, backfills
+  only the WordPress zips. `archives:clean` counts them as referenced.
 - **Header parsing.** A port of `get_file_data()`: the main plugin file
   (`{slug}.php` first) or `style.css`, reading `Version`, `Requires at least`,
   `Tested up to`, `Requires PHP`, author, URIs and description, plus
@@ -26,9 +26,10 @@ How to use it: [docs/wordpress.md](../wordpress.md).
 - **Endpoints** (`routes/wordpress.php`, `WordPressController`), at the root
   and under `/r/{path}`: plugin and theme update-check (form-encoded JSON as
   core sends it, or a JSON body), `plugin_information` / `theme_information`,
-  and `/wp/dist/{slug}/{version}.zip`. Unknown slugs are omitted from update
-  checks. `new_version` is the header version, so a site is never offered the
-  same update twice. Version ceilings and download analytics apply as for
+  and `/wp/dist/{slug}/{version}.zip`. Unknown slugs, and packages whose kind
+  has been cleared, are not served. `new_version` is the header version, and a
+  release with no header version is never offered, so a site is never offered
+  the same update twice. Version ceilings and download analytics apply as for
   Composer.
 - **Auth** (`AuthenticateWordPress`): wraps `AuthenticateComposer` and only
   rewrites its refusals to `401 {}` (a 403 for a missing ability included);
@@ -38,7 +39,7 @@ How to use it: [docs/wordpress.md](../wordpress.md).
   page; a **Header version** column on the versions table, red on mismatch.
 - **Management API:** each version carries `wordpress.{version, shasum,
   size}`, so a provisioning job can verify the zip it downloads.
-- **Tests:** `tests/Feature/WordPressRegistryTest.php`, 16 tests covering the
+- **Tests:** `tests/Feature/WordPressRegistryTest.php`, 19 tests covering the
   slug-rooted repack (root and monorepo), header reading, the mismatch warning,
   backfill without moving the Composer archive, update-check
   (newer / `no_update` / unknown omitted / JSON body / deploy-token scoping),
