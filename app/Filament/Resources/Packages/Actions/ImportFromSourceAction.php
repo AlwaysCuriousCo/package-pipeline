@@ -46,16 +46,16 @@ class ImportFromSourceAction
      *                             imported, where it can be installed once its
      *                             first sync lands
      */
-    public static function make(bool $accessStep = true, bool $openPackage = true): Action
+    public static function make(bool $accessStep = true, bool $openPackage = true, bool $onboarding = false): Action
     {
         return Action::make('importFromSource')
-            ->label('Add packages')
+            ->label($onboarding ? 'Choose packages' : 'Add packages')
             ->icon(Heroicon::OutlinedCloudArrowDown)
             ->color('gray')
             ->visible(fn (): bool => Source::query()->exists())
-            ->modalHeading('Add packages from a source')
+            ->modalHeading($onboarding ? 'Choose packages' : 'Add packages from a source')
             ->modalDescription('Each selected project becomes a package, wired up exactly as the create wizard would.')
-            ->modalSubmitActionLabel('Import')
+            ->modalSubmitActionLabel('Import packages')
             // Opened with a source in mind — from "Connected acme", say, as
             // ?action=importFromSource&actionArguments[source]=… — or with the
             // only source there is, the dialog starts with that source's
@@ -89,6 +89,7 @@ class ImportFromSourceAction
                         ->helperText('Repositories with a composer.json come first, and those that are packages rather than applications are already ticked. Type to search; projects already onboarded are skipped.'),
                     Select::make('repository_id')
                         ->label('Composer repository')
+                        ->helperText('Default is this registry’s starting Composer repository: it serves packages to Composer, and is separate from the repositories on GitHub. Choose another if these packages should be served separately.')
                         ->options(fn (): array => Repository::query()->orderBy('name')->pluck('name', 'id')->all())
                         ->default(fn (): int => Repository::default()->id)
                         ->required()
@@ -177,7 +178,7 @@ class ImportFromSourceAction
 
                         $set('projects', self::likelyPackages($source->id));
 
-                        Notification::make()->success()->title("{$count} repositories shared")->send();
+                        Notification::make()->success()->title(trans_choice('{1} :count repository shared|[0,*] :count repositories shared', $count))->send();
                     }),
             ])->key('grant'),
         ]);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\GitHubAppOwner;
+use App\Filament\Pages\GetStarted;
 use App\Filament\Resources\GitHubApps\GitHubAppResource;
 use App\Filament\Resources\GitHubApps\Pages\ManageGitHubApp;
 use App\Models\GitHubAppRegistration;
@@ -10,6 +11,7 @@ use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubAppManifest;
 use App\Services\GitHub\GitHubError;
 use App\Support\HttpTimeouts;
+use Filament\Notifications\Notification;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -148,7 +150,9 @@ class GitHubAppRegistrationController extends Controller
         // the admin on their return mentions it.
         $request->session()->put(self::REGISTERED_KEY, $registration->name);
 
-        return redirect()->route('sources.connect.new');
+        // A registration started in the Get started wizard carries on to the
+        // install as the wizard's own, so the install comes back to it too.
+        return redirect()->route('sources.connect.new', session()->pull(GetStarted::RETURN_KEY, false) ? ['onboarding' => 1] : []);
     }
 
     /**
@@ -158,6 +162,14 @@ class GitHubAppRegistrationController extends Controller
     private function fail(string $title, string $detail, string $next): RedirectResponse
     {
         ManageGitHubApp::fail($title, $detail, $next);
+
+        // A registration started in the Get started wizard goes back there,
+        // saying what went wrong where the admin is looking.
+        if (session()->pull(GetStarted::RETURN_KEY, false)) {
+            Notification::make()->danger()->title($title)->body("{$detail} {$next}")->persistent()->send();
+
+            return redirect(GetStarted::getUrl());
+        }
 
         return redirect(GitHubAppResource::getUrl('index'));
     }

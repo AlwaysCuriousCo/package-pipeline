@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use App\Filament\Pages\Dashboard;
-use App\Filament\Resources\Packages\PackageResource;
+use App\Filament\Pages\GetStarted;
 use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Filament\Widgets\GettingStarted;
 use App\Models\Download;
@@ -62,38 +62,34 @@ class FirstRunOnboardingTest extends TestCase
         return Source::factory()->withToken()->create(['account' => 'acme']);
     }
 
-    public function test_a_new_install_is_greeted_with_three_steps(): void
+    public function test_a_new_install_is_pointed_at_the_wizard(): void
     {
         Livewire::test(GettingStarted::class)
             ->assertSee('Getting started')
             ->assertSee('Connect GitHub')
-            ->assertSee('also registers this registry&#039;s GitHub App', false)
-            ->assertSee('Import your packages')
-            ->assertSee('Test an installation')
-            ->assertSeeHtml('wire:click="mountAction(\'connectGithub\'')
-            // Not until there is something to import from.
-            ->assertDontSee('?action=importFromSource', false);
+            ->assertSee('Step 1 of 4')
+            ->assertSee('Start setup')
+            ->assertSeeHtml(e(GetStarted::getUrl()))
+            // The steps' own buttons live on the wizard, not here.
+            ->assertDontSeeHtml("mountAction('connectGithub'");
     }
 
-    public function test_each_step_hands_over_to_the_next_once_the_last_is_done(): void
+    public function test_the_card_follows_the_wizard_from_step_to_step(): void
     {
         $source = Source::factory()->create();
 
         Livewire::test(GettingStarted::class)
-            ->assertDontSeeHtml('wire:click="mountAction(\'connectGithub\'')
-            ->assertSeeHtml(e(PackageResource::getUrl('index', ['action' => 'importFromSource'])));
+            ->assertSee('Choose packages')
+            ->assertSee('Step 2 of 4')
+            ->assertSee('Continue setup');
 
         $package = Package::factory()->create(['source_id' => $source->id]);
 
-        Livewire::test(GettingStarted::class)
-            ->assertSee("Waiting for {$package->name}&#039;s first sync to finish", false)
-            ->assertDontSeeHtml("mountAction('testInstallation'");
+        Livewire::test(GettingStarted::class)->assertSee('First sync')->assertSee('Step 3 of 4');
 
         PackageVersion::factory()->create(['package_id' => $package->id]);
 
-        Livewire::test(GettingStarted::class)
-            ->assertSee("Installs {$package->name} the way Composer would", false)
-            ->assertSeeHtml("mountAction('testInstallation'");
+        Livewire::test(GettingStarted::class)->assertSee('Test installation')->assertSee('Step 4 of 4');
     }
 
     public function test_the_steps_go_away_once_a_package_has_been_installed(): void

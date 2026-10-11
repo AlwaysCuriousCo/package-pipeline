@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Filament\Pages\GetStarted;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
@@ -38,6 +39,12 @@ class SourceConnectionController extends Controller
     private ?string $registered = null;
 
     /**
+     * Whether the connection started in the Get started wizard, which every
+     * outcome then returns to instead of the source's own page.
+     */
+    private bool $onboarding = false;
+
+    /**
      * Connect a GitHub account that has no source yet. The source is created
      * from whatever GitHub reports back, so nothing has to be typed first.
      */
@@ -58,6 +65,10 @@ class SourceConnectionController extends Controller
     {
         $app = app(GitHubApp::class);
 
+        // Only the wizard's own link asks for this, so a connection started
+        // anywhere else returns where it always has.
+        $this->onboarding = $request->boolean('onboarding');
+
         if (! $app->isConfigured()) {
             return $this->back($source, 'danger', 'No GitHub App configured', 'Register one under Sources → Connect GitHub → Register GitHub App, or set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, to connect accounts from here. See docs/github-app.md.');
         }
@@ -70,6 +81,9 @@ class SourceConnectionController extends Controller
             // Set when this install directly follows registering the app on
             // the panel, so the outcome can say both happened.
             'registered' => $request->session()->pull(GitHubAppRegistrationController::REGISTERED_KEY),
+            // Carried with this handshake, like the app above, so that only
+            // its own callback goes back to the wizard.
+            'onboarding' => $this->onboarding,
         ]);
 
         return redirect()->away($app->installationUrl($state));
@@ -111,6 +125,7 @@ class SourceConnectionController extends Controller
         $sourceId = $unsolicited ? null : $pending['source_id'];
 
         $this->registered = $unsolicited ? null : ($pending['registered'] ?? null);
+        $this->onboarding = ! $unsolicited && ($pending['onboarding'] ?? false);
 
         $source = $sourceId === null ? null : Source::find($sourceId);
 
@@ -169,7 +184,7 @@ class SourceConnectionController extends Controller
             $source,
             'success',
             "Connected {$source->account}",
-            "{$count} repositories are reachable from this source.{$this->webhookAdvice()}",
+            trans_choice('{1} :count repository is reachable from this source.|[0,*] :count repositories are reachable from this source.', $count).$this->webhookAdvice(),
         );
     }
 
@@ -220,7 +235,8 @@ class SourceConnectionController extends Controller
         Notification::make()->{$status}()->title($title)->body($body)
             // A connected account is only the means; its packages are the
             // point, so the next step is offered where the admin is looking.
-            ->actions($status === 'success' && $source !== null ? [
+            // The wizard's own next step is importing, so it offers none.
+            ->actions($status === 'success' && $source !== null && ! $this->onboarding ? [
                 Action::make('importPackages')
                     ->label('Import packages')
                     ->button()
@@ -234,10 +250,14 @@ class SourceConnectionController extends Controller
             // persistent() takes no argument, so the condition goes through
             // when(), as elsewhere.
             ->when(
-                $status === 'success' && $source !== null,
+                $status === 'success' && $source !== null && ! $this->onboarding,
                 fn (Notification $notification): Notification => $notification->persistent(),
             )
             ->send();
+
+        if ($this->onboarding) {
+            return redirect(GetStarted::getUrl());
+        }
 
         return redirect($source
             ? SourceResource::getUrl('view', ['record' => $source])

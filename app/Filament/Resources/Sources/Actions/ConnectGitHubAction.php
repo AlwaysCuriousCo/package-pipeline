@@ -31,7 +31,7 @@ class ConnectGitHubAction
                 ->icon(Heroicon::OutlinedLink)
                 ->color('primary')
                 ->modalHeading('Connect a GitHub account')
-                ->modalDescription('First, a one-time step: this registry needs its own GitHub App, which GitHub creates from the details below. After that, GitHub asks which account to install it on — and that is the part you repeat for each account.');
+                ->modalDescription('First, a one-time step: this registry needs its own GitHub App, which GitHub creates from the details below. After that, GitHub asks which account to install it on — and that is the part you repeat for each account. On GitHub, choose “Only select repositories” and pick the ones to serve.');
         }
 
         return Action::make('connectGithub')

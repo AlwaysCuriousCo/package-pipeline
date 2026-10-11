@@ -1,0 +1,369 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Filament\Pages\GetStarted;
+use App\Jobs\SyncPackageJob;
+use App\Models\Download;
+use App\Models\Package;
+use App\Models\PackageVersion;
+use App\Models\Repository;
+use App\Models\Source;
+use App\Models\Token;
+use App\Models\User;
+use Filament\Actions\Testing\TestAction;
+use Filament\Schemas\Components\Wizard;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
+use Livewire\Livewire;
+use Tests\TestCase;
+use ZipArchive;
+
+/**
+ * The first run as one wizard: GitHub, packages, their first sync, and an
+ * installation — resuming from the registry's own state after each trip to
+ * GitHub.
+ */
+class GetStartedTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private const ROOT = 'https://packages.acme.test';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('services.github.app', [
+            'id' => null,
+            'private_key' => null,
+            'slug' => null,
+            'api_url' => 'https://api.github.com',
+            'webhook_secret' => null,
+        ]);
+
+        $this->actingAs(User::factory()->superAdmin()->create());
+    }
+
+    private function assertOpensOn(int $step): void
+    {
+        Livewire::test(GetStarted::class)
+            ->assertSchemaComponentExists(
+                'onboarding',
+                'content',
+                fn (Wizard $wizard): bool => $wizard->getStartStep() === $step,
+            );
+    }
+
+    private function appConfigured(): void
+    {
+        $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        openssl_pkey_export($key, $pem);
+
+        config()->set('services.github.app', [
+            'id' => '123456',
+            'slug' => 'acme-pipeline',
+            'private_key' => $pem,
+            'api_url' => 'https://api.github.com',
+        ]);
+    }
+
+    public function test_it_opens_on_the_first_step_the_registry_has_not_done(): void
+    {
+        $this->assertOpensOn(1);
+
+        $source = Source::factory()->create();
+        $this->assertOpensOn(2);
+
+        $package = Package::factory()->create(['source_id' => $source->id]);
+        $this->assertOpensOn(3);
+
+        PackageVersion::factory()->for($package)->create();
+        $this->assertOpensOn(4);
+    }
+
+    public function test_a_step_in_the_query_string_cannot_skip_one_that_is_not_done(): void
+    {
+        Livewire::withQueryParams(['step' => 'test']);
+
+        $this->assertOpensOn(1);
+    }
+
+    public function test_a_user_who_cannot_see_sources_is_kept_out(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $this->get(GetStarted::getUrl())->assertForbidden();
+    }
+
+    public function test_connecting_with_no_app_yet_registers_one_and_marks_the_trip_as_onboarding(): void
+    {
+        Livewire::test(GetStarted::class)
+            ->callAction(TestAction::make('connectGithub')->schemaComponent('onboarding.connect.actions'), data: [
+                'owner_type' => 'organization',
+                'owner' => 'acme',
+                'name' => 'Acme Packages',
+            ])
+            ->assertRedirect(route('github-app.manifest'));
+
+        $this->assertTrue(session(GetStarted::RETURN_KEY));
+    }
+
+    public function test_connecting_with_an_app_goes_to_an_install_that_returns_here(): void
+    {
+        $this->appConfigured();
+
+        Livewire::test(GetStarted::class)
+            ->assertActionHasUrl(
+                TestAction::make('connectGithub')->schemaComponent('onboarding.connect.actions'),
+                route('sources.connect.new', ['onboarding' => 1]),
+            );
+    }
+
+    public function test_importing_moves_on_to_the_first_sync(): void
+    {
+        Queue::fake();
+
+        Http::fake([
+            'api.github.com/orgs/acme/repos*' => Http::response([
+                ['id' => 1, 'full_name' => 'acme/widgets', 'html_url' => 'https://github.com/acme/widgets'],
+            ]),
+            'api.github.com/repos/acme/widgets/contents/composer.json' => Http::response(json_encode(['name' => 'acme/widgets', 'type' => 'library'])),
+        ]);
+
+        $source = Source::factory()->withToken()->create(['account' => 'acme']);
+
+        Livewire::test(GetStarted::class)
+            ->callAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'), data: [
+                'source_id' => $source->id,
+                'projects' => ['https://github.com/acme/widgets'],
+                'create_webhook' => false,
+            ])
+            ->assertRedirect(GetStarted::getUrl());
+
+        $this->assertSame(['acme/widgets'], Package::query()->pluck('name')->all());
+        Queue::assertPushed(SyncPackageJob::class);
+        $this->assertOpensOn(3);
+    }
+
+    public function test_the_sync_step_waits_for_versions_then_moves_on_by_itself(): void
+    {
+        $package = Package::factory()->create(['source_id' => Source::factory()->create()->id]);
+
+        $page = Livewire::test(GetStarted::class)
+            ->assertSeeText("Syncing {$package->name}")
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"')
+            ->call('checkSync')
+            ->assertNoRedirect();
+
+        PackageVersion::factory()->for($package)->create();
+
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+    }
+
+    public function test_an_unrelated_render_keeps_polling_when_versions_arrive(): void
+    {
+        $package = Package::factory()->create(['source_id' => Source::factory()->create()->id]);
+        $page = Livewire::test(GetStarted::class);
+        PackageVersion::factory()->for($package)->create();
+
+        $page->call('$refresh')->assertNoRedirect()
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"');
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+    }
+
+    public function test_versions_arriving_between_check_and_render_keep_the_poll(): void
+    {
+        $package = Package::factory()->create(['source_id' => Source::factory()->create()->id]);
+        $page = Livewire::test(RacingGetStarted::class);
+        $page->call('checkSync')->assertNoRedirect()
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"');
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+    }
+
+    public function test_automatic_wait_is_bounded_and_can_be_rechecked(): void
+    {
+        Package::factory()->create(['source_id' => Source::factory()->create()->id]);
+        $page = Livewire::test(GetStarted::class);
+        $this->travel(301)->seconds();
+        $page->call('checkSync')->assertSet('syncWaitExpired', true)
+            ->assertDontSeeHtml('wire:poll.3s.visible="checkSync"')
+            ->assertSee('Check again');
+        $page->call('recheckSync')->assertSet('syncWaitExpired', false)
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"');
+    }
+
+    public function test_onboarding_footer_buttons_are_physically_hidden_on_each_step(): void
+    {
+        for ($step = 1; $step <= 3; $step++) {
+            $html = Livewire::test(GetStarted::class)->html();
+            $this->assertHiddenOnboardingFooter($html);
+            if ($step === 1) {
+                Source::factory()->create();
+            } elseif ($step === 2) {
+                Package::factory()->create();
+            }
+        }
+    }
+
+    private function assertHiddenOnboardingFooter(string $html): void
+    {
+        $dom = new \DOMDocument;
+        @$dom->loadHTML($html);
+        $buttons = (new \DOMXPath($dom))->query('(//div[contains(@class, "fi-sc-wizard-footer")])[1]//button');
+        $this->assertCount(2, $buttons);
+        foreach ($buttons as $button) {
+            if ($button instanceof \DOMElement) {
+                $this->assertStringContainsString('display: none', $button->getAttribute('style'));
+                $this->assertSame('true', $button->getAttribute('aria-disabled'));
+            }
+        }
+    }
+
+    public function test_the_footer_stays_hidden_behind_the_connect_and_import_modals(): void
+    {
+        $page = Livewire::test(GetStarted::class)
+            ->assertSeeText('Only select repositories')
+            ->mountAction(TestAction::make('connectGithub')->schemaComponent('onboarding.connect.actions'))
+            ->assertMountedActionModalSee('Only select repositories');
+        $this->assertHiddenOnboardingFooter($page->html());
+
+        Http::fake(['api.github.com/orgs/acme/repos*' => Http::response([])]);
+        Source::factory()->withToken()->create(['account' => 'acme']);
+        $page = Livewire::test(GetStarted::class)
+            ->mountAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
+            ->assertSeeText('Import');
+        $this->assertHiddenOnboardingFooter($page->html());
+    }
+
+    public function test_choose_packages_matches_the_dialog_and_explains_default(): void
+    {
+        Http::fake(['api.github.com/orgs/acme/repos*' => Http::response([])]);
+        Source::factory()->withToken()->create(['account' => 'acme']);
+
+        Livewire::test(GetStarted::class)
+            ->assertSeeText('Choose packages')
+            ->mountAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
+            ->assertMountedActionModalSee('Choose packages')
+            ->assertMountedActionModalSee('Import packages')
+            ->assertMountedActionModalSee('Default is this registry')
+            ->assertActionDataSet(['repository_id' => Repository::default()->id]);
+    }
+
+    public function test_the_last_step_streams_an_installation_and_passes(): void
+    {
+        config(['app.url' => self::ROOT]);
+        Repository::default()->forceFill(['public' => false])->save();
+
+        $package = Package::factory()->create([
+            'name' => 'acme/widgets',
+            'source_id' => Source::factory()->create()->id,
+            'repository_id' => Repository::default()->id,
+        ]);
+        $package->versions()->create([
+            'version' => 'v1.2.0',
+            'reference' => str_repeat('a', 40),
+            'is_dev' => false,
+            'metadata' => ['name' => 'acme/widgets', 'version' => 'v1.2.0'],
+        ]);
+
+        $zip = $this->zipBytes();
+
+        Http::fake(fn (Request $request) => match (true) {
+            str_ends_with($request->url(), '/packages.json') => $request->hasHeader('Authorization')
+                ? Http::response(['packages' => [], 'metadata-url' => '/p2/%package%.json'])
+                : Http::response(['message' => 'Authentication required.'], 401),
+            str_contains($request->url(), '/p2/acme/widgets.json') => Http::response(['minified' => 'composer/2.0', 'packages' => ['acme/widgets' => [
+                ['name' => 'acme/widgets', 'version' => 'v1.2.0', 'version_normalized' => '1.2.0.0', 'dist' => ['type' => 'zip', 'url' => self::ROOT.'/dist/acme/widgets/'.str_repeat('a', 40).'.zip', 'shasum' => sha1($zip)]],
+            ]]]),
+            str_contains($request->url(), '/dist/acme/widgets/') => Http::response($zip),
+            default => Http::response('not found', 404),
+        });
+
+        // Livewire flushes each streamed chunk out of the current buffer, so
+        // a second one underneath is what catches them.
+        ob_start();
+        ob_start();
+
+        try {
+            $page = Livewire::test(GetStarted::class)
+                ->callAction(TestAction::make('runTest')->schemaComponent('onboarding.test.actions'));
+        } finally {
+            $streamed = (string) ob_get_clean();
+            $streamed = ob_get_clean().$streamed;
+        }
+
+        $this->assertStringContainsString('"name":"installation-test"', $streamed);
+        $this->assertStringContainsString('Installation test passed', $streamed);
+
+        $page->assertSet('passed', true)
+            ->assertSee('Your registry works.');
+
+        $this->assertSame(0, Token::query()->count());
+    }
+
+    private function zipBytes(): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'zip');
+        $zip = new ZipArchive;
+        $zip->open($path, ZipArchive::OVERWRITE);
+        $zip->addFromString('composer.json', '{"name":"acme/widgets"}');
+        $zip->close();
+
+        $bytes = (string) file_get_contents($path);
+        unlink($path);
+
+        return $bytes;
+    }
+
+    public function test_the_navigation_offers_it_until_the_registry_has_installed_a_package(): void
+    {
+        $this->assertTrue(GetStarted::shouldRegisterNavigation());
+        $this->assertSame('1/4', GetStarted::getNavigationBadge());
+
+        Source::factory()->create();
+        $this->assertSame('2/4', GetStarted::getNavigationBadge());
+
+        $package = Package::factory()->create();
+        Download::query()->create(['package_id' => $package->id, 'version' => '1.0.0', 'created_at' => now()]);
+
+        $this->assertFalse(GetStarted::shouldRegisterNavigation());
+    }
+
+    public function test_the_navigation_leaves_it_out_for_a_user_who_cannot_see_sources(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $this->assertFalse(GetStarted::shouldRegisterNavigation());
+    }
+
+    public function test_the_wizards_import_has_no_access_step(): void
+    {
+        $this->appConfigured();
+        Http::fake(['*' => Http::response(['token' => 'ghs_installation', 'expires_at' => now()->addHour()->toIso8601String(), 'repositories' => [], 'total_count' => 0])]);
+
+        Source::factory()->create([
+            'installation_id' => 42,
+            'account' => 'acme',
+            'metadata' => ['repository_selection' => 'selected', 'html_url' => 'https://github.com/organizations/acme/settings/installations/42'],
+        ]);
+
+        Livewire::test(GetStarted::class)
+            ->mountAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
+            ->assertActionDoesNotExist(TestAction::make('refreshAccess')->schemaComponent('access.grant'));
+    }
+}
+
+class RacingGetStarted extends GetStarted
+{
+    public function checkSync(): void
+    {
+        parent::checkSync();
+        $package = Package::query()->first();
+        if (! $package->versions()->exists()) {
+            PackageVersion::factory()->for($package)->create();
+        }
+    }
+}

@@ -2,43 +2,35 @@
 
 namespace App\Filament\Widgets;
 
-use App\Filament\Actions\TestInstallationAction;
-use App\Filament\Concerns\RunsInstallationTests;
 use App\Filament\Pages\Dashboard;
-use App\Filament\Resources\Packages\PackageResource;
-use App\Filament\Resources\Sources\Actions\ConnectGitHubAction;
-use App\Models\Download;
-use App\Models\Package;
+use App\Filament\Pages\GetStarted;
 use App\Models\Source;
 use App\Models\User;
-use App\Services\InstallationTest;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Concerns\InteractsWithSchemas;
 use Filament\Schemas\Contracts\HasSchemas;
+use Filament\Support\Enums\IconPosition;
 use Filament\Support\Icons\Heroicon;
 use Filament\Widgets\Widget;
 
 /**
- * The first run, as three steps on the page a new install lands on: connect
- * the GitHub account packages live in, import them, install one.
+ * The way into the first run from the page a new install lands on: where the
+ * Get started wizard has got to, and a button to carry on there.
  *
- * A dashboard of zeros says nothing about what to do next, and everything
- * the steps link to already existed — it was only scattered across Sources
- * and Packages for somebody who did not know to look there. Each step ticks
- * itself off from the registry's own state, so there is nothing to dismiss:
- * the card goes away once a package has been installed from here, or an
- * installation test has passed, which is the moment the registry has done
- * its job once. Anybody done with it sooner
+ * A dashboard of zeros says nothing about what to do next. The steps
+ * themselves live on the wizard, which reads them from the registry's own
+ * state, so this card has nothing to tick off: it goes away once a package
+ * has been installed, or an installation test has passed, which is the
+ * moment the registry has done its job once. Anybody done with it sooner
  * can dismiss it for themselves.
  */
 class GettingStarted extends Widget implements HasActions, HasSchemas
 {
     use InteractsWithActions;
     use InteractsWithSchemas;
-    use RunsInstallationTests;
 
     protected string $view = 'filament.widgets.getting-started';
 
@@ -53,21 +45,13 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
         return $user instanceof User
             && $user->can('viewAny', Source::class)
             && $user->getting_started_dismissed_at === null
-            && ! self::installed();
-    }
-
-    /**
-     * The last step is done once a package has really been installed, or an
-     * installation test has passed — whichever comes first.
-     */
-    private static function installed(): bool
-    {
-        return Download::query()->exists() || InstallationTest::hasPassed();
+            && ! GetStarted::complete();
     }
 
     /**
      * Put the card away for this user, on every browser they sign in from.
-     * Nothing brings it back: everything it links to is in the navigation.
+     * Nothing brings it back: the wizard and everything it uses are still a
+     * link or the navigation away.
      */
     public function dismissAction(): Action
     {
@@ -91,73 +75,26 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
             });
     }
 
-    public function connectGithubAction(): Action
+    public function continueAction(): Action
     {
-        return ConnectGitHubAction::make();
-    }
-
-    public function importPackagesAction(): Action
-    {
-        return Action::make('importPackages')
-            ->label('Import packages')
-            ->icon(Heroicon::OutlinedCloudArrowDown)
-            ->url(PackageResource::getUrl('index', ['action' => 'importFromSource']));
-    }
-
-    public function testInstallationAction(): Action
-    {
-        return TestInstallationAction::make(fn (): ?Package => $this->installablePackage(), chooseVersion: false)
-            ->label('Test an installation')
-            ->color('primary');
+        return Action::make('continue')
+            ->label(GetStarted::currentStep() === 1 ? 'Start setup' : 'Continue setup')
+            ->icon(Heroicon::OutlinedArrowRight)
+            ->iconPosition(IconPosition::After)
+            ->color('primary')
+            ->url(GetStarted::getUrl());
     }
 
     /**
-     * @return list<array{key: string, title: string, description: string, done: bool, available: bool}>
+     * Where the wizard has got to.
+     *
+     * @return array{number: int, total: int, title: string}
      */
-    public function steps(): array
+    public function step(): array
     {
-        $connected = Source::query()->whereNotNull('connected_at')->exists();
-        $package = $this->firstPackage();
+        $steps = GetStarted::progress();
+        $number = GetStarted::currentStep();
 
-        return [
-            [
-                'key' => 'connectGithub',
-                'title' => 'Connect GitHub',
-                'description' => 'The account your packages live in. The first connection also registers this registry\'s GitHub App, once.',
-                'done' => $connected,
-                'available' => true,
-            ],
-            [
-                'key' => 'importPackages',
-                'title' => 'Import your packages',
-                'description' => 'Repositories with a composer.json are picked out and ticked for you; each one syncs its tags and branches.',
-                'done' => $package !== null,
-                'available' => $connected,
-            ],
-            [
-                'key' => 'testInstallation',
-                'title' => 'Test an installation',
-                'description' => ($installable = $this->installablePackage()) === null
-                    ? ($package === null
-                        ? 'Installs a package the way Composer would, through this registry\'s public address, and shows each request.'
-                        : "Waiting for {$package->name}'s first sync to finish — the queue worker builds its versions.")
-                    : "Installs {$installable->name} the way Composer would, through this registry's public address, and shows each request. Its page has the commands for your own projects.",
-                'done' => self::installed(),
-                'available' => $installable !== null,
-            ],
-        ];
-    }
-
-    private function firstPackage(): ?Package
-    {
-        return Package::query()->oldest('id')->first();
-    }
-
-    /**
-     * The first package with a version to install.
-     */
-    private function installablePackage(): ?Package
-    {
-        return Package::query()->whereHas('versions')->oldest('id')->first();
+        return ['number' => $number, 'total' => count($steps), 'title' => $steps[$number - 1]['title']];
     }
 }

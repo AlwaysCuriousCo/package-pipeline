@@ -12,6 +12,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -31,6 +32,12 @@ class AddPackagesTest extends TestCase
      * @var list<string>
      */
     private array $granted = ['widgets'];
+
+    /** @return array<int, array{int}> */
+    public static function repositoryCounts(): array
+    {
+        return [[0], [1], [2]];
+    }
 
     protected function setUp(): void
     {
@@ -79,6 +86,16 @@ class AddPackagesTest extends TestCase
             'account' => 'acme',
             'metadata' => ['repository_selection' => $selection, 'repository_count' => 1, 'html_url' => self::SETTINGS],
         ]);
+    }
+
+    #[DataProvider('repositoryCounts')]
+    public function test_access_refresh_repository_count_grammar(int $count): void
+    {
+        $this->installedSource();
+        $this->granted = array_slice(['widgets', 'gadgets'], 0, $count);
+        Livewire::test(ListPackages::class)->mountAction('importFromSource')
+            ->callAction(TestAction::make('refreshAccess')->schemaComponent('access.grant'))
+            ->assertNotified($count === 1 ? '1 repository shared' : "{$count} repositories shared");
     }
 
     public function test_a_source_sharing_only_chosen_repositories_starts_on_granting_access(): void

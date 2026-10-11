@@ -9,6 +9,7 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Source;
 use App\Models\User;
+use Filament\Forms\Components\Select;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -71,6 +72,15 @@ class ImportFromSourceTest extends TestCase
         $this->assertSame(2, Package::query()->count());
 
         Queue::assertPushed(SyncPackageJob::class, 2);
+    }
+
+    public function test_multiple_composer_destinations_remain_selectable(): void
+    {
+        $other = Repository::factory()->create(['name' => 'Internal tools']);
+        Livewire::test(ListPackages::class)->mountAction('importFromSource')
+            ->assertMountedActionModalSee('Add packages from a source')
+            ->assertMountedActionModalSee('Import packages')
+            ->assertSchemaComponentExists('repository_id', checkComponentUsing: fn (Select $field): bool => isset($field->getOptions()[$other->id], $field->getOptions()[Repository::default()->id]));
     }
 
     public function test_projects_already_onboarded_are_skipped_not_duplicated(): void

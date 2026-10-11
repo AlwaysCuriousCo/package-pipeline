@@ -18,15 +18,23 @@ use App\Models\Source;
 use App\Models\User;
 use App\Services\GitHub\GitHubApp;
 use Filament\Actions\Testing\TestAction;
+use Filament\Notifications\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class SourceResourceTest extends TestCase
 {
     use RefreshDatabase;
+
+    /** @return array<int, array{int}> */
+    public static function repositoryCounts(): array
+    {
+        return [[0], [1], [2]];
+    }
 
     protected function setUp(): void
     {
@@ -57,6 +65,16 @@ class SourceResourceTest extends TestCase
         $this->configureGitHubApp();
 
         config()->set('services.github.app.webhook_secret', 'the-app-webhook-secret');
+    }
+
+    #[DataProvider('repositoryCounts')]
+    public function test_connection_test_repository_count_grammar(int $count): void
+    {
+        Http::fake(['api.github.com/orgs/acme/repos*' => Http::response(array_fill(0, $count, ['full_name' => 'acme/widgets']))]);
+        $source = Source::factory()->withToken()->create(['account' => 'acme']);
+        Livewire::test(ViewSource::class, ['record' => $source->getKey()])->callAction('test')
+            ->assertNotified(Notification::make()->success()->title('acme is reachable')
+                ->body($count === 1 ? '1 repository is available to this source.' : "{$count} repositories are available to this source."));
     }
 
     public function test_the_index_offers_connecting_without_creating_a_record_first(): void

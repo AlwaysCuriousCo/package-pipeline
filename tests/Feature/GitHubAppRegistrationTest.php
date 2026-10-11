@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\GitHubAppOwner;
+use App\Filament\Pages\GetStarted;
 use App\Filament\Resources\GitHubApps\Actions\RegisterGitHubAppAction;
 use App\Filament\Resources\GitHubApps\Pages\ManageGitHubApp;
 use App\Filament\Resources\Packages\PackageResource;
@@ -297,6 +298,14 @@ class GitHubAppRegistrationTest extends TestCase
         (new GitHubAppManifest('Acme Packages', public: true))->prefillUrl(GitHubAppOwner::Enterprise, 'acme');
     }
 
+    public function test_the_wizard_connect_step_asks_who_can_install_the_app(): void
+    {
+        Livewire::test(GetStarted::class)
+            ->mountAction(TestAction::make('connectGithub')->schemaComponent('onboarding.connect.actions'))
+            ->assertMountedActionModalSee('Who owns the App on GitHub?')
+            ->assertMountedActionModalSee('Who can install it?');
+    }
+
     public function test_the_manifest_is_posted_to_the_owners_new_app_page_with_the_state(): void
     {
         $this->pending();
@@ -424,6 +433,32 @@ class GitHubAppRegistrationTest extends TestCase
         Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
             && $request->url() === 'https://api.github.com/app-manifests/the-code/conversions'
             && $request->body() === '');
+    }
+
+    public function test_a_registration_started_in_the_wizard_hands_it_the_install_that_follows(): void
+    {
+        $this->pending();
+        $this->fakeConversion();
+        session([GetStarted::RETURN_KEY => true]);
+
+        $this->get(route('github-app.registered', ['code' => 'the-code', 'state' => 'the-state']))
+            ->assertRedirect(route('sources.connect.new', ['onboarding' => 1]));
+
+        $this->assertNull(session(GetStarted::RETURN_KEY));
+    }
+
+    public function test_a_failed_registration_started_in_the_wizard_returns_to_it(): void
+    {
+        $this->pending();
+        session([GetStarted::RETURN_KEY => true]);
+
+        $this->get(route('github-app.registered', ['code' => 'the-code', 'state' => 'forged']))
+            ->assertRedirect(GetStarted::getUrl());
+
+        // Said where the admin is looking, and kept for the app's own page.
+        $this->assertStringContainsString('Registration could not be verified', (string) json_encode(session('filament.notifications')));
+        $this->assertFailedPersistently('Registration could not be verified');
+        $this->assertNull(session(GetStarted::RETURN_KEY));
     }
 
     public function test_the_install_that_follows_reports_the_registration_once_it_is_done(): void
