@@ -60,12 +60,15 @@ class GetStarted extends Page
      */
     public ?bool $passed = null;
 
+    public int $mountedStep;
+
     public int $syncWaitStartedAt;
 
     public bool $syncWaitExpired = false;
 
     public function mount(): void
     {
+        $this->mountedStep = static::currentStep();
         $this->syncWaitStartedAt = now()->timestamp;
     }
 
@@ -166,7 +169,8 @@ class GetStarted extends Page
                     ->schema([
                         View::make('filament.pages.get-started.sync')
                             ->viewData(fn (): array => [
-                                'package' => Package::query()->oldest('id')->first(),
+                                'mountedStep' => $this->mountedStep,
+                                'status' => $this->syncStatus(),
                                 'waiting' => static::currentStep() === 3,
                                 'expired' => $this->syncWaitExpired,
                             ]),
@@ -198,12 +202,36 @@ class GetStarted extends Page
     }
 
     /**
+     * The same batch counters the package page uses, excluding discovery
+     * from the number of imported versions.
+     *
+     * @return array{package: ?Package, hasBatch: bool, running: bool, discovering: bool, imported: int, total: int, failed: int, progress: int, versions: int}
+     */
+    public function syncStatus(): array
+    {
+        $package = static::installablePackage() ?? Package::query()->oldest('id')->first();
+        $batch = $package?->syncBatch();
+
+        return [
+            'package' => $package,
+            'hasBatch' => $batch !== null,
+            'running' => $batch !== null && $package->syncRunning(),
+            'discovering' => $batch !== null && $batch->totalJobs <= 1,
+            'imported' => $batch === null ? 0 : max(0, $batch->processedJobs() - 1),
+            'total' => $batch === null ? 0 : max(0, $batch->totalJobs - 1),
+            'failed' => $batch === null ? 0 : $batch->failedJobs,
+            'progress' => $batch?->progress() ?? 0,
+            'versions' => $package?->versions()->count() ?? 0,
+        ];
+    }
+
+    /**
      * Polled by the sync step while it waits: the first versions mean the
      * test can run, so the page opens again on it.
      */
     public function checkSync(): void
     {
-        if (static::currentStep() > 3) {
+        if (static::currentStep() !== $this->mountedStep) {
             $this->redirect(static::getUrl());
 
             return;

@@ -15,8 +15,10 @@ use Filament\Actions\Testing\TestAction;
 use Filament\Schemas\Components\Wizard;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Livewire\Livewire;
 use Tests\TestCase;
 use ZipArchive;
@@ -148,18 +150,162 @@ class GetStartedTest extends TestCase
         $this->assertOpensOn(3);
     }
 
+    public function test_the_sync_poll_is_only_rendered_for_the_step_the_page_mounted_on(): void
+    {
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 1)
+            ->assertDontSeeHtml('wire:poll');
+        $source = Source::factory()->create();
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 2)
+            ->assertDontSeeHtml('wire:poll');
+        $package = Package::factory()->create(['source_id' => $source->id]);
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 3)
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"');
+        PackageVersion::factory()->for($package)->create();
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 4)
+            ->assertDontSeeHtml('wire:poll');
+    }
+
+    public function test_check_sync_does_not_redirect_when_the_mounted_step_has_not_changed(): void
+    {
+        Livewire::test(GetStarted::class)->call('checkSync')->assertNoRedirect();
+        $source = Source::factory()->create();
+        Livewire::test(GetStarted::class)->call('checkSync')->assertNoRedirect();
+        $package = Package::factory()->create(['source_id' => $source->id]);
+        Livewire::test(GetStarted::class)->call('checkSync')->assertNoRedirect();
+        PackageVersion::factory()->for($package)->create();
+        Livewire::test(GetStarted::class)->call('checkSync')->assertNoRedirect();
+    }
+
+    public function test_check_sync_redirects_when_the_registry_changes_the_mounted_step(): void
+    {
+        $page = Livewire::test(GetStarted::class);
+        $source = Source::factory()->create();
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+        $page = Livewire::test(GetStarted::class);
+        $package = Package::factory()->create(['source_id' => $source->id]);
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+        PackageVersion::factory()->for($package)->create();
+        $page = Livewire::test(GetStarted::class);
+        $package->versions()->delete();
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+    }
+
     public function test_the_sync_step_waits_for_versions_then_moves_on_by_itself(): void
     {
         $package = Package::factory()->create(['source_id' => Source::factory()->create()->id]);
 
         $page = Livewire::test(GetStarted::class)
-            ->assertSeeText("Syncing {$package->name}")
+            ->assertSeeText('Waiting for the queue worker to start…')
             ->assertSeeHtml('wire:poll.3s.visible="checkSync"')
             ->call('checkSync')
             ->assertNoRedirect();
 
         PackageVersion::factory()->for($package)->create();
 
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private function syncBatch(Package $package, array $attributes = []): void
+    {
+        $id = (string) Str::orderedUuid();
+        DB::table('job_batches')->insert($attributes + [
+            'id' => $id,
+            'name' => 'First sync',
+            'total_jobs' => 5,
+            'pending_jobs' => 3,
+            'failed_jobs' => 0,
+            'failed_job_ids' => '[]',
+            'options' => serialize([]),
+            'cancelled_at' => null,
+            'created_at' => now()->timestamp,
+            'finished_at' => null,
+        ]);
+        $package->forceFill(['sync_batch_id' => $id])->save();
+    }
+
+    private function syncingPackage(): Package
+    {
+        return Package::factory()->create(['source_id' => Source::factory()->create()->id]);
+    }
+
+    public function test_the_queued_stage_renders_a_spinner_and_client_side_elapsed_clock(): void
+    {
+        $this->syncingPackage();
+        $page = Livewire::test(GetStarted::class)
+            ->assertSeeText('Waiting for the queue worker to start…')
+            ->assertSeeText('The registry copies each tagged release from GitHub')
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"')
+            ->assertSeeHtml('aria-label="Time waiting for sync"');
+
+        $dom = new \DOMDocument;
+        @$dom->loadHTML($page->html());
+        $this->assertCount(1, (new \DOMXPath($dom))->query('//*[local-name()="svg" and contains(@class, "pp-onboarding-sync-spinner")]'));
+        $clock = (new \DOMXPath($dom))->query('//span[contains(@class, "pp-onboarding-sync-elapsed")]')->item(0);
+        $this->assertInstanceOf(\DOMElement::class, $clock);
+        $this->assertStringContainsString('setInterval(() => this.tick(), 1000)', $clock->getAttribute('x-data'));
+        $this->assertStringContainsString('clearInterval(this.timer)', $clock->getAttribute('x-data'));
+        $this->assertStringContainsString('$wire.syncWaitStartedAt', $clock->getAttribute('x-data'));
+        $component = $page->instance();
+        $this->assertInstanceOf(GetStarted::class, $component);
+        $this->assertFalse($component->syncStatus()['hasBatch']);
+    }
+
+    public function test_the_discovering_stage_names_the_package(): void
+    {
+        $package = $this->syncingPackage();
+        $this->syncBatch($package, ['total_jobs' => 1, 'pending_jobs' => 1]);
+        $page = Livewire::test(GetStarted::class)
+            ->assertSeeText("Asking GitHub for {$package->name}'s tags and branches…", false)
+            ->assertDontSeeHtml('role="progressbar"');
+        $component = $page->instance();
+        $this->assertInstanceOf(GetStarted::class, $component);
+        $this->assertTrue($component->syncStatus()['discovering']);
+    }
+
+    public function test_the_importing_stage_excludes_discovery_from_counts_and_bar_width(): void
+    {
+        $package = $this->syncingPackage();
+        $this->syncBatch($package);
+        $page = Livewire::test(GetStarted::class)
+            ->assertSeeText('Importing versions: 1 of 4 · building an archive for each')
+            ->assertSeeHtml('aria-valuemax="4" aria-valuenow="1"')
+            ->assertSeeHtml('style="width: 25%"');
+        $component = $page->instance();
+        $this->assertInstanceOf(GetStarted::class, $component);
+        $status = $component->syncStatus();
+        $this->assertSame(1, $status['imported']);
+        $this->assertSame(4, $status['total']);
+        $this->assertSame(40, $status['progress']);
+    }
+
+    public function test_failed_imports_are_shown_inline(): void
+    {
+        $package = $this->syncingPackage();
+        $this->syncBatch($package, ['failed_jobs' => 1]);
+        Livewire::test(GetStarted::class)
+            ->assertSeeText("1 version couldn't be imported; the others are fine.", false)
+            ->assertSeeText('Importing versions: 1 of 4');
+    }
+
+    public function test_a_sync_error_stays_inline_without_an_active_spinner(): void
+    {
+        $package = $this->syncingPackage();
+        $package->forceFill(['sync_error' => 'GitHub refused access'])->save();
+        Livewire::test(GetStarted::class)
+            ->assertSeeText("{$package->name} did not sync: GitHub refused access")
+            ->assertDontSeeHtml('<svg class="fi-loading-indicator pp-onboarding-sync-spinner')
+            ->assertSeeHtml(e(GetStarted::packageUrl($package)));
+    }
+
+    public function test_ready_versions_render_before_the_next_poll_advances(): void
+    {
+        $package = $this->syncingPackage();
+        $page = Livewire::test(GetStarted::class);
+        PackageVersion::factory()->for($package)->count(2)->create();
+        $page->call('$refresh')->assertSeeText('Ready: 2 versions to install')
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"')
+            ->assertNoRedirect();
         $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
     }
 

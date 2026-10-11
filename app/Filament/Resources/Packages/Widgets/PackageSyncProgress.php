@@ -26,10 +26,28 @@ class PackageSyncProgress extends Widget
     public ?Package $record = null;
 
     /**
+     * Whether the package had versions at the last render, so the poll can
+     * tell when its first ones land.
+     */
+    public ?bool $hadVersions = null;
+
+    /**
      * @return array<string, mixed>
      */
     protected function getViewData(): array
     {
+        // Actions that need a version — Test installation — are the page's,
+        // not this widget's, and the page does not poll. Telling it when the
+        // first versions land shows them without a reload, however quick the
+        // sync was between two polls.
+        $hasVersions = $this->record?->versions()->exists() ?? false;
+
+        if ($this->hadVersions === false && $hasVersions) {
+            $this->dispatch('package-synced');
+        }
+
+        $this->hadVersions = $hasVersions;
+
         $batch = $this->record?->syncBatch();
 
         if ($batch === null || ! $this->record->syncRunning()) {

@@ -18,6 +18,7 @@ use App\Services\GitHub\WebhookRegistrar;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
+use Livewire\Attributes\On;
 
 class ViewPackage extends ViewRecord
 {
@@ -57,6 +58,13 @@ class ViewPackage extends ViewRecord
             app(WebhookRegistrar::class)->verify($package);
         }
     }
+
+    /**
+     * Re-render once the sync widget sees the first versions land, so the
+     * header's version-dependent actions appear without a reload.
+     */
+    #[On('package-synced')]
+    public function refreshAfterSync(): void {}
 
     protected function getHeaderActions(): array
     {
