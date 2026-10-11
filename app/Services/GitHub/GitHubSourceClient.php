@@ -58,10 +58,24 @@ class GitHubSourceClient implements ReadsComposerManifests, SourceClient
     public function composerManifests(): array
     {
         return Cache::remember(
-            "sources.{$this->source->id}.composer-manifests",
+            $this->manifestsCacheKey(),
             now()->addMinutes(5),
             fn (): array => $this->readComposerManifests(array_slice($this->projects(), 0, self::MANIFEST_CAP)),
         );
+    }
+
+    /**
+     * Read the manifests afresh next time — once the app has been given a
+     * repository it could not see when they were cached, say.
+     */
+    public function forgetComposerManifests(): void
+    {
+        Cache::forget($this->manifestsCacheKey());
+    }
+
+    private function manifestsCacheKey(): string
+    {
+        return "sources.{$this->source->id}.composer-manifests";
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Jobs\SyncPackageJob;
 use App\Models\Package;
@@ -57,7 +58,9 @@ class ImportFromSourceTest extends TestCase
                 'create_webhook' => false,
             ])
             ->assertHasNoActionErrors()
-            ->assertNotified();
+            ->assertNotified()
+            // Several stay on the list, where they all are.
+            ->assertNoRedirect();
 
         $widgets = Package::query()->where('repository', 'https://github.com/acme/widgets')->sole();
 
@@ -138,12 +141,29 @@ class ImportFromSourceTest extends TestCase
                 'create_webhook' => false,
             ])
             ->assertHasNoActionErrors()
-            ->assertNotified();
+            ->assertNotified()
+            // One landed, but the failure needs reading where it was said.
+            ->assertNoRedirect();
 
         // The collision was reported, the other project still landed.
         $this->assertNotNull(Package::query()->where('repository', 'https://github.com/acme/gadgets')->first());
         $this->assertNull(Package::query()->where('repository', 'https://github.com/acme/widgets')->first());
 
         Queue::assertPushed(SyncPackageJob::class, 1);
+    }
+
+    public function test_importing_one_opens_it(): void
+    {
+        Queue::fake();
+
+        Livewire::test(ListPackages::class)
+            ->callAction('importFromSource', [
+                'source_id' => $this->source->id,
+                'projects' => ['https://github.com/acme/widgets'],
+                'repository_id' => Repository::default()->id,
+                'create_webhook' => false,
+            ])
+            ->assertHasNoActionErrors()
+            ->assertRedirect(PackageResource::getUrl('view', ['record' => Package::query()->sole()]));
     }
 }
