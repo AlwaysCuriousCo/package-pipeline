@@ -34,6 +34,15 @@ class PackageVersionResource extends JsonResource
             'reference' => $this->reference,
             'shasum' => $this->shasum,
             'released_at' => $this->released_at?->toIso8601String(),
+            // A WordPress package's slug-rooted zip, which is a different file
+            // from the Composer dist above with a different sha1: what a
+            // provisioning job verifies its download against. Absent for
+            // every other package. @see docs/wordpress.md
+            $this->mergeWhen(is_array($this->wordpress), fn (): array => ['wordpress' => [
+                'version' => $this->wordpress['version'] ?? null,
+                'shasum' => $this->wordpress['shasum'] ?? null,
+                'size' => $this->wordpress['size'] ?? null,
+            ]]),
         ];
     }
 }

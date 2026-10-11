@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Packages\Schemas;
 
 use App\Enums\SourceProvider;
+use App\Enums\WordPressKind;
 use App\Models\Package;
 use App\Models\Source;
 use Filament\Forms\Components\Hidden;
@@ -12,6 +13,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Wizard\Step;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -71,6 +73,8 @@ class PackageWizard
                     PackageForm::composerRepository(),
                     PackageForm::servingRepositories(),
                     PackageForm::description(),
+                    PackageForm::wordpressKind(),
+                    PackageForm::wordpressSlug(),
                 ]),
         ];
     }
@@ -115,6 +119,13 @@ class PackageWizard
         // version are left to the first sync, which knows them for certain.
         if ($composerJson !== null) {
             $set('description', $composerJson['description'] ?? null);
+        }
+
+        // A manifest that already says it is a plugin or theme is offered as
+        // one, with the package half of its name as the slug to correct.
+        if (($kind = WordPressKind::tryFrom((string) ($composerJson['type'] ?? ''))) !== null) {
+            $set('wordpress_kind', $kind->value);
+            $set('wordpress_slug', Str::afterLast((string) ($composerJson['name'] ?? ''), '/') ?: null);
         }
 
         if (isset($composerJson['name'])) {

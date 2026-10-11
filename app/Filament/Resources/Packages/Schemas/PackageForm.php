@@ -6,6 +6,7 @@ use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\WebhookCoverage;
+use App\Enums\WordPressKind;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Source;
@@ -46,6 +47,8 @@ class PackageForm
                 self::token(),
                 self::latestVersion(),
                 self::type(),
+                self::wordpressKind(),
+                self::wordpressSlug(),
                 self::webhookEnabled(),
                 self::abandoned(),
                 self::replacementPackage(),
@@ -609,6 +612,37 @@ class PackageForm
             // Suggests the types already in use without locking the
             // column to a fixed vocabulary.
             ->datalist(fn (): array => array_values(Package::types()));
+    }
+
+    /**
+     * Whether WordPress sites are served this package too, as a plugin or a
+     * theme. Empty for everything else, which is nearly everything.
+     *
+     * @see docs/wordpress.md
+     */
+    public static function wordpressKind(): Select
+    {
+        return Select::make('wordpress_kind')
+            ->label('WordPress')
+            ->options(WordPressKind::class)
+            ->placeholder('Not a WordPress package')
+            ->live()
+            ->helperText('Also serve this package to WordPress sites: a zip rooted at the slug below, and the update API a site\'s mu-plugin asks. Composer keeps working unchanged.');
+    }
+
+    public static function wordpressSlug(): TextInput
+    {
+        return TextInput::make('wordpress_slug')
+            ->label('WordPress slug')
+            ->visible(fn (Get $get): bool => filled($get('wordpress_kind')))
+            ->required(fn (Get $get): bool => filled($get('wordpress_kind')))
+            // Kept even when the kind is cleared, so switching it back on does
+            // not ask for the slug again; the kind alone decides serving.
+            ->maxLength(200)
+            ->regex('/^[a-z0-9][a-z0-9_-]*$/')
+            ->unique(ignoreRecord: true)
+            ->placeholder('acme-forms')
+            ->helperText('The directory WordPress installs it into: wp-content/plugins/<slug> or wp-content/themes/<slug>. Lowercase letters, digits, hyphens and underscores. Unique across the registry.');
     }
 
     public static function description(): Textarea

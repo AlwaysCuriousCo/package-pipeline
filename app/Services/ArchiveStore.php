@@ -159,6 +159,26 @@ class ArchiveStore
     }
 
     /**
+     * Store a version's WordPress zip beside its Composer archive, recording
+     * it with the header it was built with.
+     *
+     * Under the published prefix and keyed by a fresh uuid for the reasons
+     * store() is; archives:clean reads `wordpress.path` as a reference too.
+     *
+     * @param  array<string, string|null>  $header
+     */
+    public function storeWordPress(PackageVersion $version, string $zip, array $header): void
+    {
+        $path = $this->under(self::PUBLISHED_PREFIX, "{$version->package->name}/".Str::uuid7().'.zip');
+
+        $this->write($path, $zip);
+
+        $version->forceFill([
+            'wordpress' => [...$header, 'path' => $path, 'shasum' => sha1_file($zip), 'size' => filesize($zip)],
+        ])->save();
+    }
+
+    /**
      * Store a verified upstream archive, returning where it went.
      *
      * No row is written here — the caller does that, because it is the caller

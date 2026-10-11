@@ -14,6 +14,13 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **WordPress plugins and themes.** A synced package can be marked as a
+  WordPress plugin or theme with a slug. Each version gets a second zip
+  rooted at the slug (the Composer archive and its sha1 are untouched), the
+  sync reads the plugin header or `style.css` and warns when its `Version`
+  disagrees with the tag, and `/wp` answers the plugin and theme
+  update-check and information requests a site's mu-plugin sends, with the
+  same access tokens. See [docs/wordpress.md](docs/wordpress.md).
 - **Upstreams limited to their packages, and per-repository Composer keys.**
   An upstream can list the package patterns it serves (`livewire/flux*`);
   it is only asked about those, and when every upstream lists its packages

@@ -219,6 +219,10 @@ pip config set global.extra-index-url https://__token__:pp_your-token@packages.e
 
 Both surfaces are publish-only (`npm publish`, `twine upload`) — CI pushes what it built, as with Composer artifact uploads — and both can mirror their public registries: an upstream carries an ecosystem, so a repository can serve npmjs.org and pypi.org through the same cache-on-demand machinery, under the same local-package-always-wins rule, that mirrors packagist.org. See **[docs/ecosystems.md](docs/ecosystems.md)** for configuration, publishing, mirroring, and what is deliberately not implemented yet.
 
+### WordPress plugins and themes
+
+A synced package can also be marked as a **WordPress plugin** or **theme**, with the slug WordPress installs it under. Each version then gets a second zip whose top-level directory is exactly that slug, and the registry answers the parts of the api.wordpress.org update API a site asks (`update-check`, `plugin_information`, `theme_information`) for the slugs it serves. A small mu-plugin on the site points core's update and information filters at it, with the same access tokens Composer uses. Composer keeps serving the same package unchanged. See **[docs/wordpress.md](docs/wordpress.md)**, including the filter code and a provisioning recipe.
+
 ### Reserved vendors
 
 Each repository can reserve vendor prefixes — `acme`, meaning every `acme/…` name. Only that repository may then introduce a package under it, whether through the panel, the API, `package:add`, an artifact upload, or a sync adopting the name a repository's `composer.json` declares. Packages published under the vendor before it was reserved keep working; a reservation governs what may be *introduced*.
@@ -478,6 +482,7 @@ After adding new Filament resources, re-run both `php artisan shield:generate --
 - [docs/deployment.md](docs/deployment.md) — production drivers, scaling, monitoring, and backup and restore.
 - [docs/download-analytics.md](docs/download-analytics.md) — exporting download statistics as CSV, from the panel or the shell, per package or registry-wide.
 - [docs/ecosystems.md](docs/ecosystems.md) — serving npm and Python packages beside Composer: client configuration, publishing, name rules, and what is not implemented yet.
+- [docs/wordpress.md](docs/wordpress.md): serving plugins and themes to WordPress sites, the update API, the mu-plugin filter code, and provisioning by slug.
 - [docs/claude-ai.md](docs/claude-ai.md) — letting Claude find and install packages from this registry through a Claude Skill.
 - [docs/github-app.md](docs/github-app.md) — registering the GitHub App and connecting sources, including troubleshooting.
 - [docs/merchant-drivers.md](docs/merchant-drivers.md) — adding a payment merchant other than Stripe: the driver contract, the rules a translation must keep, and what shared machinery a driver inherits.

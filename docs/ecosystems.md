@@ -129,6 +129,13 @@ from different repositories.
 Reserved vendors apply to the other ecosystems too: an npm scope (`@acme`) or
 a bare name is checked against reservations exactly as a Composer vendor is.
 
+## WordPress
+
+WordPress plugins and themes are not a fourth ecosystem: they sync from git
+like any Composer package, which keeps serving them unchanged, and are marked
+with a kind and a slug to be served to WordPress sites as well. See
+[wordpress.md](wordpress.md).
+
 ## Pages, badges, and the rest
 
 Public pages work for any package whose name has a vendor segment — every

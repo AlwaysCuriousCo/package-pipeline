@@ -8,6 +8,7 @@ use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
+use App\Enums\WordPressKind;
 use App\Exceptions\NameCollision;
 use App\Exceptions\VendorReserved;
 use App\Http\Controllers\Pages\PackageBadgeController;
@@ -38,7 +39,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image'])]
+#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image', 'wordpress_kind', 'wordpress_slug'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -114,6 +115,9 @@ class Package extends Model
             // the switch that publishes the repository URL of a private
             // package to anonymous readers.
             'page_source',
+            // Whether WordPress sites are offered this package, and under
+            // which directory name: a publishing decision like the name.
+            'wordpress_kind', 'wordpress_slug',
         ];
     }
 
@@ -124,6 +128,7 @@ class Package extends Model
     {
         return [
             'ecosystem' => Ecosystem::class,
+            'wordpress_kind' => WordPressKind::class,
             'token' => 'encrypted',
             'webhook_secret' => 'encrypted',
             'webhook_enabled' => 'boolean',
@@ -140,6 +145,16 @@ class Package extends Model
             'page_body_source' => PageBodySource::class,
             'page_source_synced_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Whether WordPress sites are served this package as a plugin or theme.
+     *
+     * @see docs/wordpress.md
+     */
+    public function isWordPress(): bool
+    {
+        return $this->wordpress_kind instanceof WordPressKind && filled($this->wordpress_slug);
     }
 
     /**
