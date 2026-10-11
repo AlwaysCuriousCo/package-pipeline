@@ -191,7 +191,7 @@ class WordPressController extends Controller
 
         return [
             ...$identity,
-            'new_version' => (string) ($header['version'] ?? $release->version),
+            'new_version' => (string) $header['version'],
             'url' => (string) ($header['homepage'] ?? ''),
             'package' => $this->distUrl($request, $slug, $release),
             'requires' => $header['requires'] ?? null,
@@ -238,7 +238,7 @@ class WordPressController extends Controller
         return response()->json([
             'name' => (string) ($header['name'] ?? $package->name),
             'slug' => $slug,
-            'version' => (string) ($header['version'] ?? $release->version),
+            'version' => (string) $header['version'],
             // wordpress.org sends the author as a link, which the modal prints.
             'author' => filled($header['author_uri'] ?? null)
                 ? '<a href="'.e((string) $header['author_uri']).'">'.e($author).'</a>'
@@ -255,8 +255,13 @@ class WordPressController extends Controller
 
     /**
      * The release a site should be on: the highest stable version with a
-     * WordPress zip that the token's ceiling permits, or null when there is
-     * none to offer.
+     * WordPress zip and a header Version that the token's ceiling permits, or
+     * null when there is none to offer.
+     *
+     * A release whose header has no Version is never offered: the site
+     * compares against the installed header, which would still say nothing
+     * after the install, so the same update would come back on every check.
+     * The sync already warns about such a release.
      */
     private function release(Request $request, Package $package): ?PackageVersion
     {
@@ -267,7 +272,8 @@ class WordPressController extends Controller
             ->whereNotNull('wordpress')
             ->orderedByVersion()
             ->get(['id', 'package_id', 'version', 'order', 'is_dev', 'released_at', 'wordpress'])
-            ->first(fn (PackageVersion $version): bool => preg_match('/(alpha|beta|rc|dev)/i', $version->version) !== 1
+            ->first(fn (PackageVersion $version): bool => filled($version->wordpress['version'] ?? null)
+                && preg_match('/(alpha|beta|rc|dev)/i', $version->version) !== 1
                 && $this->ceilings->permits($version, $ceiling));
     }
 
@@ -285,6 +291,9 @@ class WordPressController extends Controller
         return $repository->packages()
             ->ofEcosystem(Ecosystem::Composer)
             ->visibleTo($this->token($request), $repository)
+            // Both, always: clearing the kind keeps the slug for later, and
+            // must stop serving the zips as well as the update answers.
+            ->whereNotNull('wordpress_kind')
             ->whereNotNull('wordpress_slug')
             ->when($kind !== null, fn ($query) => $query->where('wordpress_kind', $kind))
             ->when($slugs !== null, fn ($query) => $query->whereIn('wordpress_slug', $slugs))
