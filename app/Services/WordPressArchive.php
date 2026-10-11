@@ -104,6 +104,7 @@ class WordPressArchive
 
             return [
                 'slug' => $slug,
+                'kind' => $kind->value,
                 'file' => $file,
                 ...$headers,
                 'changelog' => is_string($changelog) && $changelog !== '' ? $changelog : null,

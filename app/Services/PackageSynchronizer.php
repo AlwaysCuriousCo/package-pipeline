@@ -605,13 +605,15 @@ class PackageSynchronizer
     /**
      * Whether a stored version already has the WordPress zip its package
      * needs — trivially, for a package WordPress is not served. The slug is
-     * compared because it is the zip's top-level directory: renaming it
-     * makes every stored zip wrong.
+     * compared because it is the zip's top-level directory, and the kind
+     * because it decides which header was read: changing either makes every
+     * stored zip wrong.
      */
     private function servesWordPress(Package $package, ?PackageVersion $known): bool
     {
         return ! $package->isWordPress()
-            || ($known?->wordpress['slug'] ?? null) === $package->wordpress_slug;
+            || (($known?->wordpress['slug'] ?? null) === $package->wordpress_slug
+                && ($known?->wordpress['kind'] ?? null) === $package->wordpress_kind?->value);
     }
 
     /**
