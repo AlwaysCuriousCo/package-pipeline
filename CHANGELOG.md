@@ -14,6 +14,15 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Repository hosts.** A named repository can answer at a host of its own
+  (`composer.example.com`), set as **Own host** in the panel: its endpoints and
+  pages are served at that host's root, its install commands and page URLs use
+  it, and the panel, billing and signup redirect off it. `/r/{path}` keeps
+  working, with URLs still on `APP_URL`, so existing consumers are untouched.
+  The billing welcome page and customer area now print setup lines for the
+  repositories a plan actually grants rather than for the registry root.
+  `TLS_ASK_ENABLED` adds `/tls/ask` for Caddy's on-demand TLS. See
+  [docs/deployment.md](docs/deployment.md#repository-hosts).
 - **WordPress plugins and themes.** A synced package can be marked as a
   WordPress plugin or theme with a slug. Each version gets a second zip
   rooted at the slug (the Composer archive and its sha1 are untouched), the

@@ -25,6 +25,9 @@ class RepositoryResource extends JsonResource
             // "served at the root" is a distinct state, not a blank path, and
             // it is what POST /packages accepts to mean the same thing.
             'path' => $this->path,
+            // The repository's own host, or null when it is served under
+            // the registry's address only. `url` already accounts for it.
+            'host' => $this->host,
             'description' => $this->description,
             'public' => $this->public,
             // The URL a consuming project configures. Handing it over saves

@@ -24,6 +24,82 @@ see in a `Last-Modified` — a URL has nowhere to go in a date. Bump
 `ComposerRepositoryController::REVISION_EPOCH` (and `MirrorService`'s) in the
 same deploy and every client refetches once.
 
+## Repository hosts
+
+A named repository can answer at a host of its own — `composer.example.com`
+beside `packages.example.com/r/example` — so a product's customers configure an
+address carrying its name. Set **Own host** on the repository in the panel.
+From then on:
+
+- the host's root serves that repository's Composer, npm, PyPI and WordPress
+  endpoints and its public pages, and nothing else: `/r/{path}` there is a 404,
+  and the panel, billing, signup and pricing redirect to `APP_URL`;
+- install commands, the API's `url`, package pages, the sitemap and the billing
+  setup lines use the host;
+- `/r/{path}` on `APP_URL` keeps serving, with every URL in its responses still
+  on `APP_URL`. Composer only sends credentials to the host they were
+  configured for, so a consumer already pointed at the path keeps working and
+  nobody has to move. Set the host before handing the repository out if you
+  would rather nobody configured the path at all.
+
+The host is not read off the request to build anything: it is matched against
+the stored hosts, and URLs are built from the stored value, so a forged `Host`
+header reaches nothing `/r/{path}` does not already serve.
+
+### What the platform has to do
+
+The app holds no certificates and calls no hosting API. Whatever fronts it has
+to do two things, which every mainstream setup does:
+
+1. **Pass the original host through**, as `Host` or `X-Forwarded-Host`.
+2. **Terminate TLS for the host**, issuing and renewing its certificate.
+
+So adding one is: a DNS record pointing the host where the platform says
+custom domains go, the domain added on the platform, and the host set on the
+repository.
+
+| Platform | Adding a repository host |
+|---|---|
+| Laravel Cloud | Add it as a custom domain on the environment; Cloud provisions the certificate. |
+| Forge, Ploi, plain nginx | Add it as a site alias and issue a Let's Encrypt certificate for it. |
+| Cloudflare in front of anything | Proxy the hostname. For domains on another Cloudflare account, use Cloudflare for SaaS custom hostnames. |
+| Caddy, FrankenPHP | On-demand TLS, asking this app first — below. |
+| Kubernetes | Add the host to the ingress; cert-manager or the provider issues the certificate. |
+
+### Caddy's on-demand TLS
+
+On-demand TLS issues a certificate the first time a host is requested, and
+will do so for any name pointed at the server unless something says no. Set
+`TLS_ASK_ENABLED=true` and point Caddy at the check:
+
+```
+{
+    on_demand_tls {
+        ask http://app:8000/tls/ask
+    }
+}
+
+https:// {
+    tls {
+        on_demand
+    }
+    reverse_proxy app:8000
+}
+```
+
+`/tls/ask?domain=…` answers 200 for `APP_URL`'s host and every repository
+host, and 404 for anything else. Off, it is a 404 like any unknown path.
+
+### Checking a host
+
+```
+curl -s https://composer.example.com/packages.json
+```
+
+should answer from the app (a 200, or a 401 for a private repository), with
+`metadata-url` starting `/p2/` rather than `/r/…` and the `search` and `list`
+URLs on the host.
+
 ## Recommended drivers
 
 The defaults are `QUEUE_CONNECTION=database`, `CACHE_STORE=database`,

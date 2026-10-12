@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Pages;
 use App\Http\Controllers\Controller;
 use App\Models\Package;
 use App\Models\Repository;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Response as ResponseFactory;
 
@@ -22,6 +23,11 @@ use Illuminate\Support\Facades\Response as ResponseFactory;
  * list of them. Off, both documents still answer — robots.txt with a blanket
  * disallow, the sitemap with an empty index — because a 404 on robots.txt is
  * read by some crawlers as permission to crawl everything.
+ *
+ * Both are per host. A sitemap may only name URLs on its own host, so a
+ * repository with a host of its own is listed in that host's sitemap and left
+ * out of the registry's — its pages' addresses are on its host, and the
+ * /r/{path} copies of them are duplicates a crawler should not be sent to.
  */
 class SitemapController extends Controller
 {
@@ -33,9 +39,9 @@ class SitemapController extends Controller
      */
     private const MAX_URLS = 10000;
 
-    public function sitemap(): Response
+    public function sitemap(Request $request): Response
     {
-        $urls = $this->enabled() ? $this->urls() : [];
+        $urls = $this->enabled() ? $this->urls(Repository::forHost($request->getHost())) : [];
 
         $xml = ['<?xml version="1.0" encoding="UTF-8"?>'];
         $xml[] = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
@@ -58,11 +64,16 @@ class SitemapController extends Controller
             // A crawler is not a visitor: an hour of staleness costs nothing
             // and spares the registry a full scan per crawl.
             'Cache-Control' => 'public, max-age=3600',
+            // One path, a different document per host; anything shared that
+            // stores it must key it by the host it was asked for.
+            'Vary' => 'Host',
         ]);
     }
 
-    public function robots(): Response
+    public function robots(Request $request): Response
     {
+        $root = (Repository::forHost($request->getHost()) ?? Repository::default())->pageRootUrl();
+
         $lines = $this->enabled()
             ? [
                 'User-agent: *',
@@ -84,7 +95,7 @@ class SitemapController extends Controller
                 'Disallow: /r/*/p/*/*/download',
                 'Allow: /',
                 '',
-                'Sitemap: '.Repository::default()->pageRootUrl().'/sitemap.xml',
+                'Sitemap: '.$root.'/sitemap.xml',
             ]
             : [
                 'User-agent: *',
@@ -94,6 +105,7 @@ class SitemapController extends Controller
         return ResponseFactory::make(implode("\n", $lines)."\n", 200, [
             'Content-Type' => 'text/plain; charset=UTF-8',
             'Cache-Control' => 'public, max-age=3600',
+            'Vary' => 'Host',
         ]);
     }
 
@@ -103,8 +115,9 @@ class SitemapController extends Controller
     }
 
     /**
-     * Every page this registry publishes: the repositories with a landing
-     * page, and the packages with one.
+     * Every page this host publishes: the repositories with a landing page,
+     * and the packages with one — at a repository's own host, that
+     * repository's alone; anywhere else, every repository without a host.
      *
      * A package in a private repository is listed too, and deliberately: its
      * page exists, says so, and is where somebody asks for access. What it
@@ -112,11 +125,15 @@ class SitemapController extends Controller
      *
      * @return list<array{loc: string, lastmod: ?string}>
      */
-    private function urls(): array
+    private function urls(?Repository $host): array
     {
         $urls = [];
 
-        foreach (Repository::query()->where('page_enabled', true)->get() as $repository) {
+        $listed = fn ($query) => $host instanceof Repository
+            ? $query->whereKey($host->getKey())
+            : $query->whereNull('host');
+
+        foreach ($listed(Repository::query()->where('page_enabled', true))->get() as $repository) {
             $urls[] = ['loc' => $repository->pageUrl(), 'lastmod' => $repository->updated_at?->toAtomString()];
         }
 
@@ -125,7 +142,8 @@ class SitemapController extends Controller
             // Every repository serving the package rather than the one it
             // lives in: a package added to two repositories has a page under
             // each mount, and each is a distinct URL a crawler can reach.
-            ->with('repositories')
+            ->with(['repositories' => $listed])
+            ->whereHas('repositories', $listed)
             ->orderBy('id')
             // Chunked because this is one query over a table that is allowed
             // to be enormous, answered for an anonymous request.

@@ -99,6 +99,29 @@ class RepositoryForm
                     ->helperText(fn (?Repository $record): string => $record?->isDefault()
                         ? 'This is the default repository, answering at the registry root.'
                         : 'The repository is served at this path, e.g. /r/internal/packages.json.'),
+                TextInput::make('host')
+                    ->label('Own host')
+                    ->prefix('https://')
+                    ->placeholder(fn (?Repository $record): string => $record?->isDefault()
+                        ? 'None — the default repository is the registry\'s own host'
+                        : 'composer.example.com')
+                    // The default repository already answers at the
+                    // registry's root; a second root for it would be the same
+                    // registry under two names.
+                    ->disabled(fn (?Repository $record): bool => (bool) $record?->isDefault())
+                    ->maxLength(253)
+                    ->regex('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/')
+                    ->validationMessages([
+                        'regex' => 'A lowercase hostname only — no scheme, port or path.',
+                        'not_in' => 'That is the registry\'s own host, which the default repository answers at.',
+                    ])
+                    ->notIn(fn (): array => array_filter([Repository::registryHost()]))
+                    // whereNotNull, because a blank host reaches validation as
+                    // null and the rule would otherwise count every other
+                    // repository that has none — refusing to save a repository
+                    // with the field left empty.
+                    ->unique(ignoreRecord: true, modifyRuleUsing: fn (Unique $rule): Unique => $rule->whereNotNull('host'))
+                    ->helperText('Optional. A host of this repository\'s own, such as composer.example.com: it is served at that host\'s root as well as at its URL path, and install commands use it. Point the host\'s DNS at this registry and add it as a domain wherever TLS is terminated first — see docs/deployment.md.'),
                 Toggle::make('public')
                     ->label('Public')
                     ->helperText('Public repositories are readable without a token. Private ones require an access token that grants them.'),
