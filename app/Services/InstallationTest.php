@@ -102,7 +102,7 @@ class InstallationTest
                 && $this->dist($release, $new->token->composerUsername(), $new->plainText);
 
             if ($passed) {
-                $this->line("Installation test passed: {$package->name} {$release['version']} installs from {$root}.", 'done');
+                $this->line("Installation test passed: {$package->name} {$release['version']} — metadata, authentication and archive checks passed at {$root}.", 'done');
             }
         } catch (Throwable $exception) {
             $passed = false;
@@ -212,6 +212,7 @@ class InstallationTest
      */
     private function metadata(Package $package, string $root, string $template, ?string $requested, string $username, string $password): ?array
     {
+        $this->line('Reading package details', 'request');
         $versions = $this->versionsFrom($package->name, $root, $template, $username, $password);
 
         if ($versions === null) {
@@ -246,7 +247,7 @@ class InstallationTest
 
         // A bare `composer require` only takes stable releases, so a pick that
         // is not one says what a project has to require instead.
-        $constraint = $requested === null ? $this->prereleaseConstraint((string) $release['version']) : null;
+        $constraint = $requested === null ? self::prereleaseConstraint((string) $release['version']) : null;
 
         $this->line("  Picked {$package->name} {$release['version']}".match (true) {
             $requested === null && str_starts_with((string) $release['version'], 'dev-') => ' — no tagged release yet, so a project needs `:'.$release['version'].'` or minimum-stability dev to require it',
@@ -301,6 +302,7 @@ class InstallationTest
      */
     private function dist(array $release, string $username, string $password): bool
     {
+        $this->line('Downloading the package', 'request');
         $dist = is_array($release['dist'] ?? null) ? $release['dist'] : [];
         $url = (string) ($dist['url'] ?? '');
 
@@ -326,6 +328,7 @@ class InstallationTest
                 : $this->hintFor('dist', $response));
         }
 
+        $this->line('Verifying the download', 'request');
         $body = $response->body();
         $checks = [];
 
@@ -554,7 +557,7 @@ class InstallationTest
      * stability, as in `^0.1@alpha` for 0.1.0-alpha11. Null for a stable
      * release or a branch, which need nothing of the kind.
      */
-    private function prereleaseConstraint(string $version): ?string
+    public static function prereleaseConstraint(string $version): ?string
     {
         try {
             $stability = VersionParser::parseStability($version);

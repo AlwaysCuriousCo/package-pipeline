@@ -5,12 +5,14 @@ namespace App\Filament\Pages;
 use App\Filament\Concerns\RunsInstallationTests;
 use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Filament\Resources\Packages\PackageResource;
+use App\Filament\Resources\Packages\Schemas\PackageInfolist;
 use App\Filament\Resources\Sources\Actions\ConnectGitHubAction;
 use App\Models\Download;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
 use App\Services\InstallationTest;
+use App\Services\InstallationTestStages;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
@@ -22,6 +24,9 @@ use Filament\Schemas\Components\Wizard;
 use Filament\Schemas\Components\Wizard\Step;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
+use Livewire\Attributes\Locked;
 
 /**
  * The first run on one page: connect the GitHub account packages live in,
@@ -37,6 +42,7 @@ use Filament\Support\Icons\Heroicon;
  * wizard's Next button: the page then opens on whatever step is now true.
  *
  * @property-read Schema $importForm The inline step-2 schema resolved by Filament.
+ * @property-read Schema $installInstructions The reused package install card.
  */
 class GetStarted extends Page
 {
@@ -63,6 +69,20 @@ class GetStarted extends Page
      */
     public ?bool $passed = null;
 
+    #[Locked]
+    public bool $testStarted = false;
+
+    #[Locked]
+    public string $testVisit;
+
+    public bool $installationRunning = false;
+
+    public ?int $installRepository = null;
+
+    public ?string $plainTextToken = null;
+
+    public ?string $tokenUsername = null;
+
     /** @var array<string, mixed> */
     public array $importData = [];
 
@@ -74,6 +94,7 @@ class GetStarted extends Page
 
     public function mount(): void
     {
+        $this->testVisit = (string) Str::uuid();
         $this->mountedStep = static::currentStep();
         $this->syncWaitStartedAt = now()->timestamp;
 
@@ -106,7 +127,7 @@ class GetStarted extends Page
 
     public static function getNavigationBadge(): ?string
     {
-        return static::currentStep().'/'.count(static::progress());
+        return static::complete() ? 'Complete' : static::currentStep().'/'.count(static::progress());
     }
 
     /**
@@ -195,17 +216,22 @@ class GetStarted extends Page
                     ->key('test')
                     ->icon(Heroicon::OutlinedCommandLine)
                     ->schema([
-                        Text::make(fn (): string => 'Installs '.(static::installablePackage()->name ?? 'a package').' the way Composer would, through this registry\'s public address, with a token that exists for this run only, and shows each request.'),
-                        View::make('filament.terminal')
+                        View::make('filament.pages.get-started.test')
                             ->viewData(fn (): array => [
+                                'autoRun' => $this->mountedStep === 4 && ! $this->testStarted,
+                                'status' => $this->installationStatus(),
                                 'lines' => $this->installationTranscript,
-                                'stream' => 'installation-test',
-                                'idle' => 'Run test makes the requests Composer makes, and shows each one here as it happens.',
                             ]),
-                        Actions::make([$this->runTestAction()])->key('actions'),
                         View::make('filament.pages.get-started.done')
                             ->viewData(fn (): array => ['package' => static::installablePackage()])
-                            ->visible(fn (): bool => $this->passed ?? InstallationTest::hasPassed()),
+                            ->visible(fn (): bool => $this->passed === true),
+                        EmbeddedSchema::make('installInstructions')
+                            ->visible(fn (): bool => $this->passed === true),
+                        Actions::make([
+                            $this->runTestAction(),
+                            ImportFromSourceAction::make()->label('Add more packages')->visible(fn (): bool => $this->passed === true && auth()->user()?->can('create', Package::class)),
+                            Action::make('finish')->label('Finish')->color('primary')->url(Dashboard::getUrl())->visible(fn (): bool => $this->passed === true),
+                        ])->key('actions'),
                     ]),
             ])
                 ->key('onboarding')
@@ -222,6 +248,59 @@ class GetStarted extends Page
         return $schema
             ->statePath('importData')
             ->components($this->mountedStep === 2 ? ImportFromSourceAction::pickerFields(inline: true) : []);
+    }
+
+    public function installInstructions(Schema $schema): Schema
+    {
+        return $schema->record(static::installablePackage())
+            ->components($this->passed === true ? [PackageInfolist::installSection()] : []);
+    }
+
+    public function autoRunTest(): void
+    {
+        $this->runOnboardingTest();
+    }
+
+    public function retryTest(): void
+    {
+        if ($this->passed === false) {
+            $this->runOnboardingTest(retry: true);
+        }
+    }
+
+    private function runOnboardingTest(bool $retry = false): void
+    {
+        if ($this->mountedStep !== 4 || ($package = static::installablePackage()) === null) {
+            return;
+        }
+        $key = 'onboarding-test:'.auth()->id().':'.$this->testVisit;
+        $lock = Cache::lock($key.':running', InstallationTest::TIMEOUT + 30);
+        if (! $lock->get()) {
+            return;
+        }
+        try {
+            if (! $retry && ($this->testStarted || ! Cache::add($key.':started', true, now()->addHour()))) {
+                return;
+            }
+            $this->testStarted = true;
+            $this->installationRunning = true;
+            $this->installRepository = $package->repository_id;
+            $this->passed = $this->runInstallationTest($package);
+        } finally {
+            $this->installationRunning = false;
+            $lock->release();
+        }
+    }
+
+    /** @return array{stages: list<array{label: string, state: string}>, passed: ?bool, failure: ?string, hint: ?string} */
+    public function installationStatus(): array
+    {
+        return InstallationTestStages::fromTranscript($this->installationTranscript, static::installablePackage()?->composerRepository->public ?? false);
+    }
+
+    protected function installationTestLineReported(): void
+    {
+        $this->stream(name: 'installation-status', replace: true, content: view('filament.pages.get-started.test-status', ['status' => $this->installationStatus()])->render());
     }
 
     /**
@@ -312,16 +391,11 @@ class GetStarted extends Page
     private function runTestAction(): Action
     {
         return Action::make('runTest')
-            ->label('Run test')
-            ->icon(Heroicon::OutlinedPlay)
-            ->visible(fn (): bool => static::installablePackage() !== null)
-            ->action(function (): void {
-                $package = static::installablePackage();
-
-                if ($package !== null) {
-                    $this->passed = $this->runInstallationTest($package);
-                }
-            });
+            ->label('Run again')
+            ->icon(Heroicon::OutlinedArrowPath)
+            ->color('gray')
+            ->visible(fn (): bool => $this->passed === false && ! $this->installationRunning)
+            ->action(fn () => $this->retryTest());
     }
 
     /**

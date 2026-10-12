@@ -159,7 +159,7 @@ class InstallationTestTest extends TestCase
         // The newest stable, as a bare composer require picks — not the beta.
         $this->assertStringContainsString('acme/widgets v1.2.0', $transcript);
         $this->assertStringContainsString('shasum matches · zip opens (2 files) ✓', $transcript);
-        $this->assertStringContainsString('Installation test passed: acme/widgets v1.2.0 installs from '.self::ROOT, $transcript);
+        $this->assertStringContainsString('Installation test passed: acme/widgets v1.2.0 — metadata, authentication and archive checks passed at '.self::ROOT, $transcript);
         $this->assertSame('done', end($this->lines)[1]);
 
         // Requests use the issued token; the transcript keeps neither identity nor token suffix.

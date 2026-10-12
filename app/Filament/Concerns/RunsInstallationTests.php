@@ -34,6 +34,7 @@ trait RunsInstallationTests
 
         return app(InstallationTest::class)->run($package, $user, $version, function (string $text, string $tone): void {
             $this->installationTranscript[] = ['text' => $text, 'tone' => $tone];
+            $this->installationTestLineReported();
 
             $this->stream(
                 content: view('filament.terminal-line', ['text' => $text, 'tone' => $tone])->render(),
@@ -41,4 +42,7 @@ trait RunsInstallationTests
             );
         });
     }
+
+    /** Pages can stream a summary alongside the existing transcript. */
+    protected function installationTestLineReported(): void {}
 }

@@ -554,7 +554,7 @@ class GetStartedTest extends TestCase
 
         try {
             $page = Livewire::test(GetStarted::class)
-                ->callAction(TestAction::make('runTest')->schemaComponent('onboarding.test.actions'));
+                ->call('autoRunTest');
         } finally {
             $streamed = (string) ob_get_clean();
             $streamed = ob_get_clean().$streamed;
@@ -564,7 +564,7 @@ class GetStartedTest extends TestCase
         $this->assertStringContainsString('Installation test passed', $streamed);
 
         $page->assertSet('passed', true)
-            ->assertSee('Your registry works.');
+            ->assertSee('Your registry is ready');
 
         $this->assertSame(0, Token::query()->count());
     }
