@@ -24,6 +24,7 @@ use Filament\Schemas\Components\Wizard;
 use Filament\Schemas\Components\Wizard\Step;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Locked;
@@ -41,6 +42,8 @@ use Livewire\Attributes\Locked;
  * done. Moving on, likewise, is a fresh visit to the page rather than the
  * wizard's Next button: the page then opens on whatever step is now true.
  *
+ * @phpstan-type PackageSyncStatus array{package: Package, state: string, hasBatch: bool, running: bool, discovering: bool, imported: int, total: int, failed: int, progress: int, versions: int, error: string, awaitingReason: bool}
+ *
  * @property-read Schema $importForm The inline step-2 schema resolved by Filament.
  * @property-read Schema $installInstructions The reused package install card.
  */
@@ -55,6 +58,8 @@ class GetStarted extends Page
      * honours it.
      */
     public const RETURN_KEY = 'onboarding.return';
+
+    public const PACKAGES_KEY = 'onboarding.packages';
 
     protected static ?string $slug = 'get-started';
 
@@ -146,8 +151,10 @@ class GetStarted extends Page
     public static function progress(): array
     {
         $connected = Source::query()->whereNotNull('connected_at')->exists();
-        $imported = Package::query()->exists();
-        $synced = static::installablePackage() !== null;
+        $statuses = self::packageStatuses();
+        $imported = $statuses !== [];
+        $synced = $imported && ! in_array('syncing', array_column($statuses, 'state'), true)
+            && in_array('ready', array_column($statuses, 'state'), true);
 
         return [
             ['title' => 'Connect GitHub', 'done' => $connected],
@@ -176,7 +183,7 @@ class GetStarted extends Page
      */
     public static function installablePackage(): ?Package
     {
-        return Package::query()->whereHas('versions')->oldest('id')->first();
+        return self::onboardingPackages()->first(fn (Package $package): bool => $package->versions_count > 0);
     }
 
     public function content(Schema $schema): Schema
@@ -209,7 +216,8 @@ class GetStarted extends Page
                             ->viewData(fn (): array => [
                                 'mountedStep' => $this->mountedStep,
                                 'status' => $this->syncStatus(),
-                                'waiting' => static::currentStep() === 3,
+                                'allSettled' => ! in_array('syncing', array_column($this->syncStatus(), 'state'), true)
+                                    && ! in_array(true, array_column($this->syncStatus(), 'awaitingReason'), true),
                                 'expired' => $this->syncWaitExpired,
                             ]),
                     ]),
@@ -220,11 +228,12 @@ class GetStarted extends Page
                         View::make('filament.pages.get-started.test')
                             ->viewData(fn (): array => [
                                 'autoRun' => $this->mountedStep === 4 && ! $this->testStarted,
+                                'package' => static::installablePackage(),
                                 'status' => $this->installationStatus(),
                                 'lines' => $this->installationTranscript,
                             ]),
                         View::make('filament.pages.get-started.done')
-                            ->viewData(fn (): array => ['package' => static::installablePackage()])
+                            ->viewData(fn (): array => ['package' => static::installablePackage(), 'packages' => $this->syncStatus()])
                             ->visible(fn (): bool => $this->passed === true),
                         EmbeddedSchema::make('installInstructions')
                             ->visible(fn (): bool => $this->passed === true),
@@ -304,32 +313,72 @@ class GetStarted extends Page
         $this->stream(name: 'installation-status', replace: true, content: view('filament.pages.get-started.test-status', ['status' => $this->installationStatus()])->render());
     }
 
-    /**
-     * The same batch counters the package page uses, excluding discovery
-     * from the number of imported versions.
-     *
-     * @return array{package: ?Package, hasBatch: bool, running: bool, discovering: bool, imported: int, total: int, failed: int, progress: int, versions: int}
-     */
-    public function syncStatus(): array
+    /** @return Collection<int, Package> */
+    private static function onboardingPackages(): Collection
     {
-        $package = static::installablePackage() ?? Package::query()->oldest('id')->first();
-        $batch = $package?->syncBatch();
+        return Package::query()
+            ->when(session()->has(self::PACKAGES_KEY), fn ($query) => $query->whereIn('id', session(self::PACKAGES_KEY, [])))
+            ->withCount('versions')->oldest('id')->get();
+    }
+
+    /** @return list<PackageSyncStatus> */
+    private static function packageStatuses(): array
+    {
+        return self::onboardingPackages()->map(fn (Package $package): array => self::packageStatus($package))->all();
+    }
+
+    /** @return PackageSyncStatus */
+    private static function packageStatus(Package $package): array
+    {
+        $batch = $package->syncBatch();
+        $running = $package->syncRunning();
+        $versions = $package->versions_count ?? $package->versions()->count();
+        $error = (string) $package->sync_error;
+        $state = match (true) {
+            $running => 'syncing',
+            $versions > 0 => 'ready',
+            str_starts_with($error, 'No installable versions found:') => 'not a package',
+            filled($error), $batch !== null => 'failed',
+            default => 'syncing',
+        };
 
         return [
             'package' => $package,
+            'state' => $state,
             'hasBatch' => $batch !== null,
-            'running' => $batch !== null && $package->syncRunning(),
+            'running' => $running,
             'discovering' => $batch !== null && $batch->totalJobs <= 1,
             'imported' => $batch === null ? 0 : max(0, $batch->processedJobs() - 1),
             'total' => $batch === null ? 0 : max(0, $batch->totalJobs - 1),
             'failed' => $batch === null ? 0 : $batch->failedJobs,
             'progress' => $batch?->progress() ?? 0,
-            'versions' => $package?->versions()->count() ?? 0,
+            'versions' => $versions,
+            'error' => Str::limit($error ?: 'No versions are ready to install yet. Open its page to sync again.', 180),
+            // A batch can finish a moment before its last job records why
+            // nothing was imported; the step keeps polling until it has.
+            'awaitingReason' => $state === 'failed' && $error === '',
         ];
     }
 
+    /** @return list<PackageSyncStatus> */
+    public function syncStatus(): array
+    {
+        return self::packageStatuses();
+    }
+
+    public function removePackage(int $id): void
+    {
+        abort_unless($this->mountedStep === 3 && in_array($id, session(self::PACKAGES_KEY, []), true), 403);
+        $package = Package::query()->findOrFail($id);
+        $this->authorize('delete', $package);
+        abort_unless(in_array(self::packageStatus($package)['state'], ['not a package', 'failed'], true), 403);
+        $package->delete();
+        session()->put(self::PACKAGES_KEY, array_values(array_diff(session(self::PACKAGES_KEY, []), [$id])));
+        $this->checkSync();
+    }
+
     /**
-     * Polled by the sync step while it waits: the first versions mean the
+     * Polled only by the sync step: every import must settle before the
      * test can run, so the page opens again on it.
      */
     public function checkSync(): void
@@ -382,7 +431,11 @@ class GetStarted extends Page
                 if ($source->usesInstallation()) {
                     $data['create_webhook'] = true;
                 }
-                ImportFromSourceAction::import($data);
+                [$created] = ImportFromSourceAction::import($data);
+                session()->put(self::PACKAGES_KEY, array_values(array_unique([
+                    ...session(self::PACKAGES_KEY, []),
+                    ...array_map(fn (Package $package): int => $package->id, $created),
+                ])));
                 if (static::currentStep() > 2) {
                     $this->redirect(static::getUrl());
                 }

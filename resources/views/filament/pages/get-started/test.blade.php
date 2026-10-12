@@ -1,4 +1,7 @@
 <div @if ($autoRun) wire:init="autoRunTest" @endif x-data="{ showDetails: false }">
+    @if ($package !== null)
+        <p class="mb-3 text-sm">Testing {{ $package->name }}, the first package with a version. One package is enough: the test checks the registry's sign-in, package details and downloads.</p>
+    @endif
     <p class="mb-3 text-sm">Last, the registry installs one package the way your projects will: through its public address, checking access, package details and the download. It uses a temporary token (a password for this test only), then deletes it.</p>
     <div wire:stream="installation-status">
         @include('filament.pages.get-started.test-status', ['status' => $status])

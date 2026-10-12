@@ -101,6 +101,8 @@ class ImportFromSourceAction
         $projects = $inline
             ? CheckboxList::make('projects')
                 ->options(fn (Get $get): array => self::inlineProjectOptions($get('source_id')))
+                ->descriptions(fn (Get $get): array => self::inlineProjectDescriptions($get('source_id')))
+                ->live()
                 ->searchable()
             : Select::make('projects')
                 ->multiple()
@@ -120,6 +122,10 @@ class ImportFromSourceAction
                 ->label($inline ? 'Repositories' : 'Projects')
                 ->required()
                 ->helperText($inline ? 'Libraries with a root composer.json are pre-ticked; applications, forks and repositories already imported are not. Change the selection to match the packages you want.' : 'Repositories with a composer.json come first, and those that are packages rather than applications are already ticked. Type to search; projects already onboarded are skipped.'),
+            ...($inline ? [Text::make(fn (Get $get): string => implode(' ', array_map(
+                fn (string $name): string => "{$name} has no composer.json with a package name, so Composer can't install it. You can import it anyway.",
+                self::selectedNonPackages($get('source_id'), $get('projects')),
+            )))->color('warning')->visible(fn (Get $get): bool => self::selectedNonPackages($get('source_id'), $get('projects')) !== [])] : []),
             ...($inline ? [Text::make('No repositories were found for this source. Check that the GitHub App has access to the repositories you want, then return here. If nothing is pre-ticked, select a repository that contains a package rather than an application.')
                 ->visible(fn (Get $get): bool => filled($get('source_id')) && self::inlineProjectOptions($get('source_id')) === [])] : []),
             ...($inline ? [Text::make('No likely PHP library packages were found. You can select a repository manually if it contains a package; applications and forks are not selected automatically.')
@@ -156,6 +162,56 @@ class ImportFromSourceAction
         return self::memo()->inline['source:'.$sourceId] ??= self::readInlineProjectOptions($sourceId);
     }
 
+    /** @return array<string, string> */
+    private static function inlineProjectDescriptions(mixed $sourceId): array
+    {
+        $source = Source::query()->find($sourceId);
+        if (! $source instanceof Source) {
+            return [];
+        }
+
+        $options = self::inlineProjectOptions($sourceId);
+        if ($options === []) {
+            return [];
+        }
+        $manifests = self::manifests($source);
+        $imported = Package::query()->whereIn('repository', array_keys($options))->pluck('repository')->all();
+        $descriptions = [];
+        foreach ($options as $webUrl => $label) {
+            $manifest = $manifests[$webUrl] ?? null;
+            $descriptions[$webUrl] = match (true) {
+                in_array($webUrl, $imported, true) => 'Already imported',
+                $manifest === null || blank($manifest['name']) => 'Not a package: no composer.json with a name',
+                $manifest['fork'] => 'Fork',
+                $manifest['type'] === 'project' => 'Application (composer.json type is project)',
+                default => 'Library: composer.json names '.$manifest['name'],
+            };
+        }
+
+        return $descriptions;
+    }
+
+    /** @return list<string> */
+    private static function selectedNonPackages(mixed $sourceId, mixed $selected): array
+    {
+        $source = Source::query()->find($sourceId);
+        if (! $source instanceof Source) {
+            return [];
+        }
+
+        $options = self::inlineProjectOptions($sourceId);
+        if ($options === []) {
+            return [];
+        }
+        $manifests = self::manifests($source);
+
+        return array_values(array_filter(
+            array_intersect_key($options, array_flip(is_array($selected) ? $selected : [])),
+            fn (string $label, string $webUrl): bool => blank($manifests[$webUrl]['name'] ?? null),
+            ARRAY_FILTER_USE_BOTH,
+        ));
+    }
+
     private static function memo(): SourceImportOptions
     {
         $request = request();
@@ -172,7 +228,7 @@ class ImportFromSourceAction
     private static function readInlineProjectOptions(mixed $sourceId): array
     {
         $options = [];
-        foreach (self::projectOptions($sourceId) as $key => $value) {
+        foreach (self::projectOptions($sourceId, inline: true) as $key => $value) {
             if (is_array($value)) {
                 $options += $value;
             } else {
@@ -267,7 +323,7 @@ class ImportFromSourceAction
      *
      * @return array<string, string|array<string, string>>
      */
-    private static function projectOptions(mixed $sourceId, ?string $search = null): array
+    private static function projectOptions(mixed $sourceId, ?string $search = null, bool $inline = false): array
     {
         $source = Source::query()->find($sourceId);
 
@@ -289,7 +345,7 @@ class ImportFromSourceAction
         }
 
         $options = collect($projects)->mapWithKeys(fn (Project $project): array => [
-            $project->webUrl => filled($name = $manifests[$project->webUrl]['name'] ?? null)
+            $project->webUrl => ! $inline && filled($name = $manifests[$project->webUrl]['name'] ?? null)
                 ? "{$name} ({$project->fullName})"
                 : $project->fullName,
         ]);

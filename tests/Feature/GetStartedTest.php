@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Filament\Pages\GetStarted;
+use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Jobs\SyncPackageJob;
 use App\Models\Download;
 use App\Models\Package;
@@ -245,7 +246,7 @@ class GetStartedTest extends TestCase
             ->assertSeeHtml('aria-label="Time waiting for sync"');
 
         $dom = new \DOMDocument;
-        @$dom->loadHTML($page->html());
+        @$dom->loadHTML('<?xml encoding="UTF-8">'.$page->html());
         $this->assertCount(1, (new \DOMXPath($dom))->query('//*[local-name()="svg" and @data-role="sync-spinner"]'));
         $clock = (new \DOMXPath($dom))->query('//span[@data-role="sync-elapsed"]')->item(0);
         $this->assertInstanceOf(\DOMElement::class, $clock);
@@ -254,7 +255,7 @@ class GetStartedTest extends TestCase
         $this->assertStringContainsString('$wire.syncWaitStartedAt', $clock->getAttribute('x-data'));
         $component = $page->instance();
         $this->assertInstanceOf(GetStarted::class, $component);
-        $this->assertFalse($component->syncStatus()['hasBatch']);
+        $this->assertFalse($component->syncStatus()[0]['hasBatch']);
     }
 
     public function test_the_discovering_stage_names_the_package(): void
@@ -266,7 +267,7 @@ class GetStartedTest extends TestCase
             ->assertDontSeeHtml('role="progressbar"');
         $component = $page->instance();
         $this->assertInstanceOf(GetStarted::class, $component);
-        $this->assertTrue($component->syncStatus()['discovering']);
+        $this->assertTrue($component->syncStatus()[0]['discovering']);
     }
 
     public function test_the_importing_stage_excludes_discovery_from_counts_and_bar_width(): void
@@ -276,10 +277,10 @@ class GetStartedTest extends TestCase
         $page = Livewire::test(GetStarted::class)
             ->assertSeeText('Importing versions: 1 of 4 · building an archive for each')
             ->assertSeeHtml('aria-valuemax="4" aria-valuenow="1"')
-            ->assertSeeHtml('style="--w: 25%"');
+            ->assertSeeHtml('max="4" value="1"');
         $component = $page->instance();
         $this->assertInstanceOf(GetStarted::class, $component);
-        $status = $component->syncStatus();
+        $status = $component->syncStatus()[0];
         $this->assertSame(1, $status['imported']);
         $this->assertSame(4, $status['total']);
         $this->assertSame(40, $status['progress']);
@@ -290,7 +291,7 @@ class GetStartedTest extends TestCase
         $package = $this->syncingPackage();
         $this->syncBatch($package, ['failed_jobs' => 1]);
         Livewire::test(GetStarted::class)
-            ->assertSeeText("1 version couldn't be imported; the others are fine.", false)
+            ->assertSeeText("1 version couldn't be imported; the remaining versions are still syncing.", false)
             ->assertSeeText('Importing versions: 1 of 4');
     }
 
@@ -299,7 +300,7 @@ class GetStartedTest extends TestCase
         $package = $this->syncingPackage();
         $package->forceFill(['sync_error' => 'GitHub refused access'])->save();
         Livewire::test(GetStarted::class)
-            ->assertSeeText("{$package->name} did not sync: GitHub refused access")
+            ->assertSeeText('Failed: GitHub refused access')
             ->assertDontSeeHtml('data-role="sync-spinner"')
             ->assertSeeHtml(e(GetStarted::packageUrl($package)));
     }
@@ -309,7 +310,7 @@ class GetStartedTest extends TestCase
         $package = $this->syncingPackage();
         $page = Livewire::test(GetStarted::class);
         PackageVersion::factory()->for($package)->count(2)->create();
-        $page->call('$refresh')->assertSeeText('Ready: 2 versions to install')
+        $page->call('$refresh')->assertSeeText('Ready (2 versions)')
             ->assertSeeHtml('wire:poll.3s.visible="checkSync"')
             ->assertNoRedirect();
         $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
@@ -426,8 +427,50 @@ class GetStartedTest extends TestCase
             ->assertActionDoesNotExist(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
             ->assertSchemaComponentExists('projects', 'importForm', fn (CheckboxList $field): bool => count($field->getOptions()) === 3);
         $dom = new \DOMDocument;
-        @$dom->loadHTML($page->html());
-        $this->assertCount(3, (new \DOMXPath($dom))->query('//input[@type="checkbox" and contains(@*[name()="wire:model"], "importData.projects")]'));
+        @$dom->loadHTML('<?xml encoding="UTF-8">'.$page->html());
+        $this->assertCount(3, (new \DOMXPath($dom))->query('//input[@type="checkbox" and contains(@*[starts-with(name(), "wire:model")], "importData.projects")]'));
+    }
+
+    public function test_picker_descriptions_explain_library_application_and_fork_candidacy(): void
+    {
+        $this->inlineSource();
+        Livewire::test(GetStarted::class)
+            ->assertSet('importData.projects', ['https://github.com/acme/widgets'])
+            ->assertSeeText('Library: composer.json names acme/widgets')
+            ->assertSeeText('Application (composer.json type is project)')
+            ->assertSeeText('Fork')
+            ->assertSchemaComponentExists('projects', 'importForm', fn (CheckboxList $field): bool => $field->getDescriptions() === [
+                'https://github.com/acme/fork' => 'Fork',
+                'https://github.com/acme/site' => 'Application (composer.json type is project)',
+                'https://github.com/acme/widgets' => 'Library: composer.json names acme/widgets',
+            ] && $field->getOptions()['https://github.com/acme/widgets'] === 'acme/widgets');
+    }
+
+    public function test_picker_descriptions_identify_non_packages_and_already_imported_repositories(): void
+    {
+        Http::fake([
+            'api.github.com/orgs/acme/repos*' => Http::response([
+                ['id' => 1, 'full_name' => 'acme/docs', 'html_url' => 'https://github.com/acme/docs'],
+                ['id' => 2, 'full_name' => 'acme/unnamed', 'html_url' => 'https://github.com/acme/unnamed'],
+                ['id' => 3, 'full_name' => 'acme/widgets', 'html_url' => 'https://github.com/acme/widgets'],
+            ]),
+            'api.github.com/repos/acme/docs/contents/composer.json' => Http::response([], 404),
+            'api.github.com/repos/acme/unnamed/contents/composer.json' => Http::response(json_encode(['type' => 'library'])),
+            'api.github.com/repos/acme/widgets/contents/composer.json' => Http::response(json_encode(['name' => 'acme/widgets'])),
+        ]);
+        $source = Source::factory()->withToken()->create(['account' => 'acme']);
+        // The picker can stay open while another import lands.
+        $page = Livewire::test(GetStarted::class);
+        Package::factory()->for($source)->create(['repository' => 'https://github.com/acme/widgets']);
+        $page->set('importData.projects', [])
+            ->assertSeeText('Not a package: no composer.json with a name')
+            ->assertSeeText('Already imported')
+            ->assertSchemaComponentExists('projects', 'importForm', fn (CheckboxList $field): bool => $field->getDescriptions() === [
+                'https://github.com/acme/unnamed' => 'Not a package: no composer.json with a name',
+                'https://github.com/acme/widgets' => 'Already imported',
+                'https://github.com/acme/docs' => 'Not a package: no composer.json with a name',
+            ]);
+        $this->assertSame([], ImportFromSourceAction::defaultData($source->id)['projects']);
     }
 
     public function test_inline_options_are_memoised_per_request_and_read_again_on_refresh(): void
@@ -589,6 +632,162 @@ class GetStartedTest extends TestCase
         unlink($path);
 
         return $bytes;
+    }
+
+    public function test_the_non_package_warning_follows_the_selection_and_import_stays_allowed(): void
+    {
+        Queue::fake();
+        Http::fake([
+            'api.github.com/orgs/acme/repos*' => Http::response([
+                ['id' => 1, 'full_name' => 'acme/docs', 'html_url' => 'https://github.com/acme/docs'],
+                ['id' => 2, 'full_name' => 'acme/unnamed', 'html_url' => 'https://github.com/acme/unnamed'],
+            ]),
+            'api.github.com/repos/acme/docs/contents/composer.json' => Http::response([], 404),
+            'api.github.com/repos/acme/unnamed/contents/composer.json' => Http::response(json_encode(['type' => 'library'])),
+        ]);
+        Source::factory()->withToken()->create(['account' => 'acme']);
+        $warning = "acme/docs has no composer.json with a package name, so Composer can't install it. You can import it anyway.";
+        Livewire::test(GetStarted::class)
+            ->assertDontSeeText($warning)
+            ->set('importData.projects', ['https://github.com/acme/docs', 'https://github.com/acme/unnamed'])
+            ->assertSeeText($warning)
+            ->assertSeeText('acme/unnamed has no composer.json with a package name')
+            ->set('importData.projects', [])
+            ->assertDontSeeText($warning)
+            ->set('importData.projects', ['https://github.com/acme/docs'])
+            ->set('importData.create_webhook', false)
+            ->callAction(TestAction::make('importPackages')->schemaComponent('onboarding.import.actions'))
+            ->assertHasNoErrors()->assertRedirect(GetStarted::getUrl());
+        $this->assertSame([Package::query()->sole()->id], session(GetStarted::PACKAGES_KEY));
+        Queue::assertPushed(SyncPackageJob::class);
+    }
+
+    public function test_every_package_has_its_own_sync_status_and_waits_for_the_last_one(): void
+    {
+        $source = Source::factory()->create();
+        $ready = Package::factory()->for($source)->create(['name' => 'acme/ready']);
+        PackageVersion::factory()->for($ready)->count(2)->create();
+        $pending = Package::factory()->for($source)->create(['name' => 'acme/pending']);
+        $this->syncBatch($pending);
+        // A version arriving before its batch finishes is still syncing.
+        PackageVersion::factory()->for($pending)->create();
+        Package::factory()->for($source)->create(['name' => 'acme/docs', 'sync_error' => 'No installable versions found: no tag or branch contains a composer.json with a "name".']);
+        Package::factory()->for($source)->create(['name' => 'acme/failed', 'sync_error' => 'GitHub refused access']);
+        $page = Livewire::test(GetStarted::class)->assertSet('mountedStep', 3)
+            ->assertSeeText('acme/ready')->assertSeeText('Ready (2 versions)')
+            ->assertSeeText('acme/pending')->assertSeeText('Importing versions: 1 of 4')
+            ->assertSeeText('acme/docs')->assertSeeText('Not a package: no composer.json with a name')
+            ->assertSeeText('acme/failed')->assertSeeText('Failed: GitHub refused access')
+            ->call('checkSync')->assertNoRedirect();
+        DB::table('job_batches')->where('id', $pending->fresh()->sync_batch_id)
+            ->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp]);
+        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+        $this->assertOpensOn(4);
+    }
+
+    public function test_all_failed_syncs_stay_with_guidance_and_check_again(): void
+    {
+        $package = $this->syncingPackage();
+        $package->update(['sync_error' => 'GitHub refused access']);
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 3)
+            ->assertSeeText('Every sync has finished, but no package is ready to install')
+            ->assertSeeText('Check again')->call('recheckSync')->assertNoRedirect();
+    }
+
+    public function test_a_finished_batch_without_versions_is_failed_instead_of_waiting_forever(): void
+    {
+        $package = $this->syncingPackage();
+        $this->syncBatch($package, ['pending_jobs' => 2, 'failed_jobs' => 2]);
+        Livewire::test(GetStarted::class)->assertSeeText('Failed: No versions are ready to install yet.')
+            ->assertDontSeeHtml('data-role="sync-spinner"')->call('checkSync')->assertNoRedirect();
+    }
+
+    public function test_a_failure_without_its_reason_keeps_polling_until_the_reason_arrives(): void
+    {
+        $package = $this->syncingPackage();
+        session()->put(GetStarted::PACKAGES_KEY, [$package->id]);
+        $this->syncBatch($package, ['pending_jobs' => 0, 'finished_at' => now()->timestamp]);
+
+        $page = Livewire::test(GetStarted::class)
+            ->assertSeeText('Failed: No versions are ready to install yet.')
+            ->assertSeeHtml('wire:poll.3s.visible="checkSync"');
+
+        $package->forceFill(['sync_error' => 'No installable versions found: no tag or branch contains a composer.json with a "name".'])->save();
+
+        $page->call('checkSync')
+            ->assertSeeText('Not a package')
+            ->assertDontSeeHtml('wire:poll.3s.visible="checkSync"');
+    }
+
+    public function test_remove_deletes_only_the_failed_package_imported_by_this_wizard(): void
+    {
+        $source = Source::factory()->create();
+        $ready = Package::factory()->for($source)->create();
+        PackageVersion::factory()->for($ready)->create();
+        $failed = Package::factory()->for($source)->create(['sync_error' => 'GitHub refused access']);
+        $other = Package::factory()->for($source)->create(['sync_error' => 'GitHub refused access']);
+        session()->put(GetStarted::PACKAGES_KEY, [$ready->id, $failed->id]);
+        // Keep the mounted sync step while the ready package finishes.
+        $this->syncBatch($ready);
+        $page = Livewire::test(GetStarted::class)->assertSeeText('Remove')
+            ->assertSeeHtml('wire:confirm="Remove '.e($failed->name).' from this registry?"');
+        $page->call('removePackage', $failed->id)->assertNoRedirect();
+        $this->assertModelMissing($failed);
+        $this->assertModelExists($ready);
+        $this->assertModelExists($other);
+        $this->assertSame([$ready->id], session(GetStarted::PACKAGES_KEY));
+        $page->call('removePackage', $other->id)->assertForbidden();
+    }
+
+    public function test_remove_refuses_a_ready_package_and_a_user_without_delete_permission(): void
+    {
+        $package = $this->syncingPackage();
+        session()->put(GetStarted::PACKAGES_KEY, [$package->id]);
+        $page = Livewire::test(GetStarted::class);
+        PackageVersion::factory()->for($package)->create();
+        $page->call('removePackage', $package->id)->assertForbidden();
+        $package->versions()->delete();
+        $package->update(['sync_error' => 'GitHub refused access']);
+        $user = User::factory()->create();
+        $user->givePermissionTo('ViewAny:Source');
+        $this->actingAs($user);
+        Livewire::test(GetStarted::class)->assertDontSeeText('Remove')
+            ->call('removePackage', $package->id)->assertForbidden();
+        $this->assertModelExists($package);
+    }
+
+    public function test_the_test_step_names_the_first_installable_package(): void
+    {
+        $source = Source::factory()->create();
+        Package::factory()->for($source)->create(['sync_error' => 'GitHub refused access']);
+        $ready = Package::factory()->for($source)->create(['name' => 'acme/widgets']);
+        PackageVersion::factory()->for($ready)->create();
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 4)
+            ->assertSeeText("Testing acme/widgets, the first package with a version. One package is enough: the test checks the registry's sign-in, package details and downloads.", false);
+    }
+
+    public function test_finish_lists_each_imported_package_with_its_status_and_link(): void
+    {
+        $source = Source::factory()->create();
+        $ready = Package::factory()->for($source)->create(['name' => 'acme/widgets']);
+        PackageVersion::factory()->for($ready)->create();
+        $docs = Package::factory()->for($source)->create(['name' => 'acme/docs', 'sync_error' => 'No installable versions found: no tag or branch contains a composer.json with a "name".']);
+        $failed = Package::factory()->for($source)->create(['name' => 'acme/failed', 'sync_error' => 'GitHub refused access']);
+        $other = Package::factory()->for($source)->create(['name' => 'acme/unrelated']);
+        session()->put(GetStarted::PACKAGES_KEY, [$ready->id, $docs->id, $failed->id]);
+        $page = Livewire::test(GetStarted::class)->set('passed', true)->assertSeeText('Your registry is ready');
+        $dom = new \DOMDocument;
+        @$dom->loadHTML('<?xml encoding="UTF-8">'.$page->html());
+        $xpath = new \DOMXPath($dom);
+        $rows = $xpath->query('//ul[@aria-label="Imported packages"]/li');
+        $this->assertCount(3, $rows);
+        foreach ([$ready, $docs, $failed] as $index => $package) {
+            $this->assertStringContainsString($package->name.' → '.['ready', 'not a package', 'failed'][$index], $rows->item($index)->textContent);
+            $link = $rows->item($index)->firstChild;
+            $this->assertInstanceOf(\DOMElement::class, $link);
+            $this->assertSame(GetStarted::packageUrl($package), $link->getAttribute('href'));
+        }
+        $page->assertDontSeeText($other->name);
     }
 
     public function test_the_navigation_offers_it_until_the_registry_has_installed_a_package(): void

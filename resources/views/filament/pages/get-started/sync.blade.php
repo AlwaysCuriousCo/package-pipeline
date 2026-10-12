@@ -1,63 +1,66 @@
-{{-- Keep the poll through readiness/render races until checkSync redirects. --}}
-@php($package = $status['package'])
+{{-- Keep polling through readiness/render races until checkSync redirects. --}}
 <div @if ($mountedStep === 3 && ! $expired) wire:poll.3s.visible="checkSync" @endif class="text-sm">
-    <p>This is the first sync. The registry copies each tagged release from GitHub and packs it into a download Composer can install. This step moves on by itself when the first version is ready.</p>
-    @if ($package === null)
-        <p>Import a package first; its first sync starts as soon as it is imported.</p>
-    @else
-        <div class="mt-3 flex items-center gap-2">
-            @if ($waiting && ! $expired && blank($package->sync_error) && ($status['running'] || ! $status['hasBatch']))
-                <x-filament::loading-indicator class="size-5 shrink-0 text-primary-600" data-role="sync-spinner" aria-hidden="true" />
-            @endif
-            <p role="status">
-                @if ($status['versions'] > 0)
-                    Ready: {{ $status['versions'] }} {{ str('version')->plural($status['versions']) }} to install. This moves on by itself.
-                @elseif ($status['running'] && $status['discovering'])
-                    Asking GitHub for {{ $package->name }}'s tags and branches…
-                @elseif ($status['running'])
-                    Importing versions: {{ $status['imported'] }} of {{ $status['total'] }} · building an archive for each
-                @elseif (! $status['hasBatch'] && blank($package->sync_error))
-                    Waiting for the queue worker to start… (the queue worker is the background process that runs syncs)
-                @else
-                    No versions are ready to install yet.
+    <p>This is the first sync. The registry copies each tagged release from GitHub and packs it into a download Composer can install. This step moves on by itself when every package has finished syncing and at least one is ready.</p>
+    @forelse ($status as $row)
+        @php($package = $row['package'])
+        <div wire:key="sync-package-{{ $package->id }}" class="mt-3">
+            <div class="flex items-center gap-2">
+                @if ($row['state'] === 'syncing' && ! $expired)
+                    <x-filament::loading-indicator class="size-5 shrink-0 text-primary-600" data-role="sync-spinner" aria-hidden="true" />
                 @endif
-            </p>
-            @if ($waiting && ! $expired)
-                <span
-                    class="ms-auto whitespace-nowrap text-gray-500 dark:text-gray-400"
-                    data-role="sync-elapsed"
-                    aria-label="Time waiting for sync"
-                    x-data="{
-                        elapsed: 0,
-                        timer: null,
-                        tick() { this.elapsed = Math.max(0, Math.floor(Date.now() / 1000) - $wire.syncWaitStartedAt) },
-                        init() { this.tick(); this.timer = setInterval(() => this.tick(), 1000) },
-                        destroy() { clearInterval(this.timer) },
-                    }"
-                    x-text="elapsed + ' s'"
-                >0 s</span>
+                <p role="status">
+                    <a href="{{ \App\Filament\Pages\GetStarted::packageUrl($package) }}" class="font-semibold underline">{{ $package->name }}</a> →
+                    @if ($row['state'] === 'ready')
+                        Ready ({{ $row['versions'] }} {{ str('version')->plural($row['versions']) }})
+                    @elseif ($row['state'] === 'not a package')
+                        Not a package: no composer.json with a name.
+                    @elseif ($row['state'] === 'failed')
+                        Failed: {{ $row['error'] }}
+                    @elseif ($row['running'] && $row['discovering'])
+                        Asking GitHub for {{ $package->name }}'s tags and branches…
+                    @elseif ($row['running'])
+                        Importing versions: {{ $row['imported'] }} of {{ $row['total'] }} · building an archive for each
+                    @else
+                        Waiting for the queue worker to start… (the queue worker is the background process that runs syncs)
+                    @endif
+                </p>
+                @if (in_array($row['state'], ['not a package', 'failed'], true) && in_array($package->id, session(\App\Filament\Pages\GetStarted::PACKAGES_KEY, []), true) && auth()->user()?->can('delete', $package))
+                    <x-filament::button color="danger" size="sm" wire:click="removePackage({{ $package->id }})" wire:confirm="Remove {{ $package->name }} from this registry?" aria-label="Remove {{ $package->name }}">Remove</x-filament::button>
+                @endif
+                @if ($row['state'] === 'syncing' && ! $expired)
+                    <span class="ms-auto whitespace-nowrap text-gray-500 dark:text-gray-400"
+                        data-role="sync-elapsed" aria-label="Time waiting for sync"
+                        x-data="{
+                            elapsed: 0,
+                            timer: null,
+                            tick() { this.elapsed = Math.max(0, Math.floor(Date.now() / 1000) - $wire.syncWaitStartedAt) },
+                            init() { this.tick(); this.timer = setInterval(() => this.tick(), 1000) },
+                            destroy() { clearInterval(this.timer) },
+                        }"
+                        x-text="elapsed + ' s'"
+                    >0 s</span>
+                @endif
+            </div>
+            @if ($row['running'] && ! $row['discovering'])
+                <progress class="mt-3 h-2 w-full accent-primary-600" role="progressbar" aria-label="Versions imported for {{ $package->name }}"
+                    aria-valuemin="0" aria-valuemax="{{ $row['total'] }}" aria-valuenow="{{ $row['imported'] }}"
+                    max="{{ max(1, $row['total']) }}" value="{{ $row['imported'] }}"></progress>
+            @endif
+            @if ($row['failed'] > 0 && $row['versions'] > 0)
+                <p class="mt-2 text-danger-600">{{ $row['failed'] }} {{ str('version')->plural($row['failed']) }} couldn't be imported; the others are fine.</p>
+            @elseif ($row['failed'] > 0 && $row['running'])
+                <p class="mt-2 text-danger-600">{{ $row['failed'] }} {{ str('version')->plural($row['failed']) }} couldn't be imported; the remaining versions are still syncing.</p>
             @endif
         </div>
-        @if ($status['running'] && ! $status['discovering'] && $status['versions'] === 0)
-            <div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-white/10" role="progressbar" aria-label="Versions imported"
-                 aria-valuemin="0" aria-valuemax="{{ $status['total'] }}" aria-valuenow="{{ $status['imported'] }}">
-                {{-- The width is computed per render, so only the variable is inline. --}}
-                <div class="h-full w-(--w) rounded-full bg-primary-600 transition-[width] duration-500 ease-out" style="--w: {{ $status['total'] > 0 ? min(100, round(100 * $status['imported'] / $status['total'])) : 0 }}%"></div>
-            </div>
-        @endif
-        @if ($status['failed'] > 0)
-            <p class="mt-2 text-danger-600">{{ $status['failed'] }} {{ str('version')->plural($status['failed']) }} couldn't be imported; the others are fine.</p>
-        @endif
-        @if (filled($package->sync_error))
-            <p class="mt-2 text-danger-600"><strong>{{ $package->name }}</strong> did not sync: {{ $package->sync_error }}</p>
-            <p class="mt-2">
-                Fix it, then sync again from <a href="{{ \App\Filament\Pages\GetStarted::packageUrl($package) }}" class="underline">its page</a>; this step moves on once versions arrive.
-            </p>
-        @endif
-    @endif
-    @if ($expired)
+    @empty
+        <p>Import a package first; its first sync starts as soon as it is imported.</p>
+    @endforelse
+    @if ($allSettled && ! in_array('ready', array_column($status, 'state'), true) && $status !== [])
+        <p class="mt-3">Every sync has finished, but no package is ready to install. Open a package's page to fix it and sync again, or remove it and choose another repository.</p>
+        <x-filament::button color="gray" wire:click="recheckSync">Check again</x-filament::button>
+    @elseif ($expired)
         <p class="mt-3">Still waiting for the first sync. Check that the queue worker is running; packages may still be syncing.</p>
-        <button type="button" wire:click="recheckSync">Check again</button>
-        <a href="https://github.com/AlwaysCuriousCo/package-pipeline/blob/main/docs/deployment.md#the-worker-and-the-scheduler-need-a-supervisor" target="_blank" rel="noopener">Keeping the queue worker running</a>
+        <x-filament::button color="gray" wire:click="recheckSync">Check again</x-filament::button>
+        <a href="https://github.com/AlwaysCuriousCo/package-pipeline/blob/main/docs/deployment.md#the-worker-and-the-scheduler-need-a-supervisor" target="_blank" rel="noopener" class="underline">Keeping the queue worker running</a>
     @endif
 </div>
