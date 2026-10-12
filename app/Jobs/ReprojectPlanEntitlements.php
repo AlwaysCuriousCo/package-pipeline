@@ -22,7 +22,11 @@ class ReprojectPlanEntitlements implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 600;
+    // Held to the queue's ceiling (see config/queue.php): past retry_after a
+    // second worker would start the same sweep while this one is still in it.
+    // The projector works from current state, so a retry after a timeout
+    // simply runs the sweep again.
+    public int $timeout = 300;
 
     public bool $deleteWhenMissingModels = true;
 

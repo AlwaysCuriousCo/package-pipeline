@@ -325,6 +325,11 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Fixed
 
+- Editing a plan no longer risks re-projecting its subscribers twice at once.
+  The re-projection job allowed itself 600 seconds, past the queue's 330-second
+  `retry_after`, so a long sweep was handed to a second worker while the first
+  was still in it. It now stops at 300 seconds like the other long jobs, and
+  the `retry_after` test checks every queued job instead of a fixed list.
 - Creating a deploy token shows its one-time token. The create form now opens
   in a modal on the token list instead of its own page, so the toast carrying
   the `composer config` command arrives in the same response that issued it
