@@ -662,6 +662,52 @@ class GetStartedTest extends TestCase
         Queue::assertPushed(SyncPackageJob::class);
     }
 
+    public function test_a_public_destination_is_named_before_import_and_on_the_ready_screen(): void
+    {
+        config(['app.url' => self::ROOT]);
+        $this->inlineSource();
+        $warning = 'Default is public: anyone who can reach '.self::ROOT.' can list and install the packages imported into it, without a token.';
+
+        $this->assertTrue(Repository::default()->public);
+        Livewire::test(GetStarted::class)
+            ->assertSeeText($warning)
+            ->assertActionVisible(TestAction::make('makeRepositoryPrivate')->schemaComponent('visibility', 'importForm'));
+
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => Repository::default()->id]);
+        PackageVersion::factory()->for($package)->create();
+        session()->put(GetStarted::PACKAGES_KEY, [$package->id]);
+        Livewire::test(GetStarted::class)->set('passed', true)
+            ->assertSeeText('This registry is public: anyone who can reach it can install acme/widgets without a token.')
+            ->assertDontSeeText('This registry is private');
+    }
+
+    public function test_make_it_private_closes_the_default_repository_before_import(): void
+    {
+        $this->inlineSource();
+
+        Livewire::test(GetStarted::class)
+            ->callAction(TestAction::make('makeRepositoryPrivate')->schemaComponent('visibility', 'importForm'))
+            ->assertNotified('Default is private')
+            ->assertDontSeeText('Default is public')
+            ->assertActionDoesNotExist(TestAction::make('makeRepositoryPrivate')->schemaComponent('visibility', 'importForm'));
+
+        $this->assertFalse(Repository::default()->public);
+    }
+
+    public function test_only_someone_who_may_edit_the_repository_can_make_it_private(): void
+    {
+        $this->inlineSource();
+        $user = User::factory()->create();
+        $user->givePermissionTo(['ViewAny:Source', 'View:Source', 'Create:Package']);
+        $this->actingAs($user);
+
+        Livewire::test(GetStarted::class)
+            ->assertSeeText('Default is public')
+            ->assertActionDoesNotExist(TestAction::make('makeRepositoryPrivate')->schemaComponent('visibility', 'importForm'));
+
+        $this->assertTrue(Repository::default()->public);
+    }
+
     public function test_every_package_has_its_own_sync_status_and_waits_for_the_last_one(): void
     {
         $source = Source::factory()->create();

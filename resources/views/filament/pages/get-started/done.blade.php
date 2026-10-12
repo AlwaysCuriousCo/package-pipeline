@@ -8,5 +8,7 @@
     </ul>
     @if ($package !== null && ! $package->composerRepository->public)
     <p class="mt-2">This registry is private, so your project needs a token: a password that lets it read packages. Generate token creates a read-only one; copy it while it is shown, and keep it out of source control.</p>
+    @elseif ($package !== null)
+    <p class="mt-2">This registry is public: anyone who can reach it can install {{ $package->name }} without a token. To require one, open Composer repositories → {{ $package->composerRepository->name }} and turn Public off.</p>
     @endif
 </div>

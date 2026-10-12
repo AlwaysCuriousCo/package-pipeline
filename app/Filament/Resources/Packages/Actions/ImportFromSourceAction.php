@@ -95,6 +95,47 @@ class ImportFromSourceAction
         ];
     }
 
+    /**
+     * The repository chosen in the picker, when anyone can read it without a
+     * token.
+     */
+    public static function publicRepository(mixed $repositoryId): ?Repository
+    {
+        $repository = filled($repositoryId) ? Repository::query()->find($repositoryId) : null;
+
+        return $repository?->public ? $repository : null;
+    }
+
+    public static function publicWarning(mixed $repositoryId): string
+    {
+        $name = self::publicRepository($repositoryId)->name ?? 'This repository';
+
+        return "{$name} is public: anyone who can reach ".config('app.url').' can list and install the packages imported into it, without a token. Make it private to require one.';
+    }
+
+    public static function makePrivateAction(): Action
+    {
+        return Action::make('makeRepositoryPrivate')
+            ->label('Make it private')
+            ->icon(Heroicon::OutlinedLockClosed)
+            ->color('warning')
+            ->visible(fn (Get $get): bool => ($repository = self::publicRepository($get('repository_id'))) !== null
+                && (auth()->user()?->can('update', $repository) ?? false))
+            ->action(function (Get $get): void {
+                $repository = self::publicRepository($get('repository_id'));
+
+                if ($repository === null) {
+                    return;
+                }
+
+                abort_unless(auth()->user()?->can('update', $repository), 403);
+
+                $repository->forceFill(['public' => false])->save();
+
+                Notification::make()->success()->title("{$repository->name} is private")->body('Projects now need a token to install its packages.')->send();
+            });
+    }
+
     /** @return list<SchemaComponent> */
     public static function pickerFields(bool $inline = false): array
     {
@@ -141,6 +182,17 @@ class ImportFromSourceAction
                 ->dehydratedWhenHidden(),
             ...($inline ? [Text::make('Default is this registry’s Composer repository: the address your projects install these packages from. It is separate from your repositories on GitHub.')
                 ->visible(fn (): bool => Repository::query()->count() === 1)] : []),
+            // Default is created public, and a first run imports into it
+            // without asking, so the step says what that means before anything
+            // private is served to anyone who can reach the registry.
+            ...($inline ? [
+                Text::make(fn (Get $get): string => self::publicWarning($get('repository_id')))
+                    ->color('warning')
+                    ->visible(fn (Get $get): bool => self::publicRepository($get('repository_id')) !== null),
+                Actions::make([self::makePrivateAction()])
+                    ->key('visibility')
+                    ->visible(fn (Get $get): bool => self::publicRepository($get('repository_id')) !== null),
+            ] : []),
             Toggle::make('create_webhook')
                 ->label('Sync automatically on push')
                 ->default(true)
