@@ -177,7 +177,12 @@ class ComposerRepositoryController extends Controller
             ->selectRaw('count(*) as package_count, max(packages.updated_at) as changed_at, coalesce(max(packages.id), 0) as newest_id')
             ->first();
 
-        $scope = $repository->getKey().':'.($this->token($request)?->getKey() ?? 'anonymous');
+        // The address is in the scope because it is in the fingerprint: a
+        // repository with a host of its own is one document served at two
+        // addresses, and a first-seen date held per principal alone would
+        // alternate between the two shapes — each fetch a full response, and
+        // the 304 this whole apparatus exists to hand out never served.
+        $scope = $repository->getKey().':'.($this->token($request)?->getKey() ?? 'anonymous').':'.$repository->url();
 
         $fingerprint = hash('xxh128', implode('|', [
             self::PAYLOAD_REVISION,
@@ -198,7 +203,8 @@ class ComposerRepositoryController extends Controller
     /**
      * When this principal's root document last became what it now is.
      *
-     * Held per principal rather than per fingerprint, so that a set which
+     * Held per principal — and per address, since one repository may be asked
+     * at two — rather than per fingerprint, so that a set which
      * returns to a shape it held before — a package added and then removed
      * again, a grant given back — is dated by when it returned and not by when
      * it was last there. Dating it by the earlier visit would hand back a date

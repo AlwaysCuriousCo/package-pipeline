@@ -7,6 +7,7 @@ use App\Filament\Auth\ResetPassword;
 use App\Filament\Livewire\EmailNotificationsForm;
 use App\Filament\Pages\ApiTokens;
 use App\Filament\Pages\Dashboard;
+use App\Http\Middleware\ConfineRepositoryHosts;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use BezhanSalleh\FilamentShield\Resources\Roles\Pages\CreateRole;
 use BezhanSalleh\FilamentShield\Resources\Roles\Pages\EditRole;
@@ -157,6 +158,9 @@ class AdminPanelProvider extends PanelProvider
             // often nobody watching the page it happened on.
             ->databaseNotifications()
             ->middleware([
+                // The panel is the registry's own, never a repository host's;
+                // first, so nothing after it answers on that host instead.
+                ConfineRepositoryHosts::class,
                 // The panel lists the web middleware individually rather than
                 // using the group, so Wirebones' build-mode middleware — which
                 // it prepends to `web` — would never run on /admin. Named here

@@ -9,6 +9,7 @@ use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\PlanFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -109,6 +110,28 @@ class Plan extends Model
     public function repositories(): MorphToMany
     {
         return $this->morphedByMany(Repository::class, 'grantable', 'plan_entitlements');
+    }
+
+    /**
+     * The repositories a subscriber configures to install what this plan
+     * grants: each repository granted outright, and each granted package's
+     * home. A product served at its own host is therefore set up at that
+     * host, not at the registry's.
+     *
+     * The default repository when the plan grants nothing, so the setup lines
+     * still say where the registry is.
+     *
+     * @return EloquentCollection<int, Repository>
+     */
+    public function setupRepositories(): EloquentCollection
+    {
+        $repositories = Repository::query()
+            ->whereIn('repositories.id', $this->repositories()->select('repositories.id'))
+            ->orWhereIn('repositories.id', $this->packages()->select('packages.repository_id'))
+            ->orderBy('name')
+            ->get();
+
+        return $repositories->isEmpty() ? new EloquentCollection([Repository::default()]) : $repositories;
     }
 
     /**

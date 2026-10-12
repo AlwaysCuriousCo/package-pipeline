@@ -373,7 +373,9 @@ class WordPressRegistryTest extends TestCase
             'site',
             [TokenAbility::RepositoryRead],
         );
-        $deploy->token->tokenable->packages()->attach($other);
+        $tokenable = $deploy->token->tokenable;
+        $this->assertInstanceOf(DeployToken::class, $tokenable);
+        $tokenable->packages()->attach($other);
 
         $this->withToken($deploy->plainText)->post('/wp/plugins/update-check/1.1', [
             'plugins' => $this->pluginsField([self::PLUGIN_FILE => '1.0.0']),
@@ -500,7 +502,7 @@ class WordPressRegistryTest extends TestCase
 
         $token = Token::issue(User::factory()->superAdmin()->create(), 'provisioner', [TokenAbility::ApiRead])->plainText;
 
-        $versions = collect($this->withToken($token)->getJson("/api/v1/packages/{$package->id}")->assertOk()->json('data.versions'));
+        $versions = collect((array) $this->withToken($token)->getJson("/api/v1/packages/{$package->id}")->assertOk()->json('data.versions'));
 
         $this->assertSame([
             'version' => '1.1.0',

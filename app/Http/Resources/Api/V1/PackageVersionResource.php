@@ -25,7 +25,7 @@ class PackageVersionResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        return [
+        $version = [
             'version' => $this->version,
             'is_dev' => $this->is_dev,
             // The commit sha a synced version was built from, or the zip's own
@@ -34,15 +34,20 @@ class PackageVersionResource extends JsonResource
             'reference' => $this->reference,
             'shasum' => $this->shasum,
             'released_at' => $this->released_at?->toIso8601String(),
-            // A WordPress package's slug-rooted zip, which is a different file
-            // from the Composer dist above with a different sha1: what a
-            // provisioning job verifies its download against. Absent for
-            // every other package. @see docs/wordpress.md
-            $this->mergeWhen(is_array($this->wordpress), fn (): array => ['wordpress' => [
+        ];
+
+        // A WordPress package's slug-rooted zip, which is a different file
+        // from the Composer dist above with a different sha1: what a
+        // provisioning job verifies its download against. Absent for
+        // every other package. @see docs/wordpress.md
+        if (is_array($this->wordpress)) {
+            $version['wordpress'] = [
                 'version' => $this->wordpress['version'] ?? null,
                 'shasum' => $this->wordpress['shasum'] ?? null,
                 'size' => $this->wordpress['size'] ?? null,
-            ]]),
-        ];
+            ];
+        }
+
+        return $version;
     }
 }
