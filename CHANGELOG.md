@@ -325,6 +325,14 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Fixed
 
+- A full refund withdraws access again on current Stripe API versions. From
+  2025-03-31.basil a refunded charge no longer names its invoice, so the
+  refund matched nothing and access stayed on; the invoice is now found
+  through the charge's payment. A refunded one-time purchase, which belongs
+  to no subscription at Stripe, is found through the checkout that bought it,
+  and a refund now suspends the purchase as a dispute does, so a
+  freeze-at-version plan no longer keeps the releases of a payment that was
+  paid back.
 - Creating a deploy token shows its one-time token. The create form now opens
   in a modal on the token list instead of its own page, so the toast carrying
   the `composer config` command arrives in the same response that issued it
