@@ -7,6 +7,7 @@ use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Schemas\PackageInfolist;
 use App\Filament\Resources\Sources\Actions\ConnectGitHubAction;
+use App\Filament\Widgets\RegistryTotals;
 use App\Models\Download;
 use App\Models\Package;
 use App\Models\Source;
@@ -60,6 +61,8 @@ class GetStarted extends Page
     public const RETURN_KEY = 'onboarding.return';
 
     public const PACKAGES_KEY = 'onboarding.packages';
+
+    public const SYNC_CONTINUED_KEY = 'onboarding.sync_continued';
 
     protected static ?string $slug = 'get-started';
 
@@ -153,8 +156,11 @@ class GetStarted extends Page
         $connected = Source::query()->whereNotNull('connected_at')->exists();
         $statuses = self::packageStatuses();
         $imported = $statuses !== [];
-        $synced = $imported && ! in_array('syncing', array_column($statuses, 'state'), true)
-            && in_array('ready', array_column($statuses, 'state'), true);
+        $states = array_column($statuses, 'state');
+        $allReady = $imported && array_unique($states) === ['ready'];
+        $continued = session(self::SYNC_CONTINUED_KEY) === array_map(fn (array $row): int => $row['package']->id, $statuses);
+        $synced = $allReady || ($imported && $continued && ! in_array('syncing', $states, true)
+            && in_array('ready', $states, true));
 
         return [
             ['title' => 'Connect GitHub', 'done' => $connected],
@@ -296,6 +302,9 @@ class GetStarted extends Page
             $this->installationRunning = true;
             $this->installRepository = $package->repository_id;
             $this->passed = $this->runInstallationTest($package);
+            if ($this->passed) {
+                RegistryTotals::forget(auth()->user());
+            }
         } finally {
             $this->installationRunning = false;
             $lock->release();
@@ -375,6 +384,15 @@ class GetStarted extends Page
         $package->delete();
         session()->put(self::PACKAGES_KEY, array_values(array_diff(session(self::PACKAGES_KEY, []), [$id])));
         $this->checkSync();
+    }
+
+    public function continueToInstallationTest(): void
+    {
+        $statuses = $this->syncStatus();
+        $states = array_column($statuses, 'state');
+        abort_unless($this->mountedStep === 3 && ! in_array('syncing', $states, true) && in_array('ready', $states, true), 403);
+        session()->put(self::SYNC_CONTINUED_KEY, array_map(fn (array $row): int => $row['package']->id, $statuses));
+        $this->redirect(static::getUrl());
     }
 
     /**

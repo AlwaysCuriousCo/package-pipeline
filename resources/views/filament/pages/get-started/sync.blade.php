@@ -1,6 +1,8 @@
-{{-- Keep polling through readiness/render races until checkSync redirects. --}}
-<div @if ($mountedStep === 3 && ! $expired) wire:poll.3s.visible="checkSync" @endif class="text-sm">
-    <p>This is the first sync. The registry copies each tagged release from GitHub and packs it into a download Composer can install. This step moves on by itself when every package has finished syncing and at least one is ready.</p>
+@php($hasReady = in_array('ready', array_column($status, 'state'), true))
+@php($allReady = $status !== [] && array_unique(array_column($status, 'state')) === ['ready'])
+{{-- Keep the final poll for all-ready render races until checkSync redirects. --}}
+<div @if ($mountedStep === 3 && ! $expired && (! $allSettled || $allReady)) wire:poll.3s.visible="checkSync" @endif class="text-sm">
+    <p>This is the first sync. The registry copies each tagged release from GitHub and packs it into a download Composer can install. This step moves on by itself when every package is ready.</p>
     @forelse ($status as $row)
         @php($package = $row['package'])
         <div wire:key="sync-package-{{ $package->id }}" class="mt-3">
@@ -55,7 +57,10 @@
     @empty
         <p>Import a package first; its first sync starts as soon as it is imported.</p>
     @endforelse
-    @if ($allSettled && ! in_array('ready', array_column($status, 'state'), true) && $status !== [])
+    @if ($allSettled && $hasReady && ! $allReady)
+        <p class="mt-3">Some repositories can't be installed. Remove them, or carry on: the installation test uses {{ \App\Filament\Pages\GetStarted::installablePackage()?->name }}.</p>
+        <x-filament::button wire:click="continueToInstallationTest">Continue to the installation test</x-filament::button>
+    @elseif ($allSettled && ! $hasReady && $status !== [])
         <p class="mt-3">Every sync has finished, but no package is ready to install. Open a package's page to fix it and sync again, or remove it and choose another repository.</p>
         <x-filament::button color="gray" wire:click="recheckSync">Check again</x-filament::button>
     @elseif ($expired)

@@ -681,8 +681,36 @@ class GetStartedTest extends TestCase
             ->call('checkSync')->assertNoRedirect();
         DB::table('job_batches')->where('id', $pending->fresh()->sync_batch_id)
             ->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp]);
-        $page->call('checkSync')->assertRedirect(GetStarted::getUrl());
+        $page->call('checkSync')->assertNoRedirect()->assertSet('mountedStep', 3)
+            ->assertSeeText('Remove')->assertSeeText('Continue to the installation test')
+            ->assertSeeText("Some repositories can't be installed. Remove them, or carry on: the installation test uses acme/ready.", false)
+            ->assertDontSeeHtml('wire:poll');
+        $this->assertOpensOn(3);
+        $page->call('continueToInstallationTest')->assertRedirect(GetStarted::getUrl());
         $this->assertOpensOn(4);
+    }
+
+    public function test_remove_the_last_non_installable_package_advances_to_the_test(): void
+    {
+        $source = Source::factory()->create();
+        $ready = Package::factory()->for($source)->create();
+        PackageVersion::factory()->for($ready)->create();
+        $docs = Package::factory()->for($source)->create(['sync_error' => 'No installable versions found: no composer.json with a name.']);
+        session()->put(GetStarted::PACKAGES_KEY, [$ready->id, $docs->id]);
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 3)
+            ->assertSeeText('Not a package')->assertSeeText('Remove')
+            ->assertSeeText('Continue to the installation test')->assertDontSeeHtml('wire:poll')
+            ->call('removePackage', $docs->id)->assertRedirect(GetStarted::getUrl());
+        $this->assertModelMissing($docs);
+        $this->assertOpensOn(4);
+    }
+
+    public function test_continue_requires_a_settled_batch_with_a_ready_package(): void
+    {
+        $package = $this->syncingPackage();
+        Livewire::test(GetStarted::class)->call('continueToInstallationTest')->assertForbidden();
+        $package->update(['sync_error' => 'GitHub refused access']);
+        Livewire::test(GetStarted::class)->call('continueToInstallationTest')->assertForbidden();
     }
 
     public function test_all_failed_syncs_stay_with_guidance_and_check_again(): void
@@ -762,6 +790,7 @@ class GetStartedTest extends TestCase
         Package::factory()->for($source)->create(['sync_error' => 'GitHub refused access']);
         $ready = Package::factory()->for($source)->create(['name' => 'acme/widgets']);
         PackageVersion::factory()->for($ready)->create();
+        Livewire::test(GetStarted::class)->call('continueToInstallationTest')->assertRedirect(GetStarted::getUrl());
         Livewire::test(GetStarted::class)->assertSet('mountedStep', 4)
             ->assertSeeText("Testing acme/widgets, the first package with a version. One package is enough: the test checks the registry's sign-in, package details and downloads.", false);
     }
@@ -775,6 +804,7 @@ class GetStartedTest extends TestCase
         $failed = Package::factory()->for($source)->create(['name' => 'acme/failed', 'sync_error' => 'GitHub refused access']);
         $other = Package::factory()->for($source)->create(['name' => 'acme/unrelated']);
         session()->put(GetStarted::PACKAGES_KEY, [$ready->id, $docs->id, $failed->id]);
+        Livewire::test(GetStarted::class)->call('continueToInstallationTest')->assertRedirect(GetStarted::getUrl());
         $page = Livewire::test(GetStarted::class)->set('passed', true)->assertSeeText('Your registry is ready');
         $dom = new \DOMDocument;
         @$dom->loadHTML('<?xml encoding="UTF-8">'.$page->html());

@@ -145,6 +145,24 @@ class GetStartedInstallationTest extends TestCase
         $this->assertFalse(GetStarted::shouldRegisterNavigation());
     }
 
+    public function test_successful_onboarding_forgets_the_current_viewers_cached_totals(): void
+    {
+        $this->fakeRegistry();
+        $key = 'widget:registry-totals:user:'.auth()->id();
+        $otherKey = 'widget:registry-totals:user:'.User::factory()->create()->id;
+        $stale = [['label' => 'Packages', 'value' => '0', 'tone' => 'info']];
+        Cache::put($key, $stale, 60);
+        Cache::put($otherKey, $stale, 60);
+        $this->assertTrue(Cache::has($key));
+
+        $page = Livewire::test(GetStarted::class);
+        $this->runPageTest($page);
+
+        $page->assertSet('passed', true);
+        $this->assertFalse(Cache::has($key));
+        $this->assertSame($stale, Cache::get($otherKey));
+    }
+
     public function test_finished_commands_reuse_the_package_read_token_action(): void
     {
         $this->fakeRegistry();
