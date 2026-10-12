@@ -48,11 +48,11 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   enterprise, which GitHub does not allow manifests for, gets three steps:
   its form prefilled, the `.pem` uploaded rather than pasted, and the webhook
   secret set by the registry itself. **Get started** (`/admin/get-started`,
-  linked from the dashboard's **Getting started** card) takes a fresh install
-  from connecting GitHub through choosing packages and their first sync to a
-  passing installation test, as one wizard that resumes from the registry's
-  own state after each trip to GitHub, and sits in the navigation until a
-  package has been installed. **Import from source** becomes **Add packages**,
+  linked from the dashboard's **Getting started** card) is a checklist whose
+  **Repository** item takes a fresh install from connecting GitHub through
+  choosing packages and their first sync to a passing installation test, as
+  one wizard that resumes from the registry's own state after each trip to
+  GitHub. It sits in the navigation until a package has been installed. **Import from source** becomes **Add packages**,
   also on a source's page: it lists repositories with a `composer.json` first
   and ticks the ones that are packages, and for an app installed on only
   selected repositories it first links to the installation's settings on

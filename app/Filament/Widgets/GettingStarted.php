@@ -4,6 +4,7 @@ namespace App\Filament\Widgets;
 
 use App\Filament\Pages\Dashboard;
 use App\Filament\Pages\GetStarted;
+use App\Filament\Pages\GetStartedChecklist;
 use App\Models\Source;
 use App\Models\User;
 use Filament\Actions\Action;
@@ -82,7 +83,7 @@ class GettingStarted extends Widget implements HasActions, HasSchemas
             ->icon(Heroicon::OutlinedArrowRight)
             ->iconPosition(IconPosition::After)
             ->color('primary')
-            ->url(GetStarted::getUrl());
+            ->url(GetStartedChecklist::getUrl());
     }
 
     /**

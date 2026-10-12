@@ -14,7 +14,6 @@ use App\Models\Source;
 use App\Models\User;
 use App\Services\InstallationTest;
 use App\Services\InstallationTestStages;
-use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
@@ -64,13 +63,11 @@ class GetStarted extends Page
 
     public const SYNC_CONTINUED_KEY = 'onboarding.sync_continued';
 
-    protected static ?string $slug = 'get-started';
+    protected static ?string $slug = 'get-started/repository';
 
-    protected static ?string $title = 'Get started';
+    protected static ?string $title = 'Repository';
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRocketLaunch;
-
-    protected static ?int $navigationSort = -10;
+    protected ?string $subheading = 'Connect GitHub, choose packages, let them sync, and install one.';
 
     /**
      * Whether the installation test run on this page passed, once one has run.
@@ -123,14 +120,12 @@ class GetStarted extends Page
     }
 
     /**
-     * In the navigation until the registry has done its job once — a package
-     * installed, or an installation test passed — so a first run left half
-     * way is a click away from anywhere. Later packages are added from
-     * Packages → Add packages.
+     * Opened from the Get started checklist, which is what the navigation
+     * shows.
      */
     public static function shouldRegisterNavigation(): bool
     {
-        return static::canAccess() && ! static::complete();
+        return false;
     }
 
     public static function getNavigationBadge(): ?string

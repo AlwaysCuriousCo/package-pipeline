@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\TokenAbility;
 use App\Filament\Pages\Dashboard;
 use App\Filament\Pages\GetStarted;
+use App\Filament\Pages\GetStartedChecklist;
 use App\Filament\Widgets\GettingStarted;
 use App\Models\Activity;
 use App\Models\Package;
@@ -142,7 +143,7 @@ class GetStartedInstallationTest extends TestCase
         $this->assertSame(0, Token::withTrashed()->count());
         $this->assertSame('Complete', GetStarted::getNavigationBadge());
         $this->assertFalse(GettingStarted::canView());
-        $this->assertFalse(GetStarted::shouldRegisterNavigation());
+        $this->assertFalse(GetStartedChecklist::shouldRegisterNavigation());
     }
 
     public function test_successful_onboarding_forgets_the_current_viewers_cached_totals(): void

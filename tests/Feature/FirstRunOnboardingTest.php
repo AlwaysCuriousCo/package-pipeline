@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use App\Filament\Pages\Dashboard;
-use App\Filament\Pages\GetStarted;
+use App\Filament\Pages\GetStartedChecklist;
 use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Filament\Widgets\GettingStarted;
 use App\Models\Download;
@@ -62,14 +62,14 @@ class FirstRunOnboardingTest extends TestCase
         return Source::factory()->withToken()->create(['account' => 'acme']);
     }
 
-    public function test_a_new_install_is_pointed_at_the_wizard(): void
+    public function test_a_new_install_is_pointed_at_the_checklist(): void
     {
         Livewire::test(GettingStarted::class)
             ->assertSee('Getting started')
             ->assertSee('Connect GitHub')
             ->assertSee('Step 1 of 4')
             ->assertSee('Start setup')
-            ->assertSeeHtml(e(GetStarted::getUrl()))
+            ->assertSeeHtml(e(GetStartedChecklist::getUrl()))
             // The steps' own buttons live on the wizard, not here.
             ->assertDontSeeHtml("mountAction('connectGithub'");
     }

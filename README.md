@@ -49,7 +49,7 @@ Log in at <http://localhost:8000> — the root URL redirects to the admin panel 
 
 ### Add your first package
 
-**Get started** (`/admin/get-started`, in the navigation and linked from the dashboard's **Getting started** card until a package has been installed) walks through this as one wizard, and every step happens in the admin panel. It opens on the first step the registry has not done yet, so leaving for GitHub and coming back picks up where you were. The same steps are also on their own pages:
+**Get started** (`/admin/get-started`, in the navigation and linked from the dashboard's **Getting started** card until a package has been installed) is a checklist; its **Repository** item walks through this as one wizard, and every step happens in the admin panel. It opens on the first step the registry has not done yet, so leaving for GitHub and coming back picks up where you were. The same steps are also on their own pages:
 
 1. **Connect GitHub** (also **Sources → Connect GitHub account**). On a fresh install this first registers the registry's own GitHub App: pick who owns it, and GitHub creates it from a manifest and hands its credentials straight back. GitHub then asks which account to install it on and which repositories to share. Later accounts are just that second half. An enterprise-owned app takes three steps instead, laid out on the page — see [docs/github-app.md](docs/github-app.md).
 2. **Choose packages** (also **Packages → Add packages**, a source's own page, or the "Connected" notification). Repositories with a `composer.json` are listed first, and the ones that are packages rather than applications are already ticked. Each becomes a package with its first sync queued.

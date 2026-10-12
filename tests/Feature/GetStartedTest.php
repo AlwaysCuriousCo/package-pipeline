@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Filament\Pages\GetStarted;
+use App\Filament\Pages\GetStartedChecklist;
 use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Jobs\SyncPackageJob;
 use App\Models\Download;
@@ -868,23 +869,45 @@ class GetStartedTest extends TestCase
 
     public function test_the_navigation_offers_it_until_the_registry_has_installed_a_package(): void
     {
-        $this->assertTrue(GetStarted::shouldRegisterNavigation());
-        $this->assertSame('1/4', GetStarted::getNavigationBadge());
+        $this->assertTrue(GetStartedChecklist::shouldRegisterNavigation());
+        $this->assertFalse(GetStarted::shouldRegisterNavigation());
+        $this->assertSame('1/4', GetStartedChecklist::getNavigationBadge());
 
         Source::factory()->create();
-        $this->assertSame('2/4', GetStarted::getNavigationBadge());
+        $this->assertSame('2/4', GetStartedChecklist::getNavigationBadge());
 
         $package = Package::factory()->create();
         Download::query()->create(['package_id' => $package->id, 'version' => '1.0.0', 'created_at' => now()]);
 
-        $this->assertFalse(GetStarted::shouldRegisterNavigation());
+        $this->assertFalse(GetStartedChecklist::shouldRegisterNavigation());
+    }
+
+    public function test_the_checklist_shows_the_repository_wizard_and_where_it_has_got_to(): void
+    {
+        Livewire::test(GetStartedChecklist::class)
+            ->assertSeeText('Repository')
+            ->assertSeeText('Not started')
+            ->assertActionHasLabel(TestAction::make('open_repository')->schemaComponent('repository'), 'Start')
+            ->assertActionHasUrl(TestAction::make('open_repository')->schemaComponent('repository'), GetStarted::getUrl());
+
+        Source::factory()->create();
+        Livewire::test(GetStartedChecklist::class)
+            ->assertSeeText('Step 2 of 4: Choose packages')
+            ->assertActionHasLabel(TestAction::make('open_repository')->schemaComponent('repository'), 'Continue');
+
+        $package = Package::factory()->create();
+        Download::query()->create(['package_id' => $package->id, 'version' => '1.0.0', 'created_at' => now()]);
+        Livewire::test(GetStartedChecklist::class)
+            ->assertSeeText('Done')
+            ->assertActionHasLabel(TestAction::make('open_repository')->schemaComponent('repository'), 'Review');
     }
 
     public function test_the_navigation_leaves_it_out_for_a_user_who_cannot_see_sources(): void
     {
         $this->actingAs(User::factory()->create());
 
-        $this->assertFalse(GetStarted::shouldRegisterNavigation());
+        $this->assertFalse(GetStartedChecklist::shouldRegisterNavigation());
+        $this->get(GetStartedChecklist::getUrl())->assertForbidden();
     }
 
     public function test_the_wizards_import_has_no_access_step(): void
