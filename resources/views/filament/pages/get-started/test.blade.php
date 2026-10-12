@@ -1,12 +1,12 @@
 <div @if ($autoRun) wire:init="autoRunTest" @endif x-data="{ showDetails: false }">
-    <p style="font-size: 0.875rem; margin-bottom: 0.75rem">Last, the registry installs one package the way your projects will: through its public address, checking access, package details and the download. It uses a temporary token (a password for this test only), then deletes it.</p>
+    <p class="mb-3 text-sm">Last, the registry installs one package the way your projects will: through its public address, checking access, package details and the download. It uses a temporary token (a password for this test only), then deletes it.</p>
     <div wire:stream="installation-status">
         @include('filament.pages.get-started.test-status', ['status' => $status])
     </div>
     <x-filament::button color="gray" x-on:click="showDetails = ! showDetails" x-bind:aria-expanded="showDetails.toString()" aria-expanded="false" aria-controls="installation-details">
         Show details
     </x-filament::button>
-    <div id="installation-details" x-cloak x-show="showDetails" style="margin-top: 0.75rem">
+    <div id="installation-details" x-cloak x-show="showDetails" class="mt-3">
         @include('filament.terminal', ['lines' => $lines, 'stream' => 'installation-test', 'idle' => 'Requests and responses appear here as the test runs.'])
     </div>
 </div>

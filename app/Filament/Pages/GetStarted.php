@@ -239,8 +239,8 @@ class GetStarted extends Page
                 ->startOnStep(fn (): int => static::currentStep())
                 // Steps follow the registry, not the buttons: each one moves
                 // on by itself once what it asks for is done.
-                ->nextAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['style' => 'display: none']))
-                ->previousAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['style' => 'display: none'])),
+                ->nextAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['class' => 'hidden']))
+                ->previousAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['class' => 'hidden'])),
         ]);
     }
 

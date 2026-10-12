@@ -246,8 +246,8 @@ class GetStartedTest extends TestCase
 
         $dom = new \DOMDocument;
         @$dom->loadHTML($page->html());
-        $this->assertCount(1, (new \DOMXPath($dom))->query('//*[local-name()="svg" and contains(@class, "pp-onboarding-sync-spinner")]'));
-        $clock = (new \DOMXPath($dom))->query('//span[contains(@class, "pp-onboarding-sync-elapsed")]')->item(0);
+        $this->assertCount(1, (new \DOMXPath($dom))->query('//*[local-name()="svg" and @data-role="sync-spinner"]'));
+        $clock = (new \DOMXPath($dom))->query('//span[@data-role="sync-elapsed"]')->item(0);
         $this->assertInstanceOf(\DOMElement::class, $clock);
         $this->assertStringContainsString('setInterval(() => this.tick(), 1000)', $clock->getAttribute('x-data'));
         $this->assertStringContainsString('clearInterval(this.timer)', $clock->getAttribute('x-data'));
@@ -276,7 +276,7 @@ class GetStartedTest extends TestCase
         $page = Livewire::test(GetStarted::class)
             ->assertSeeText('Importing versions: 1 of 4 · building an archive for each')
             ->assertSeeHtml('aria-valuemax="4" aria-valuenow="1"')
-            ->assertSeeHtml('style="width: 25%"');
+            ->assertSeeHtml('style="--w: 25%"');
         $component = $page->instance();
         $this->assertInstanceOf(GetStarted::class, $component);
         $status = $component->syncStatus();
@@ -300,7 +300,7 @@ class GetStartedTest extends TestCase
         $package->forceFill(['sync_error' => 'GitHub refused access'])->save();
         Livewire::test(GetStarted::class)
             ->assertSeeText("{$package->name} did not sync: GitHub refused access")
-            ->assertDontSeeHtml('<svg class="fi-loading-indicator pp-onboarding-sync-spinner')
+            ->assertDontSeeHtml('data-role="sync-spinner"')
             ->assertSeeHtml(e(GetStarted::packageUrl($package)));
     }
 
@@ -368,7 +368,7 @@ class GetStartedTest extends TestCase
         $this->assertCount(2, $buttons);
         foreach ($buttons as $button) {
             if ($button instanceof \DOMElement) {
-                $this->assertStringContainsString('display: none', $button->getAttribute('style'));
+                $this->assertContains('hidden', explode(' ', $button->getAttribute('class')));
                 $this->assertSame('true', $button->getAttribute('aria-disabled'));
             }
         }
