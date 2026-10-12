@@ -118,9 +118,8 @@ class GetStartedInstallationTest extends TestCase
         $page = Livewire::test(GetStarted::class)->assertSet('testStarted', false)
             ->assertSeeHtml('wire:init="autoRunTest"')
             ->assertSeeText('Testing your registry')
-            ->assertSeeHtml('showDetails: false')
-            ->assertSeeHtml('aria-expanded="false"')
-            ->assertSeeHtml('x-cloak x-show="showDetails"')
+            ->assertSeeText('Request details')
+            ->assertSeeHtml('wire:stream="installation-test"')
             ->assertDontSee('Your registry is ready');
         $streamed = $this->runPageTest($page);
         $this->assertStringContainsString('"name":"installation-status"', $streamed);

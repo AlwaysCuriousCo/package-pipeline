@@ -13,6 +13,7 @@ use App\Models\Repository;
 use App\Models\Source;
 use App\Models\Token;
 use App\Models\User;
+use Filament\Actions\Action;
 use Filament\Actions\Testing\TestAction;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Select;
@@ -730,7 +731,8 @@ class GetStartedTest extends TestCase
             ->update(['pending_jobs' => 0, 'finished_at' => now()->timestamp]);
         $page->call('checkSync')->assertNoRedirect()->assertSet('mountedStep', 3)
             ->assertSeeText('Remove')->assertSeeText('Continue to the installation test')
-            ->assertSeeText("Some repositories can't be installed. Remove them, or carry on: the installation test uses acme/ready.", false)
+            ->assertSeeText("Some repositories can't be installed")
+            ->assertSeeText('Remove them, or carry on: the installation test uses acme/ready.')
             ->assertDontSeeHtml('wire:poll');
         $this->assertOpensOn(3);
         $page->call('continueToInstallationTest')->assertRedirect(GetStarted::getUrl());
@@ -765,8 +767,10 @@ class GetStartedTest extends TestCase
         $package = $this->syncingPackage();
         $package->update(['sync_error' => 'GitHub refused access']);
         Livewire::test(GetStarted::class)->assertSet('mountedStep', 3)
-            ->assertSeeText('Every sync has finished, but no package is ready to install')
-            ->assertSeeText('Check again')->call('recheckSync')->assertNoRedirect();
+            ->assertSeeText('No package is ready to install')
+            ->assertSeeText('Every sync has finished, but none of them produced a version.')
+            ->assertActionVisible(TestAction::make('recheck')->schemaComponent('onboarding.sync.actions'))
+            ->callAction(TestAction::make('recheck')->schemaComponent('onboarding.sync.actions'))->assertNoRedirect();
     }
 
     public function test_a_finished_batch_without_versions_is_failed_instead_of_waiting_forever(): void
@@ -804,9 +808,12 @@ class GetStartedTest extends TestCase
         session()->put(GetStarted::PACKAGES_KEY, [$ready->id, $failed->id]);
         // Keep the mounted sync step while the ready package finishes.
         $this->syncBatch($ready);
+        $remove = fn (Package $package): TestAction => TestAction::make('remove')->schemaComponent("onboarding.sync.packages.package-{$package->id}");
         $page = Livewire::test(GetStarted::class)->assertSeeText('Remove')
-            ->assertSeeHtml('wire:confirm="Remove '.e($failed->name).' from this registry?"');
-        $page->call('removePackage', $failed->id)->assertNoRedirect();
+            ->assertActionVisible($remove($failed))
+            ->assertActionDoesNotExist($remove($ready))
+            ->assertActionExists($remove($failed), fn (Action $action): bool => $action->getModalHeading() === "Remove {$failed->name}?");
+        $page->callAction($remove($failed))->assertNoRedirect();
         $this->assertModelMissing($failed);
         $this->assertModelExists($ready);
         $this->assertModelExists($other);
@@ -839,7 +846,7 @@ class GetStartedTest extends TestCase
         PackageVersion::factory()->for($ready)->create();
         Livewire::test(GetStarted::class)->call('continueToInstallationTest')->assertRedirect(GetStarted::getUrl());
         Livewire::test(GetStarted::class)->assertSet('mountedStep', 4)
-            ->assertSeeText("Testing acme/widgets, the first package with a version. One package is enough: the test checks the registry's sign-in, package details and downloads.", false);
+            ->assertSeeText("Testing acme/widgets, the first package with a version. One package is enough: the test checks the registry's sign-in, package details and downloads.");
     }
 
     public function test_finish_lists_each_imported_package_with_its_status_and_link(): void

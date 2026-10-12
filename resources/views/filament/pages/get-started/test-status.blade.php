@@ -9,7 +9,7 @@
             Installation test passed.
         @endif
     </p>
-    <ul class="my-3 grid gap-2" aria-label="Installation test stages">
+    <ul class="mt-3 grid gap-2" aria-label="Installation test stages">
         @foreach ($status['stages'] as $stage)
             <li class="flex items-center gap-2 data-[state=failed]:text-danger-600 data-[state=passed]:text-success-600" data-state="{{ $stage['state'] }}">
                 <span aria-hidden="true">{{ match ($stage['state']) { 'passed' => '✓', 'failed' => '✗', 'running' => '…', default => '○' } }}</span>

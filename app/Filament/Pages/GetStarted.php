@@ -17,7 +17,11 @@ use App\Services\InstallationTestStages;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Callout;
+use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\EmbeddedSchema;
+use Filament\Schemas\Components\Group;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Text;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Components\Wizard;
@@ -26,6 +30,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Locked;
 
@@ -212,38 +217,11 @@ class GetStarted extends Page
                 Step::make('First sync')
                     ->key('sync')
                     ->icon(Heroicon::OutlinedArrowPath)
-                    ->schema([
-                        View::make('filament.pages.get-started.sync')
-                            ->viewData(fn (): array => [
-                                'mountedStep' => $this->mountedStep,
-                                'status' => $this->syncStatus(),
-                                'allSettled' => ! in_array('syncing', array_column($this->syncStatus(), 'state'), true)
-                                    && ! in_array(true, array_column($this->syncStatus(), 'awaitingReason'), true),
-                                'expired' => $this->syncWaitExpired,
-                            ]),
-                    ]),
+                    ->schema(fn (): array => $this->syncComponents()),
                 Step::make('Test installation')
                     ->key('test')
                     ->icon(Heroicon::OutlinedCommandLine)
-                    ->schema([
-                        View::make('filament.pages.get-started.test')
-                            ->viewData(fn (): array => [
-                                'autoRun' => $this->mountedStep === 4 && ! $this->testStarted,
-                                'package' => static::installablePackage(),
-                                'status' => $this->installationStatus(),
-                                'lines' => $this->installationTranscript,
-                            ]),
-                        View::make('filament.pages.get-started.done')
-                            ->viewData(fn (): array => ['package' => static::installablePackage(), 'packages' => $this->syncStatus()])
-                            ->visible(fn (): bool => $this->passed === true),
-                        EmbeddedSchema::make('installInstructions')
-                            ->visible(fn (): bool => $this->passed === true),
-                        Actions::make([
-                            $this->runTestAction(),
-                            ImportFromSourceAction::make()->label('Add more packages')->visible(fn (): bool => $this->passed === true && auth()->user()?->can('create', Package::class)),
-                            Action::make('finish')->label('Finish')->color('primary')->url(Dashboard::getUrl())->visible(fn (): bool => $this->passed === true),
-                        ])->key('actions'),
-                    ]),
+                    ->schema(fn (): array => $this->testComponents()),
             ])
                 ->key('onboarding')
                 ->startOnStep(fn (): int => static::currentStep())
@@ -252,6 +230,158 @@ class GetStarted extends Page
                 ->nextAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['class' => 'hidden']))
                 ->previousAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['class' => 'hidden'])),
         ]);
+    }
+
+    private const WORKER_DOCS = 'https://github.com/AlwaysCuriousCo/package-pipeline/blob/main/docs/deployment.md#the-worker-and-the-scheduler-need-a-supervisor';
+
+    /**
+     * The first sync, built from the panel's own components so its spacing
+     * and buttons match the other steps: a section per package, with its
+     * own Remove, and the step's next move in the same actions row as the
+     * steps before it.
+     *
+     * @return list<Component>
+     */
+    private function syncComponents(): array
+    {
+        $status = $this->syncStatus();
+        $states = array_column($status, 'state');
+        $hasReady = in_array('ready', $states, true);
+        $allReady = $status !== [] && array_unique($states) === ['ready'];
+        $allSettled = ! in_array('syncing', $states, true) && ! in_array(true, array_column($status, 'awaitingReason'), true);
+        $expired = $this->syncWaitExpired;
+        $outcome = match (true) {
+            $allSettled && $hasReady && ! $allReady => 'some',
+            $allSettled && ! $hasReady && $status !== [] => 'none',
+            $expired => 'expired',
+            default => null,
+        };
+
+        return [
+            Group::make([
+                Text::make('This is the first sync. The registry copies each tagged release from GitHub and packs it into a download Composer can install. This step moves on by itself when every package is ready.'),
+                ...($status === []
+                    ? [Text::make('Import a package first; its first sync starts as soon as it is imported.')]
+                    : array_map(fn (array $row): Section => $this->syncRow($row, $expired), $status)),
+            ])
+                ->key('packages')
+                // Keep the final poll for all-ready render races until
+                // checkSync redirects.
+                ->extraAttributes($this->mountedStep === 3 && ! $expired && (! $allSettled || $allReady)
+                    ? ['wire:poll.3s.visible' => 'checkSync']
+                    : []),
+            Callout::make("Some repositories can't be installed")
+                ->description('Remove them, or carry on: the installation test uses '.static::installablePackage()?->name.'.')
+                ->warning()
+                ->visible($outcome === 'some'),
+            Callout::make('No package is ready to install')
+                ->description("Every sync has finished, but none of them produced a version. Open a package's page to fix it and sync again, or remove it and choose another repository.")
+                ->danger()
+                ->visible($outcome === 'none'),
+            Callout::make('Still waiting for the first sync')
+                ->description('Check that the queue worker is running; packages may still be syncing.')
+                ->warning()
+                ->visible($outcome === 'expired'),
+            Actions::make([
+                Action::make('continueToTest')
+                    ->label('Continue to the installation test')
+                    ->color('primary')
+                    ->visible($outcome === 'some')
+                    ->action(fn () => $this->continueToInstallationTest()),
+                Action::make('recheck')
+                    ->label('Check again')
+                    ->color('gray')
+                    ->visible(in_array($outcome, ['none', 'expired'], true))
+                    ->action(fn () => $this->recheckSync()),
+                Action::make('workerDocs')
+                    ->label('Keeping the queue worker running')
+                    ->link()
+                    ->url(self::WORKER_DOCS, shouldOpenInNewTab: true)
+                    ->visible($outcome === 'expired'),
+            ])->key('actions'),
+        ];
+    }
+
+    /** @param PackageSyncStatus $row */
+    private function syncRow(array $row, bool $expired): Section
+    {
+        $package = $row['package'];
+
+        return Section::make(new HtmlString('<a href="'.e(static::packageUrl($package)).'" class="hover:underline">'.e($package->name).'</a>'))
+            ->key("package-{$package->id}")
+            ->compact()
+            ->headerActions([
+                Action::make('remove')
+                    ->label('Remove')
+                    ->color('danger')
+                    ->size('sm')
+                    ->requiresConfirmation()
+                    ->modalHeading("Remove {$package->name}?")
+                    ->modalDescription('It is removed from this registry. The repository on GitHub is not changed.')
+                    ->modalSubmitActionLabel('Remove')
+                    ->visible(in_array($row['state'], ['not a package', 'failed'], true)
+                        && in_array($package->id, session(self::PACKAGES_KEY, []), true)
+                        && (auth()->user()?->can('delete', $package) ?? false))
+                    ->action(fn () => $this->removePackage($package->id)),
+            ])
+            ->schema([
+                View::make('filament.pages.get-started.sync-row')->viewData(['row' => $row, 'expired' => $expired]),
+            ]);
+    }
+
+    /**
+     * The installation test and, once it passes, what to do next, with the
+     * same actions row at the bottom as every other step.
+     *
+     * @return list<Component>
+     */
+    private function testComponents(): array
+    {
+        $package = static::installablePackage();
+        $passed = $this->passed === true;
+
+        return [
+            Group::make([
+                Text::make("Testing {$package?->name}, the first package with a version. One package is enough: the test checks the registry's sign-in, package details and downloads.")
+                    ->visible($package !== null),
+                Text::make('Last, the registry installs one package the way your projects will: through its public address, checking access, package details and the download. It uses a temporary token (a password for this test only), then deletes it.'),
+                View::make('filament.pages.get-started.test')
+                    ->viewData(fn (): array => ['status' => $this->installationStatus()]),
+                Section::make('Request details')
+                    ->key('details')
+                    ->description('Each request the test made and its response, with credentials redacted.')
+                    ->compact()
+                    ->collapsible()
+                    ->collapsed()
+                    ->schema([
+                        View::make('filament.terminal')->viewData(fn (): array => [
+                            'lines' => $this->installationTranscript,
+                            'stream' => 'installation-test',
+                            'idle' => 'Requests and responses appear here as the test runs.',
+                        ]),
+                    ]),
+            ])
+                ->key('run')
+                ->extraAttributes($this->mountedStep === 4 && ! $this->testStarted ? ['wire:init' => 'autoRunTest'] : []),
+            Callout::make('Your registry is ready')
+                ->description('The metadata, authentication and download checks passed. Next, open a terminal in your PHP project and run the commands below to install '.($package->name ?? 'your package').' with Composer. The test does not run Composer’s dependency solver or install into a project.')
+                ->success()
+                ->visible($passed),
+            View::make('filament.pages.get-started.done')
+                ->viewData(fn (): array => ['packages' => $this->syncStatus()])
+                ->visible($passed),
+            Text::make($package === null ? '' : ($package->composerRepository->public
+                ? "This registry is public: anyone who can reach it can install {$package->name} without a token. To require one, open Composer repositories → {$package->composerRepository->name} and turn Public off."
+                : 'This registry is private, so your project needs a token: a password that lets it read packages. Generate token creates a read-only one; copy it while it is shown, and keep it out of source control.'))
+                ->visible($passed && $package !== null),
+            EmbeddedSchema::make('installInstructions')
+                ->visible($passed),
+            Actions::make([
+                $this->runTestAction(),
+                ImportFromSourceAction::make()->label('Add more packages')->visible(fn (): bool => $this->passed === true && auth()->user()?->can('create', Package::class)),
+                Action::make('finish')->label('Finish')->color('primary')->url(Dashboard::getUrl())->visible(fn (): bool => $this->passed === true),
+            ])->key('actions'),
+        ];
     }
 
     public function importForm(Schema $schema): Schema
