@@ -7,6 +7,7 @@ use App\Filament\Resources\GitHubApps\Pages\ManageGitHubApp;
 use App\Http\Controllers\GitHubAppRegistrationController;
 use App\Models\GitHubAppRegistration;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Utilities\Get;
@@ -53,10 +54,12 @@ class RegisterGitHubAppAction
                     ->default(GitHubAppOwner::Organization->value)
                     ->required()
                     ->live()
-                    ->afterStateUpdated(function (Set $set, mixed $state): void {
+                    ->afterStateUpdated(function (Get $get, Set $set, mixed $state): void {
                         if (self::owner($state) === GitHubAppOwner::Enterprise) {
                             $set('public', 0);
                         }
+
+                        self::updateDefaultName($get, $set);
                     }),
                 TextInput::make('owner')
                     ->label(fn (Get $get): string => self::owner($get('owner_type')) === GitHubAppOwner::Enterprise ? 'Enterprise slug' : 'Organisation')
@@ -66,7 +69,9 @@ class RegisterGitHubAppAction
                     ->visible(fn (Get $get): bool => self::owner($get('owner_type')) !== GitHubAppOwner::User)
                     ->required()
                     ->alphaDash()
-                    ->maxLength(100),
+                    ->maxLength(100)
+                    ->live()
+                    ->afterStateUpdated(fn (Get $get, Set $set) => self::updateDefaultName($get, $set)),
                 Radio::make('public')
                     ->label('Who can install it?')
                     ->options(fn (Get $get): array => self::owner($get('owner_type')) === GitHubAppOwner::Enterprise
@@ -86,12 +91,17 @@ class RegisterGitHubAppAction
                     ->required()
                     ->rules(['boolean'])
                     ->rule(fn (Get $get) => Rule::in(self::owner($get('owner_type')) === GitHubAppOwner::Enterprise ? [0] : [0, 1])),
+                Hidden::make('name_edited')
+                    ->default(false)
+                    ->dehydrated(false),
                 TextInput::make('name')
                     ->label('App name')
                     ->default(fn (): string => self::defaultName())
-                    ->helperText('Unique across GitHub. Name each environment\'s app after it, e.g. "Acme Packages (Staging)".')
+                    ->helperText('Unique across GitHub. Name each environment\'s app after it, e.g. "Acme Packages (Staging)". If GitHub says the name is taken, you can change it on the next page; the registry uses whatever name you create there.')
                     ->required()
-                    ->maxLength(self::MAX_NAME),
+                    ->maxLength(self::MAX_NAME)
+                    ->live()
+                    ->afterStateUpdated(fn (Set $set) => $set('name_edited', true)),
             ])
             // No return type: inside Livewire, redirect() hands back
             // Livewire's own Redirector rather than a RedirectResponse.
@@ -123,29 +133,50 @@ class RegisterGitHubAppAction
             });
     }
 
+    private static function updateDefaultName(Get $get, Set $set): void
+    {
+        if (! $get('name_edited')) {
+            $set('name', self::defaultName(self::owner($get('owner_type')) === GitHubAppOwner::User ? null : $get('owner')));
+        }
+    }
+
     /**
-     * A name for the app that is likely to be free.
-     *
-     * App names are unique across all of GitHub, so the bare APP_NAME — the
-     * same "Package Pipeline" on every install — is the one name certain to be
-     * taken. The site's own name makes it this deployment's: the host when it
-     * fits GitHub's 34 characters, otherwise the domain's own label
-     * ("acme" in packages.acme.test).
-     *
-     * On a host of three or more labels that label may be a shared platform's
-     * ("laravel" in *.laravel.cloud), which names no one's app, so the app's
-     * own name, trimmed to fit, comes before it there.
+     * Preserve the owner within GitHub's limit, shortening the app's name
+     * at a word boundary. Personal apps use this deployment's site instead.
      */
-    public static function defaultName(): string
+    public static function defaultName(?string $owner = null): string
     {
         $name = (string) config('app.name');
+
+        if ($owner !== null && $owner !== '') {
+            $available = self::MAX_NAME - mb_strlen($owner) - 2;
+
+            if ($available < 1) {
+                return mb_substr($owner, 0, self::MAX_NAME);
+            }
+
+            if (mb_strlen($name) > $available) {
+                $prefix = mb_substr($name, 0, $available);
+                if (! preg_match('/\s/u', mb_substr($name, $available, 1))) {
+                    $prefix = preg_replace('/\s+\S*$/u', '', $prefix) ?? $prefix;
+                }
+                $name = rtrim($prefix);
+            }
+
+            $name = preg_replace('/\s*\([^)]*$/u', '', $name) ?? $name;
+
+            return $name === '' ? mb_substr($owner, 0, self::MAX_NAME) : "{$name}: {$owner}";
+        }
+
         $host = (string) parse_url((string) config('app.url'), PHP_URL_HOST);
         $labels = explode('.', $host);
         $subdomain = count($labels) > 2;
-        $site = $subdomain ? $labels[count($labels) - 2] : $labels[0];
+        $platform = implode('.', array_slice($labels, -2));
+        $shared = $subdomain && in_array($platform, ['laravel.cloud', 'herokuapp.com', 'vercel.app', 'fly.dev', 'onrender.com'], true);
+        $site = $shared ? $labels[0] : ($subdomain ? $labels[count($labels) - 2] : $labels[0]);
 
         $candidates = $subdomain
-            ? ["{$name} ({$host})", "{$name} ({$site})", Str::limit($name, self::MAX_NAME, ''), $site, $name]
+            ? ["{$name} ({$host})", "{$name} ({$site})", $site, $name]
             : ["{$name} ({$host})", "{$name} ({$site})", $site, $name];
 
         foreach ($candidates as $candidate) {

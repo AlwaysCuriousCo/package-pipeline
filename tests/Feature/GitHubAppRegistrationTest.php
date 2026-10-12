@@ -661,15 +661,67 @@ class GitHubAppRegistrationTest extends TestCase
         ], $names->all());
     }
 
-    public function test_the_default_app_name_on_a_shared_platform_host_is_the_apps_own(): void
+    public function test_the_default_app_name_on_shared_platforms_uses_the_instance(): void
     {
-        config(['app.url' => 'https://acme-registry.laravel.cloud']);
+        config(['app.name' => 'Package Pipeline']);
 
-        config(['app.name' => 'Acme Packages (preview build)']);
-        $this->assertSame('Acme Packages (preview build)', RegisterGitHubAppAction::defaultName());
+        foreach (['laravel.cloud', 'herokuapp.com', 'vercel.app', 'fly.dev', 'onrender.com'] as $platform) {
+            config(['app.url' => "https://acme-registry.{$platform}"]);
+            $this->assertSame('Package Pipeline (acme-registry)', RegisterGitHubAppAction::defaultName());
+        }
+    }
 
-        config(['app.name' => 'Acme Packages for the Acme Organisation']);
-        $this->assertSame('Acme Packages for the Acme Organis', RegisterGitHubAppAction::defaultName());
+    public function test_the_organisation_default_uses_the_app_name_and_owner(): void
+    {
+        config(['app.name' => 'Acme Packages']);
+
+        Livewire::test(ManageGitHubApp::class)
+            ->mountAction('register')
+            ->assertMountedActionModalSee('If GitHub says the name is taken, you can change it on the next page; the registry uses whatever name you create there.')
+            ->fillForm(['owner' => 'acme'])
+            ->assertSchemaStateSet(['name' => 'Acme Packages: acme']);
+    }
+
+    public function test_the_enterprise_default_uses_the_app_name_and_owner(): void
+    {
+        config(['app.name' => 'Acme Packages']);
+
+        Livewire::test(ManageGitHubApp::class)
+            ->mountAction('register')
+            ->fillForm(['owner_type' => GitHubAppOwner::Enterprise->value, 'owner' => 'acme-enterprise'])
+            ->assertSchemaStateSet(['name' => 'Acme Packages: acme-enterprise']);
+    }
+
+    public function test_the_default_tracks_owner_and_type_until_the_name_is_edited(): void
+    {
+        config(['app.name' => 'Acme Packages', 'app.url' => 'https://acme-registry.laravel.cloud']);
+
+        Livewire::test(ManageGitHubApp::class)
+            ->mountAction('register')
+            ->fillForm(['owner' => 'acme'])
+            ->assertSchemaStateSet(['name' => 'Acme Packages: acme'])
+            ->fillForm(['owner' => 'acme-team'])
+            ->assertSchemaStateSet(['name' => 'Acme Packages: acme-team'])
+            ->fillForm(['owner_type' => GitHubAppOwner::User->value])
+            ->assertSchemaStateSet(['name' => 'Acme Packages (acme-registry)'])
+            ->fillForm(['owner_type' => GitHubAppOwner::Enterprise->value])
+            ->assertSchemaStateSet(['name' => 'Acme Packages: acme-team'])
+            ->fillForm(['name' => 'My custom app'])
+            ->fillForm(['owner' => 'another-team', 'owner_type' => GitHubAppOwner::Organization->value])
+            ->assertSchemaStateSet(['name' => 'My custom app'])
+            ->fillForm(['owner_type' => GitHubAppOwner::User->value])
+            ->assertSchemaStateSet(['name' => 'My custom app']);
+    }
+
+    public function test_the_owner_is_preserved_when_the_app_name_needs_shortening(): void
+    {
+        config(['app.name' => 'Acme Labs Packages (preview)']);
+
+        $this->assertSame('Acme Labs Packages: acme-team', RegisterGitHubAppAction::defaultName('acme-team'));
+        $this->assertSame('Acme Labs: abcdefghijklmnopqrst', RegisterGitHubAppAction::defaultName('abcdefghijklmnopqrst'));
+        $this->assertSame(str_repeat('a', 34), RegisterGitHubAppAction::defaultName(str_repeat('a', 40)));
+        $this->assertSame(str_repeat('a', 33), RegisterGitHubAppAction::defaultName(str_repeat('a', 33)));
+        $this->assertSame('A: '.str_repeat('a', 31), RegisterGitHubAppAction::defaultName(str_repeat('a', 31)));
     }
 
     public function test_the_enterprise_prefill_describes_the_same_app_as_the_manifest(): void
