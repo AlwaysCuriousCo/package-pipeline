@@ -239,6 +239,8 @@ class GetStartedTest extends TestCase
         $page = Livewire::test(GetStarted::class)
             ->assertSeeText('Waiting for the queue worker to start…')
             ->assertSeeText('The registry copies each tagged release from GitHub')
+            ->assertSeeText('This is the first sync')
+            ->assertSeeText('the background process that runs syncs')
             ->assertSeeHtml('wire:poll.3s.visible="checkSync"')
             ->assertSeeHtml('aria-label="Time waiting for sync"');
 
@@ -376,6 +378,9 @@ class GetStartedTest extends TestCase
     {
         $page = Livewire::test(GetStarted::class)
             ->assertSeeText('Only select repositories')
+            // Written for someone who has never met a GitHub App.
+            ->assertSeeText('The connection is a GitHub App: a limited, read-only identity')
+            ->assertSeeText('Installing it on an account lets that account decide which repositories the registry may read')
             ->mountAction(TestAction::make('connectGithub')->schemaComponent('onboarding.connect.actions'))
             ->assertMountedActionModalSee('Only select repositories');
         $this->assertHiddenOnboardingFooter($page->html());
@@ -410,6 +415,9 @@ class GetStartedTest extends TestCase
             ->assertSet('importData.projects', ['https://github.com/acme/widgets'])
             ->assertSet('importData.repository_id', Repository::default()->id)
             ->assertSeeText('A package is a reusable PHP library')
+            ->assertSeeText('Composer, PHP\'s package manager')
+            ->assertSeeText('the file that describes a PHP project')
+            ->assertSeeText('the address your projects install these packages from')
             ->assertSeeText('Likely packages are pre-ticked')
             ->assertSeeText('acme/widgets')
             ->assertSeeText('Import packages')

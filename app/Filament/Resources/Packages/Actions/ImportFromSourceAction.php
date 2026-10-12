@@ -133,15 +133,15 @@ class ImportFromSourceAction
                 ->selectablePlaceholder(false)
                 ->hidden(fn (): bool => $inline && Repository::query()->count() === 1)
                 ->dehydratedWhenHidden(),
-            ...($inline ? [Text::make('Default is this registry’s Composer repository: it serves the selected packages to your projects.')
+            ...($inline ? [Text::make('Default is this registry’s Composer repository: the address your projects install these packages from. It is separate from your repositories on GitHub.')
                 ->visible(fn (): bool => Repository::query()->count() === 1)] : []),
             Toggle::make('create_webhook')
                 ->label('Sync automatically on push')
                 ->default(true)
-                ->helperText($inline ? 'Keep this on to sync when code is pushed to GitHub. Turn it off to rely on scheduled syncs or sync manually.' : 'Arranges a webhook per project, unless an installed app\'s webhook already covers it.')
+                ->helperText($inline ? 'A sync copies new releases from GitHub into the registry. Keep this on to sync whenever code is pushed to GitHub; turn it off only if you would rather sync on a schedule or by hand.' : 'Arranges a webhook per project, unless an installed app\'s webhook already covers it.')
                 ->hidden(fn (Get $get): bool => $inline && (Source::query()->find($get('source_id'))?->usesInstallation() ?? false))
                 ->dehydratedWhenHidden(),
-            ...($inline ? [Text::make('Automatic sync stays enabled. The GitHub App’s webhook (push notifications) is used when configured; the import reports any setup still needed.')
+            ...($inline ? [Text::make('Automatic sync stays enabled: whenever code is pushed, the GitHub App tells the registry, which copies the new release (a sync). The import reports any setup still needed.')
                 ->visible(fn (Get $get): bool => Source::query()->find($get('source_id'))?->usesInstallation() ?? false)] : []),
         ];
     }

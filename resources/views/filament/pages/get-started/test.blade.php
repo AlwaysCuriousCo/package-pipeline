@@ -1,5 +1,5 @@
 <div @if ($autoRun) wire:init="autoRunTest" @endif x-data="{ showDetails: false }">
-    <p style="font-size: 0.875rem; margin-bottom: 0.75rem">This checks the public registry address, access credentials, package details and download. It uses a temporary token (a password for this test only), then deletes it.</p>
+    <p style="font-size: 0.875rem; margin-bottom: 0.75rem">Last, the registry installs one package the way your projects will: through its public address, checking access, package details and the download. It uses a temporary token (a password for this test only), then deletes it.</p>
     <div wire:stream="installation-status">
         @include('filament.pages.get-started.test-status', ['status' => $status])
     </div>

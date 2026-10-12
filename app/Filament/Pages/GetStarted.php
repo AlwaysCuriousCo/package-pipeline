@@ -187,16 +187,17 @@ class GetStarted extends Page
                     ->key('connect')
                     ->icon(Heroicon::OutlinedLink)
                     ->schema([
-                        Text::make('The account your packages live in. The first connection also registers this registry\'s GitHub App with GitHub, once; then GitHub asks which repositories it may read, and brings you back here.'),
-                        Text::make('On GitHub, choose ‘Only select repositories’ and pick the ones to serve. GitHub asks you to approve the account and repository access.'),
+                        Text::make('This registry serves PHP packages from your GitHub repositories to your projects. Start by connecting the GitHub account, personal or organisation, that holds those repositories.'),
+                        Text::make('The connection is a GitHub App: a limited, read-only identity that GitHub creates for this registry the first time. Installing it on an account lets that account decide which repositories the registry may read. It can never change them.'),
+                        Text::make('On GitHub, choose ‘Only select repositories’ and pick the ones to serve. GitHub asks you to approve the account and repository access, then brings you back here.'),
                         Actions::make([$this->connectAction()])->key('actions'),
                     ]),
                 Step::make('Choose packages')
                     ->key('import')
                     ->icon(Heroicon::OutlinedCloudArrowDown)
                     ->schema([
-                        Text::make('A package is a reusable PHP library that Composer can add to your projects.'),
-                        Text::make('Likely packages are pre-ticked because their composer.json describes a library rather than an application.'),
+                        Text::make('A package is a reusable PHP library that Composer, PHP\'s package manager, can add to your projects. The repositories you pick are imported as packages here.'),
+                        Text::make('Likely packages are pre-ticked because their composer.json (the file that describes a PHP project) says they are a library rather than an application.'),
                         EmbeddedSchema::make('importForm'),
                         Actions::make([$this->importAction()])->key('actions'),
                     ]),

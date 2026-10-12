@@ -150,6 +150,7 @@ class GetStartedInstallationTest extends TestCase
         $this->fakeRegistry();
         $page = Livewire::test(GetStarted::class);
         $this->runPageTest($page);
+        $page->assertSeeText('your project needs a token: a password that lets it read packages');
         $page->callAction(TestAction::make('generateToken')->schemaComponent('install', 'installInstructions'), data: ['name' => 'My project', 'expires_at' => null])
             ->assertHasNoActionErrors();
         $plain = $page->get('plainTextToken');

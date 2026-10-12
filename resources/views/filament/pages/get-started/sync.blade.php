@@ -13,7 +13,7 @@
         .dark .pp-onboarding-sync-track { background-color: rgba(255, 255, 255, 0.1); }
     </style>
 
-    <p>The registry copies each tagged release from GitHub and packs it into a download Composer can install.</p>
+    <p>This is the first sync. The registry copies each tagged release from GitHub and packs it into a download Composer can install. This step moves on by itself when the first version is ready.</p>
     @if ($package === null)
         <p>Import a package first; its first sync starts as soon as it is imported.</p>
     @else
@@ -29,7 +29,7 @@
                 @elseif ($status['running'])
                     Importing versions: {{ $status['imported'] }} of {{ $status['total'] }} · building an archive for each
                 @elseif (! $status['hasBatch'] && blank($package->sync_error))
-                    Waiting for the queue worker to start…
+                    Waiting for the queue worker to start… (the queue worker is the background process that runs syncs)
                 @else
                     No versions are ready to install yet.
                 @endif
