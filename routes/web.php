@@ -6,6 +6,7 @@ use App\Http\Controllers\Billing\RegisterController;
 use App\Http\Controllers\Billing\SubscriptionTokenController;
 use App\Http\Controllers\Billing\WelcomeController;
 use App\Http\Controllers\DownloadExportController;
+use App\Http\Controllers\GitHubAppRegistrationController;
 use App\Http\Controllers\GitHubWebhookController;
 use App\Http\Controllers\GitLabWebhookController;
 use App\Http\Controllers\MerchantWebhookController;
@@ -215,4 +216,12 @@ Route::middleware('auth')->group(function () {
         ->name('sources.connect.new');
     Route::get('/sources/{source}/connect', [SourceConnectionController::class, 'connect'])
         ->name('sources.connect');
+
+    // Registering the app itself from a manifest. The panel page sends the
+    // admin to the first, which posts the manifest to GitHub; GitHub creates
+    // the app and returns them to the second, the manifest's redirect URL.
+    Route::get('/sources/github-app/manifest', [GitHubAppRegistrationController::class, 'manifest'])
+        ->name('github-app.manifest');
+    Route::get('/sources/github-app/registered', [GitHubAppRegistrationController::class, 'registered'])
+        ->name('github-app.registered');
 });

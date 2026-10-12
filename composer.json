@@ -65,7 +65,8 @@
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
             "@php artisan key:generate",
             "@php artisan migrate --force",
-            "@php artisan db:seed --force"
+            "@php artisan db:seed --force",
+            "@php -r \"echo PHP_EOL.'Next, create your admin login: php artisan admin:create --email=you@example.com'.PHP_EOL;\""
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",

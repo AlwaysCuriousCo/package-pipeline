@@ -25,8 +25,11 @@ class SourcesTable
         return $table
             ->defaultSort('name')
             ->emptyStateIcon(Heroicon::OutlinedCloud)
-            ->emptyStateHeading('No sources connected')
-            ->emptyStateDescription('Connect a GitHub account and every package under it authenticates through this source — no token per repository.')
+            // The first thing a new install shows, so it is the onboarding:
+            // what a source is, and the one button that gets there.
+            ->emptyStateHeading('Connect your first GitHub account')
+            ->emptyStateDescription(fn (): string => 'A source is a GitHub account packages are pulled from. Every package under it authenticates through the source — no token per repository.'
+                .(ConnectGitHubAction::isAvailable() ? '' : ' Connecting the first one also registers this registry\'s GitHub App, once.'))
             ->emptyStateActions([
                 ConnectGitHubAction::make(),
             ])

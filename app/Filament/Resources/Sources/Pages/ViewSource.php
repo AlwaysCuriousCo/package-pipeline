@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Sources\Pages;
 
 use App\Filament\Concerns\SwitchesRecords;
+use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Filament\Resources\Sources\Actions\ConnectSourceAction;
 use App\Filament\Resources\Sources\Actions\DisconnectSourceAction;
 use App\Filament\Resources\Sources\Actions\TestSourceAction;
@@ -19,6 +20,7 @@ class ViewSource extends ViewRecord
     protected function getHeaderActions(): array
     {
         return [
+            ImportFromSourceAction::make()->arguments(['source' => $this->getRecord()->getKey()]),
             ConnectSourceAction::make(),
             TestSourceAction::make(),
             EditAction::make(),

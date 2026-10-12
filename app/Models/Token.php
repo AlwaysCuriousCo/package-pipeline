@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 
@@ -58,6 +59,7 @@ class Token extends Model
         return [
             'abilities' => 'array',
             'last_used_at' => 'datetime',
+            'installation_test' => 'boolean',
             'expires_at' => 'datetime',
         ];
     }
@@ -135,6 +137,24 @@ class Token extends Model
      * username), so a deploy token named "user:ci" would send "ci:pp_…" as
      * its password and never authenticate.
      */
+    /**
+     * A read token for one installation test, made and later deleted without
+     * an audit row each time — the test records the one entry that matters,
+     * that it ran. Short-lived even if the run never gets to delete it.
+     */
+    public static function issueForInstallationTest(User $user): NewToken
+    {
+        // One transaction, so a token is never left behind unmarked: an
+        // ordinary-looking read token is exactly what a test must not leak.
+        return activity()->withoutLogs(fn (): NewToken => DB::transaction(function () use ($user): NewToken {
+            $new = static::issue($user, 'Installation test', [TokenAbility::RepositoryRead], now()->addMinutes(5));
+
+            $new->token->forceFill(['installation_test' => true])->saveQuietly();
+
+            return $new;
+        }));
+    }
+
     public function composerUsername(): string
     {
         $principal = $this->tokenable;

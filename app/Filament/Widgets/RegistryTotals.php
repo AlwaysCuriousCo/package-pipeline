@@ -7,6 +7,7 @@ use App\Models\PackageVersion;
 use App\Models\Repository;
 use Filament\Widgets\Concerns\CanPoll;
 use Filament\Widgets\Widget;
+use Illuminate\Contracts\Auth\Authenticatable;
 use MrFelipeMartins\Wirebones\Attributes\Wirebone;
 
 /**
@@ -66,6 +67,16 @@ class RegistryTotals extends Widget
         ];
     }
 
+    public static function forget(?Authenticatable $user): void
+    {
+        cache()->forget(self::cacheKey($user));
+    }
+
+    private static function cacheKey(?Authenticatable $user): string
+    {
+        return 'widget:registry-totals:user:'.($user?->getAuthIdentifier() ?? 'guest');
+    }
+
     /**
      * The four figures, keyed by what the card calls them.
      *
@@ -81,7 +92,7 @@ class RegistryTotals extends Widget
         $user = auth()->user();
 
         return cache()->remember(
-            'widget:registry-totals:user:'.($user?->getAuthIdentifier() ?? 'guest'),
+            self::cacheKey($user),
             self::CACHE_SECONDS,
             function () use ($user): array {
                 $repositories = Repository::query()
