@@ -194,41 +194,52 @@ class ProcessMerchantEvent implements ShouldQueue
     /**
      * A full refund withdraws access immediately — the operator's chosen
      * policy. Partial refunds update the mirror and change nothing else.
+     *
+     * The purchase is found through its invoice, or, for a one-time
+     * purchase whose invoice belongs to no subscription (or that has no
+     * invoice), through the checkout that bought it.
      */
     private function invoiceRefunded(MerchantEvent $event): void
     {
-        $payload = $event->payload;
+        $refund = $event->merchant->client()->refundFromEvent($this->normalised($event));
 
-        $invoiceExternalId = $payload['invoice'] ?? null;
+        $invoice = $refund->invoiceExternalId !== null
+            ? MerchantReference::resolve($event->merchant, $refund->invoiceExternalId)
+            : null;
 
-        if (! is_string($invoiceExternalId)) {
+        if ($invoice instanceof Invoice) {
+            $invoice->forceFill([
+                'amount_refunded' => $refund->amountRefunded ?: $invoice->amount_refunded,
+                'refunded_at' => now(),
+            ])->save();
+        } else {
+            $invoice = null;
+        }
+
+        if (! ($refund->fullyRefunded ?? $invoice?->fullyRefunded() ?? false)) {
             return;
         }
 
-        $invoice = MerchantReference::resolve($event->merchant, $invoiceExternalId);
+        $subscription = $invoice?->subscription;
 
-        if (! $invoice instanceof Invoice) {
-            return;
+        if ($subscription === null && $refund->purchaseExternalId !== null) {
+            $purchase = MerchantReference::resolve($event->merchant, $refund->purchaseExternalId);
+            $subscription = $purchase instanceof Subscription ? $purchase : null;
         }
-
-        $invoice->forceFill([
-            'amount_refunded' => (int) ($payload['amount_refunded'] ?? $invoice->amount_refunded),
-            'refunded_at' => now(),
-        ])->save();
-
-        if (! $invoice->fullyRefunded()) {
-            return;
-        }
-
-        $subscription = $invoice->subscription;
 
         if ($subscription !== null && $subscription->grantsAccess()) {
+            // Suspended as well as canceled: cancellation alone hands the
+            // plan's lapse behaviour the decision, and a freeze-at-version
+            // plan would keep what was released while the refunded payment
+            // stood. A refund is a hard stop, as a dispute is.
             $subscription->forceFill([
                 'status' => SubscriptionStatus::Canceled,
                 'canceled_at' => now(),
                 'ends_at' => now(),
                 'grace_ends_at' => null,
                 'last_event_at' => now(),
+                'suspended_at' => now(),
+                'suspension_reason' => 'Payment refunded',
             ])->save();
 
             (new EntitlementProjector)->project($subscription);
@@ -245,15 +256,7 @@ class ProcessMerchantEvent implements ShouldQueue
      */
     private function disputeOpened(MerchantEvent $event): void
     {
-        $normalised = new NormalisedEvent(
-            externalId: $event->external_id,
-            type: $event->type,
-            kind: $this->kind,
-            payload: $event->payload,
-            occurredAt: $this->occurredAt,
-        );
-
-        $customerExternalId = $event->merchant->client()->customerExternalId($normalised);
+        $customerExternalId = $event->merchant->client()->customerExternalId($this->normalised($event));
         $customer = $this->customerFrom($customerExternalId);
 
         $projector = new EntitlementProjector;
@@ -278,6 +281,21 @@ class ProcessMerchantEvent implements ShouldQueue
                 : "A charge was disputed by a customer this registry cannot match (merchant customer: {$customerExternalId}). Review it at the merchant.",
             url('/admin'),
         ));
+    }
+
+    /**
+     * The recorded event in the shape a driver reads, for the handlers that
+     * ask the driver about it rather than about one of its objects.
+     */
+    private function normalised(MerchantEvent $event): NormalisedEvent
+    {
+        return new NormalisedEvent(
+            externalId: $event->external_id,
+            type: $event->type,
+            kind: $this->kind,
+            payload: $event->payload,
+            occurredAt: $this->occurredAt,
+        );
     }
 
     private function mirrorInvoice(MerchantEvent $event): ?Invoice

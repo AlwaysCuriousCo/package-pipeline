@@ -22,6 +22,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Testing\TestResponse;
 use Symfony\Component\HttpFoundation\Response;
+use Tests\Support\FakeStripeHttp;
 use Tests\TestCase;
 
 /**
@@ -47,6 +48,13 @@ class MerchantWebhookTest extends TestCase
             'services.stripe.secret' => 'sk_test_fake',
             'services.stripe.webhook_secret' => self::SECRET,
         ]);
+    }
+
+    protected function tearDown(): void
+    {
+        FakeStripeHttp::uninstall();
+
+        parent::tearDown();
     }
 
     /**
@@ -254,6 +262,155 @@ class MerchantWebhookTest extends TestCase
         );
     }
 
+    public function test_a_refund_that_does_not_name_its_invoice_finds_it_through_the_payment(): void
+    {
+        // API versions from 2025-03-31.basil dropped `invoice` from the
+        // charge; the invoice is reached through the charge's payment intent.
+        [$user, $package, $subscription, $customer] = $this->activeSubscription();
+
+        $invoice = Invoice::factory()->create([
+            'billing_customer_id' => $customer->getKey(),
+            'subscription_id' => $subscription->getKey(),
+            'subtotal' => 1000,
+            'total' => 1000,
+        ]);
+        MerchantReference::remember($invoice, $invoice->merchant, 'in_basil');
+
+        FakeStripeHttp::install()
+            ->answerList('/v1/invoice_payments', [['id' => 'inpay_1', 'object' => 'invoice_payment', 'invoice' => 'in_basil']])
+            ->answerList('/v1/checkout/sessions', []);
+
+        $this->deliver($this->event('evt_refund_basil', 'charge.refunded', [
+            'id' => 'ch_1',
+            'object' => 'charge',
+            'payment_intent' => 'pi_1',
+            'customer' => $customer->merchant_customer_id,
+            'amount' => 1000,
+            'amount_refunded' => 1000,
+            'refunded' => true,
+        ]))->assertNoContent();
+
+        $this->assertSame(SubscriptionStatus::Canceled, $subscription->fresh()->status);
+        $this->assertSame(1000, $invoice->fresh()->amount_refunded);
+        $this->assertFalse(
+            Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
+        );
+    }
+
+    public function test_a_full_refund_of_a_one_time_purchase_withdraws_access(): void
+    {
+        // A one-time purchase belongs to no subscription at the merchant, so
+        // no invoice leads back to it; the checkout session that took the
+        // payment does. A refund also outranks the plan's freeze: nothing
+        // stays installable from a purchase that was paid back.
+        [$user, $package, $subscription] = $this->oneTimePurchase('cs_refund');
+
+        FakeStripeHttp::install()
+            ->answerList('/v1/invoice_payments', [])
+            ->answerList('/v1/checkout/sessions', [['id' => 'cs_refund', 'object' => 'checkout.session']]);
+
+        $this->deliver($this->event('evt_refund_once', 'charge.refunded', [
+            'id' => 'ch_2',
+            'object' => 'charge',
+            'payment_intent' => 'pi_2',
+            'customer' => $subscription->customer->merchant_customer_id,
+            'amount' => 4900,
+            'amount_refunded' => 4900,
+            'refunded' => true,
+        ]))->assertNoContent();
+
+        $this->assertSame(SubscriptionStatus::Canceled, $subscription->fresh()->status);
+        $this->assertFalse(
+            Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
+        );
+    }
+
+    public function test_a_refund_of_a_one_time_purchase_that_names_its_invoice_withdraws_access(): void
+    {
+        // Before basil the charge names its invoice, but a one-time purchase's
+        // invoice belongs to no subscription (the mirror stores it with none),
+        // so the purchase is still found through its checkout session.
+        [$user, $package, $subscription] = $this->oneTimePurchase('cs_legacy');
+
+        $invoice = Invoice::factory()->create([
+            'billing_customer_id' => $subscription->billing_customer_id,
+            'subscription_id' => null,
+            'subtotal' => 4900,
+            'total' => 4900,
+        ]);
+        MerchantReference::remember($invoice, $invoice->merchant, 'in_once');
+
+        FakeStripeHttp::install()
+            ->answerList('/v1/checkout/sessions', [['id' => 'cs_legacy', 'object' => 'checkout.session']]);
+
+        $this->deliver($this->event('evt_refund_legacy', 'charge.refunded', [
+            'id' => 'ch_4',
+            'object' => 'charge',
+            'invoice' => 'in_once',
+            'payment_intent' => 'pi_4',
+            'customer' => $subscription->customer->merchant_customer_id,
+            'amount' => 4900,
+            'amount_refunded' => 4900,
+            'refunded' => true,
+        ]))->assertNoContent();
+
+        $this->assertSame(SubscriptionStatus::Canceled, $subscription->fresh()->status);
+        $this->assertFalse(
+            Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
+        );
+    }
+
+    public function test_a_full_refund_outranks_a_freeze_at_version_plan(): void
+    {
+        // The refund is matched (its invoice names the purchase); what is under
+        // test is that cancelling does not hand the plan's freeze a keepsake.
+        [$user, $package, $subscription] = $this->oneTimePurchase('cs_freeze');
+
+        $invoice = Invoice::factory()->create([
+            'billing_customer_id' => $subscription->billing_customer_id,
+            'subscription_id' => $subscription->getKey(),
+            'subtotal' => 4900,
+            'total' => 4900,
+        ]);
+        MerchantReference::remember($invoice, $invoice->merchant, 'in_freeze');
+
+        $this->deliver($this->event('evt_refund_freeze', 'charge.refunded', [
+            'id' => 'ch_5',
+            'invoice' => 'in_freeze',
+            'customer' => $subscription->customer->merchant_customer_id,
+            'amount_refunded' => 4900,
+        ]))->assertNoContent();
+
+        $this->assertSame(SubscriptionStatus::Canceled, $subscription->fresh()->status);
+        $this->assertFalse(
+            Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
+        );
+    }
+
+    public function test_a_partial_refund_of_a_one_time_purchase_keeps_access(): void
+    {
+        [$user, $package, $subscription] = $this->oneTimePurchase('cs_partial');
+
+        FakeStripeHttp::install()
+            ->answerList('/v1/invoice_payments', [])
+            ->answerList('/v1/checkout/sessions', [['id' => 'cs_partial', 'object' => 'checkout.session']]);
+
+        $this->deliver($this->event('evt_refund_part', 'charge.refunded', [
+            'id' => 'ch_3',
+            'object' => 'charge',
+            'payment_intent' => 'pi_3',
+            'customer' => $subscription->customer->merchant_customer_id,
+            'amount' => 4900,
+            'amount_refunded' => 1000,
+            'refunded' => false,
+        ]))->assertNoContent();
+
+        $this->assertSame(SubscriptionStatus::Active, $subscription->fresh()->status);
+        $this->assertTrue(
+            Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
+        );
+    }
+
     public function test_a_dispute_suspends_every_subscription_of_the_customer(): void
     {
         [$user, $package, $subscription, $customer] = $this->activeSubscription();
@@ -268,6 +425,49 @@ class MerchantWebhookTest extends TestCase
         $this->assertFalse(
             Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
         );
+    }
+
+    /**
+     * A completed one-time purchase on a freeze-at-version plan, remembered
+     * by the checkout session that bought it, as checkoutCompleted leaves it.
+     *
+     * @return array{0: User, 1: Package, 2: Subscription}
+     */
+    private function oneTimePurchase(string $sessionId): array
+    {
+        $repository = Repository::factory()->create(['path' => 'paid', 'public' => false]);
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'repository_id' => $repository->id]);
+
+        $plan = Plan::factory()->perpetual()->create();
+        $plan->entitlements()->create([
+            'grantable_type' => Package::class,
+            'grantable_id' => $package->getKey(),
+        ]);
+
+        $user = User::factory()->create();
+        $customer = BillingCustomer::factory()->stripe()->create([
+            'billable_type' => $user->getMorphClass(),
+            'billable_id' => $user->getKey(),
+        ]);
+
+        $subscription = Subscription::factory()->create([
+            'billing_customer_id' => $customer->getKey(),
+            'plan_id' => $plan->getKey(),
+            'plan_price_id' => PlanPrice::factory()->oneTime()->create(['plan_id' => $plan->getKey()])->getKey(),
+            'merchant' => MerchantProvider::Stripe,
+            'status' => SubscriptionStatus::Active,
+            'current_period_start' => now(),
+            'current_period_end' => now()->addMonths(12),
+        ]);
+        MerchantReference::remember($subscription, MerchantProvider::Stripe, $sessionId);
+
+        (new EntitlementProjector)->project($subscription);
+
+        $this->assertTrue(
+            Package::query()->visibleToUser($user->fresh())->whereKey($package->getKey())->exists(),
+        );
+
+        return [$user, $package, $subscription];
     }
 
     /**

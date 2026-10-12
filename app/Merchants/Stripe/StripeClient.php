@@ -11,6 +11,7 @@ use App\Merchants\Values\CheckoutRequest;
 use App\Merchants\Values\CheckoutSession;
 use App\Merchants\Values\NormalisedEvent;
 use App\Merchants\Values\RemoteInvoice;
+use App\Merchants\Values\RemoteRefund;
 use App\Merchants\Values\RemoteSubscription;
 use App\Models\BillingCustomer;
 use App\Models\MerchantReference;
@@ -328,6 +329,67 @@ class StripeClient implements MerchantClient
         }
 
         return null;
+    }
+
+    /**
+     * A charge.refunded payload, traced back to the purchase it reverses.
+     *
+     * API versions before 2025-03-31.basil named the charge's invoice on the
+     * charge; later ones dropped the field, so the invoice is found through
+     * the charge's payment intent instead. A one-time purchase's invoice
+     * belongs to no subscription, so the checkout session that took the
+     * payment is found too: its id is the reference a one-time purchase is
+     * remembered by.
+     */
+    public function refundFromEvent(NormalisedEvent $event): RemoteRefund
+    {
+        $payload = $event->payload;
+
+        $invoice = $payload['invoice'] ?? null;
+        $paymentIntent = $payload['payment_intent'] ?? null;
+        $session = null;
+
+        if (is_string($paymentIntent) && $paymentIntent !== '') {
+            if (! is_string($invoice)) {
+                $payment = $this->stripe->invoicePayments->all([
+                    'payment' => ['type' => 'payment_intent', 'payment_intent' => $paymentIntent],
+                    'limit' => 1,
+                ])->data[0] ?? null;
+
+                $invoice = $payment !== null ? $this->id($payment->invoice) : null;
+            }
+
+            $session = $this->stripe->checkout->sessions->all([
+                'payment_intent' => $paymentIntent,
+                'limit' => 1,
+            ])->data[0]->id ?? null;
+        }
+
+        $amount = $payload['amount'] ?? null;
+        $refunded = (int) ($payload['amount_refunded'] ?? 0);
+
+        return new RemoteRefund(
+            invoiceExternalId: is_string($invoice) ? $invoice : null,
+            purchaseExternalId: $session,
+            amountRefunded: $refunded,
+            fullyRefunded: match (true) {
+                is_bool($payload['refunded'] ?? null) => $payload['refunded'],
+                is_int($amount) => $refunded >= $amount,
+                default => null,
+            },
+        );
+    }
+
+    /**
+     * An expandable field's id, whether Stripe sent the id or the object.
+     */
+    private function id(mixed $field): ?string
+    {
+        return match (true) {
+            is_string($field) => $field,
+            is_object($field) && isset($field->id) => (string) $field->id,
+            default => null,
+        };
     }
 
     /**
