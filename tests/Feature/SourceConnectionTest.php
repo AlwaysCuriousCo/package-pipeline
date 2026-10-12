@@ -519,7 +519,7 @@ class SourceConnectionTest extends TestCase
         $this->get(route('sources.github.callback', [
             'installation_id' => 42,
             'state' => session('sources.github.pending')['state'],
-        ]))->assertRedirect(GetStarted::getUrl());
+        ]))->assertRedirect(GetStarted::getUrl(['source' => Source::sole()->id]));
 
         // The wizard's next step is importing, so the notification offers no
         // import of its own.

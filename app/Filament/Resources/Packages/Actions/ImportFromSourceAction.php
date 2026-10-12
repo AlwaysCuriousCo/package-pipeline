@@ -9,13 +9,16 @@ use App\Models\Repository;
 use App\Models\Source;
 use App\Services\GitHub\GitHubSourceClient;
 use App\Services\GitHub\WebhookRegistrar;
+use App\Services\SourceImportOptions;
 use App\Sources\Project;
 use App\Sources\ReadsComposerManifests;
 use Filament\Actions\Action;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Component as SchemaComponent;
 use Filament\Schemas\Components\Text;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
@@ -63,42 +66,11 @@ class ImportFromSourceAction
             ->fillForm(function (array $arguments): array {
                 $sourceId = self::sourceId($arguments);
 
-                return [
-                    'source_id' => $sourceId,
-                    'projects' => self::likelyPackages($sourceId),
-                    'repository_id' => Repository::default()->id,
-                    'create_webhook' => true,
-                ];
+                return self::defaultData($sourceId);
             })
             ->steps(fn (array $arguments): array => array_values(array_filter([
                 $accessStep ? self::accessStep(self::sourceId($arguments)) : null,
-                Step::make('Choose repositories')->schema([
-                    Select::make('source_id')
-                        ->label('Source')
-                        ->options(fn (): array => Source::options())
-                        ->required()
-                        ->live()
-                        ->afterStateUpdated(fn (Set $set, mixed $state) => $set('projects', self::likelyPackages($state)))
-                        ->helperText('The connected account whose projects to browse.'),
-                    Select::make('projects')
-                        ->multiple()
-                        ->required()
-                        ->searchable()
-                        ->options(fn (Get $get): array => self::projectOptions($get('source_id')))
-                        ->getSearchResultsUsing(fn (string $search, Get $get): array => self::projectOptions($get('source_id'), $search))
-                        ->helperText('Repositories with a composer.json come first, and those that are packages rather than applications are already ticked. Type to search; projects already onboarded are skipped.'),
-                    Select::make('repository_id')
-                        ->label('Composer repository')
-                        ->helperText('Default is this registry’s starting Composer repository: it serves packages to Composer, and is separate from the repositories on GitHub. Choose another if these packages should be served separately.')
-                        ->options(fn (): array => Repository::query()->orderBy('name')->pluck('name', 'id')->all())
-                        ->default(fn (): int => Repository::default()->id)
-                        ->required()
-                        ->selectablePlaceholder(false),
-                    Toggle::make('create_webhook')
-                        ->label('Sync automatically on push')
-                        ->default(true)
-                        ->helperText('Arranges a webhook per project, unless an installed app\'s webhook already covers it.'),
-                ]),
+                Step::make('Choose repositories')->schema(self::pickerFields()),
             ])))
             // With the access step left out, the one step left needs no
             // header saying so.
@@ -110,6 +82,105 @@ class ImportFromSourceAction
                     $livewire->redirect(PackageResource::getUrl('view', ['record' => $created[0]]));
                 }
             });
+    }
+
+    /** @return array{source_id: mixed, projects: list<string>, repository_id: int, create_webhook: bool} */
+    public static function defaultData(mixed $sourceId): array
+    {
+        return [
+            'source_id' => $sourceId,
+            'projects' => self::likelyPackages($sourceId),
+            'repository_id' => Repository::default()->id,
+            'create_webhook' => true,
+        ];
+    }
+
+    /** @return list<SchemaComponent> */
+    public static function pickerFields(bool $inline = false): array
+    {
+        $projects = $inline
+            ? CheckboxList::make('projects')
+                ->options(fn (Get $get): array => self::inlineProjectOptions($get('source_id')))
+                ->searchable()
+            : Select::make('projects')
+                ->multiple()
+                ->searchable()
+                ->options(fn (Get $get): array => self::projectOptions($get('source_id')))
+                ->getSearchResultsUsing(fn (string $search, Get $get): array => self::projectOptions($get('source_id'), $search));
+
+        return [
+            Select::make('source_id')
+                ->label('Source')
+                ->options(fn (): array => Source::options())
+                ->required()
+                ->live()
+                ->afterStateUpdated(fn (Set $set, mixed $state) => $set('projects', self::likelyPackages($state)))
+                ->helperText($inline ? 'A source is the connected GitHub account to browse. Choose the account whose repositories you want to serve.' : 'The connected account whose projects to browse.'),
+            $projects
+                ->label($inline ? 'Repositories' : 'Projects')
+                ->required()
+                ->helperText($inline ? 'Libraries with a root composer.json are pre-ticked; applications, forks and repositories already imported are not. Change the selection to match the packages you want.' : 'Repositories with a composer.json come first, and those that are packages rather than applications are already ticked. Type to search; projects already onboarded are skipped.'),
+            ...($inline ? [Text::make('No repositories were found for this source. Check that the GitHub App has access to the repositories you want, then return here. If nothing is pre-ticked, select a repository that contains a package rather than an application.')
+                ->visible(fn (Get $get): bool => filled($get('source_id')) && self::inlineProjectOptions($get('source_id')) === [])] : []),
+            ...($inline ? [Text::make('No likely PHP library packages were found. You can select a repository manually if it contains a package; applications and forks are not selected automatically.')
+                ->visible(fn (Get $get): bool => filled($get('source_id')) && self::inlineProjectOptions($get('source_id')) !== [] && self::likelyPackages($get('source_id')) === [])] : []),
+            Select::make('repository_id')
+                ->label('Composer repository')
+                ->helperText('Default is this registry’s starting Composer repository: it serves packages to Composer, and is separate from the repositories on GitHub. Choose another if these packages should be served separately.')
+                ->options(fn (): array => Repository::query()->orderBy('name')->pluck('name', 'id')->all())
+                ->default(fn (): int => Repository::default()->id)
+                ->required()
+                ->selectablePlaceholder(false)
+                ->hidden(fn (): bool => $inline && Repository::query()->count() === 1)
+                ->dehydratedWhenHidden(),
+            ...($inline ? [Text::make('Default is this registry’s Composer repository: it serves the selected packages to your projects.')
+                ->visible(fn (): bool => Repository::query()->count() === 1)] : []),
+            Toggle::make('create_webhook')
+                ->label('Sync automatically on push')
+                ->default(true)
+                ->helperText($inline ? 'Keep this on to sync when code is pushed to GitHub. Turn it off to rely on scheduled syncs or sync manually.' : 'Arranges a webhook per project, unless an installed app\'s webhook already covers it.')
+                ->hidden(fn (Get $get): bool => $inline && (Source::query()->find($get('source_id'))?->usesInstallation() ?? false))
+                ->dehydratedWhenHidden(),
+            ...($inline ? [Text::make('Automatic sync stays enabled. The GitHub App’s webhook (push notifications) is used when configured; the import reports any setup still needed.')
+                ->visible(fn (Get $get): bool => Source::query()->find($get('source_id'))?->usesInstallation() ?? false)] : []),
+        ];
+    }
+
+    /** @return array<string, string> */
+    private static function inlineProjectOptions(mixed $sourceId): array
+    {
+        if (! is_int($sourceId) && ! is_string($sourceId)) {
+            return [];
+        }
+
+        return self::memo()->inline['source:'.$sourceId] ??= self::readInlineProjectOptions($sourceId);
+    }
+
+    private static function memo(): SourceImportOptions
+    {
+        $request = request();
+        $memo = $request->attributes->get(SourceImportOptions::class);
+        if (! $memo instanceof SourceImportOptions) {
+            $memo = new SourceImportOptions;
+            $request->attributes->set(SourceImportOptions::class, $memo);
+        }
+
+        return $memo;
+    }
+
+    /** @return array<string, string> */
+    private static function readInlineProjectOptions(mixed $sourceId): array
+    {
+        $options = [];
+        foreach (self::projectOptions($sourceId) as $key => $value) {
+            if (is_array($value)) {
+                $options += $value;
+            } else {
+                $options[$key] = $value;
+            }
+        }
+
+        return $options;
     }
 
     /**
@@ -176,6 +247,8 @@ class ImportFromSourceAction
                             $client->forgetComposerManifests();
                         }
 
+                        $memo = self::memo();
+                        unset($memo->inline['source:'.$source->id], $memo->likely['source:'.$source->id]);
                         $set('projects', self::likelyPackages($source->id));
 
                         Notification::make()->success()->title(trans_choice('{1} :count repository shared|[0,*] :count repositories shared', $count))->send();
@@ -243,6 +316,16 @@ class ImportFromSourceAction
      */
     private static function likelyPackages(mixed $sourceId): array
     {
+        if (! is_int($sourceId) && ! is_string($sourceId)) {
+            return [];
+        }
+
+        return self::memo()->likely['source:'.$sourceId] ??= self::readLikelyPackages($sourceId);
+    }
+
+    /** @return list<string> */
+    private static function readLikelyPackages(mixed $sourceId): array
+    {
         $source = Source::query()->find($sourceId);
 
         if (! $source instanceof Source) {
@@ -282,7 +365,7 @@ class ImportFromSourceAction
      * @return array{0: list<Package>, 1: bool} the packages created, and whether
      *                                          any project failed
      */
-    private static function import(array $data): array
+    public static function import(array $data): array
     {
         $source = Source::query()->findOrFail($data['source_id']);
         $repository = Repository::query()->findOrFail($data['repository_id']);

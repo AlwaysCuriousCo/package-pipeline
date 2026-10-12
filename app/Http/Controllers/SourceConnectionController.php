@@ -256,7 +256,7 @@ class SourceConnectionController extends Controller
             ->send();
 
         if ($this->onboarding) {
-            return redirect(GetStarted::getUrl());
+            return redirect(GetStarted::getUrl($status === 'success' && $source !== null ? ['source' => $source->id] : []));
         }
 
         return redirect($source

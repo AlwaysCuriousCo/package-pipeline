@@ -15,6 +15,7 @@ use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\EmbeddedSchema;
 use Filament\Schemas\Components\Text;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Components\Wizard;
@@ -34,6 +35,8 @@ use Filament\Support\Icons\Heroicon;
  * kept in the query string, where a stale ?step could skip one that is not
  * done. Moving on, likewise, is a fresh visit to the page rather than the
  * wizard's Next button: the page then opens on whatever step is now true.
+ *
+ * @property-read Schema $importForm The inline step-2 schema resolved by Filament.
  */
 class GetStarted extends Page
 {
@@ -60,6 +63,9 @@ class GetStarted extends Page
      */
     public ?bool $passed = null;
 
+    /** @var array<string, mixed> */
+    public array $importData = [];
+
     public int $mountedStep;
 
     public int $syncWaitStartedAt;
@@ -70,6 +76,14 @@ class GetStarted extends Page
     {
         $this->mountedStep = static::currentStep();
         $this->syncWaitStartedAt = now()->timestamp;
+
+        if ($this->mountedStep === 2) {
+            $source = Source::query()->connected()->find(request()->integer('source'));
+            if (! $source instanceof Source && Source::query()->connected()->count() === 1) {
+                $source = Source::query()->connected()->first();
+            }
+            $this->importForm->fill(ImportFromSourceAction::defaultData($source?->id));
+        }
     }
 
     public static function canAccess(): bool
@@ -160,7 +174,9 @@ class GetStarted extends Page
                     ->key('import')
                     ->icon(Heroicon::OutlinedCloudArrowDown)
                     ->schema([
-                        Text::make('Repositories with a composer.json are picked out and ticked for you. Each one becomes a package, and its tags and branches sync in the background.'),
+                        Text::make('A package is a reusable PHP library that Composer can add to your projects.'),
+                        Text::make('Likely packages are pre-ticked because their composer.json describes a library rather than an application.'),
+                        EmbeddedSchema::make('importForm'),
                         Actions::make([$this->importAction()])->key('actions'),
                     ]),
                 Step::make('First sync')
@@ -199,6 +215,13 @@ class GetStarted extends Page
                 ->nextAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['style' => 'display: none']))
                 ->previousAction(fn (Action $action): Action => $action->hidden()->extraAttributes(['style' => 'display: none'])),
         ]);
+    }
+
+    public function importForm(Schema $schema): Schema
+    {
+        return $schema
+            ->statePath('importData')
+            ->components($this->mountedStep === 2 ? ImportFromSourceAction::pickerFields(inline: true) : []);
     }
 
     /**
@@ -266,11 +289,20 @@ class GetStarted extends Page
 
     private function importAction(): Action
     {
-        // The account was connected a step ago, so there is no access to
-        // grant yet; and the wizard, not the package, is where this goes on.
-        return ImportFromSourceAction::make(accessStep: false, openPackage: false, onboarding: true)
+        return Action::make('importPackages')
+            ->label('Import packages')
+            ->icon(Heroicon::OutlinedCloudArrowDown)
             ->color('primary')
-            ->after(function (): void {
+            ->authorize('create', Package::class)
+            ->visible(fn (): bool => $this->mountedStep === 2)
+            ->action(function (): void {
+                $data = $this->importForm->getState();
+                $source = Source::query()->findOrFail($data['source_id']);
+                abort_unless(auth()->user()?->can('view', $source), 403);
+                if ($source->usesInstallation()) {
+                    $data['create_webhook'] = true;
+                }
+                ImportFromSourceAction::import($data);
                 if (static::currentStep() > 2) {
                     $this->redirect(static::getUrl());
                 }

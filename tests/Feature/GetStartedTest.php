@@ -12,6 +12,8 @@ use App\Models\Source;
 use App\Models\Token;
 use App\Models\User;
 use Filament\Actions\Testing\TestAction;
+use Filament\Forms\Components\CheckboxList;
+use Filament\Forms\Components\Select;
 use Filament\Schemas\Components\Wizard;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
@@ -138,11 +140,13 @@ class GetStartedTest extends TestCase
         $source = Source::factory()->withToken()->create(['account' => 'acme']);
 
         Livewire::test(GetStarted::class)
-            ->callAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'), data: [
+            ->set('importData', [
                 'source_id' => $source->id,
                 'projects' => ['https://github.com/acme/widgets'],
+                'repository_id' => Repository::default()->id,
                 'create_webhook' => false,
             ])
+            ->callAction(TestAction::make('importPackages')->schemaComponent('onboarding.import.actions'))
             ->assertRedirect(GetStarted::getUrl());
 
         $this->assertSame(['acme/widgets'], Package::query()->pluck('name')->all());
@@ -368,7 +372,7 @@ class GetStartedTest extends TestCase
         }
     }
 
-    public function test_the_footer_stays_hidden_behind_the_connect_and_import_modals(): void
+    public function test_the_footer_stays_hidden_behind_the_connect_modal_and_inline_picker(): void
     {
         $page = Livewire::test(GetStarted::class)
             ->assertSeeText('Only select repositories')
@@ -378,24 +382,139 @@ class GetStartedTest extends TestCase
 
         Http::fake(['api.github.com/orgs/acme/repos*' => Http::response([])]);
         Source::factory()->withToken()->create(['account' => 'acme']);
-        $page = Livewire::test(GetStarted::class)
-            ->mountAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
-            ->assertSeeText('Import');
+        $page = Livewire::test(GetStarted::class)->assertSeeText('Import packages');
         $this->assertHiddenOnboardingFooter($page->html());
     }
 
-    public function test_choose_packages_matches_the_dialog_and_explains_default(): void
+    private function inlineSource(): Source
+    {
+        Http::fake([
+            'api.github.com/orgs/acme/repos*' => Http::response([
+                ['id' => 1, 'full_name' => 'acme/widgets', 'html_url' => 'https://github.com/acme/widgets'],
+                ['id' => 2, 'full_name' => 'acme/site', 'html_url' => 'https://github.com/acme/site'],
+                ['id' => 3, 'full_name' => 'acme/fork', 'html_url' => 'https://github.com/acme/fork', 'fork' => true],
+            ]),
+            'api.github.com/repos/acme/widgets/contents/composer.json' => Http::response(json_encode(['name' => 'acme/widgets', 'type' => 'library'])),
+            'api.github.com/repos/acme/site/contents/composer.json' => Http::response(json_encode(['name' => 'acme/site', 'type' => 'project'])),
+            'api.github.com/repos/acme/fork/contents/composer.json' => Http::response(json_encode(['name' => 'acme/fork', 'type' => 'library'])),
+        ]);
+
+        return Source::factory()->withToken()->create(['account' => 'acme']);
+    }
+
+    public function test_the_inline_picker_shows_preselected_repositories_without_a_modal(): void
+    {
+        $source = $this->inlineSource();
+        $page = Livewire::test(GetStarted::class)
+            ->assertSet('importData.source_id', $source->id)
+            ->assertSet('importData.projects', ['https://github.com/acme/widgets'])
+            ->assertSet('importData.repository_id', Repository::default()->id)
+            ->assertSeeText('A package is a reusable PHP library')
+            ->assertSeeText('Likely packages are pre-ticked')
+            ->assertSeeText('acme/widgets')
+            ->assertSeeText('Import packages')
+            ->assertSeeText('Default is this registry')
+            ->assertSchemaComponentHidden('repository_id', 'importForm')
+            ->assertActionDoesNotExist(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
+            ->assertSchemaComponentExists('projects', 'importForm', fn (CheckboxList $field): bool => count($field->getOptions()) === 3);
+        $dom = new \DOMDocument;
+        @$dom->loadHTML($page->html());
+        $this->assertCount(3, (new \DOMXPath($dom))->query('//input[@type="checkbox" and contains(@*[name()="wire:model"], "importData.projects")]'));
+    }
+
+    public function test_inline_options_are_memoised_per_request_and_read_again_on_refresh(): void
+    {
+        $this->inlineSource();
+        $page = Livewire::test(GetStarted::class);
+        $repositoryReads = fn (): int => count(Http::recorded(fn (Request $request): bool => str_contains($request->url(), '/orgs/acme/repos')));
+        // One listing to scan manifests, one to label options. Repeated field
+        // and empty-state evaluations reuse the options within this request.
+        $this->assertSame(2, $repositoryReads());
+        $page->call('$refresh');
+        // A later request reads accessible repositories again; the manifest
+        // cache remains the source client's separate existing cache.
+        $this->assertSame(3, $repositoryReads());
+    }
+
+    public function test_the_source_just_connected_is_preselected_among_several_sources(): void
+    {
+        $source = $this->inlineSource();
+        Source::factory()->withToken()->create(['account' => 'other']);
+        Livewire::withQueryParams(['source' => $source->id]);
+        Livewire::test(GetStarted::class)
+            ->assertSet('importData.source_id', $source->id)
+            ->assertSet('importData.projects', ['https://github.com/acme/widgets']);
+    }
+
+    public function test_zero_repository_matches_give_guidance_without_opening_a_modal(): void
     {
         Http::fake(['api.github.com/orgs/acme/repos*' => Http::response([])]);
         Source::factory()->withToken()->create(['account' => 'acme']);
-
         Livewire::test(GetStarted::class)
-            ->assertSeeText('Choose packages')
-            ->mountAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
-            ->assertMountedActionModalSee('Choose packages')
-            ->assertMountedActionModalSee('Import packages')
-            ->assertMountedActionModalSee('Default is this registry')
-            ->assertActionDataSet(['repository_id' => Repository::default()->id]);
+            ->assertSet('importData.projects', [])
+            ->assertSeeText('No repositories were found for this source')
+            ->assertSeeText('Check that the GitHub App has access');
+    }
+
+    public function test_repositories_without_a_root_manifest_explain_why_none_are_ticked(): void
+    {
+        Http::fake([
+            'api.github.com/orgs/acme/repos*' => Http::response([
+                ['id' => 1, 'full_name' => 'acme/docs', 'html_url' => 'https://github.com/acme/docs'],
+            ]),
+            'api.github.com/repos/acme/docs/contents/composer.json' => Http::response(['message' => 'Not Found'], 404),
+        ]);
+        Source::factory()->withToken()->create(['account' => 'acme']);
+        Livewire::test(GetStarted::class)->assertSet('importData.projects', [])
+            ->assertSeeText('No likely PHP library packages were found')
+            ->assertSeeText('You can select a repository manually');
+    }
+
+    public function test_a_user_without_package_creation_permission_cannot_import_inline(): void
+    {
+        Queue::fake();
+        $this->inlineSource();
+        $user = User::factory()->create();
+        $user->givePermissionTo(['ViewAny:Source', 'View:Source']);
+        $this->actingAs($user);
+        Livewire::test(GetStarted::class)
+            ->assertActionDoesNotExist(TestAction::make('importPackages')->schemaComponent('onboarding.import.actions'));
+        $this->assertDatabaseCount('packages', 0);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_other_steps_do_not_fetch_the_inline_repository_picker(): void
+    {
+        Source::factory()->withToken()->disconnected()->create();
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 1);
+        Source::factory()->withToken()->create();
+        $package = Package::factory()->create();
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 3);
+        PackageVersion::factory()->for($package)->create();
+        Livewire::test(GetStarted::class)->assertSet('mountedStep', 4);
+        Http::assertNothingSent();
+    }
+
+    public function test_inline_import_requires_a_selection_and_rejects_unknown_repository_urls(): void
+    {
+        Queue::fake();
+        $this->inlineSource();
+        Livewire::test(GetStarted::class)->set('importData.projects', [])
+            ->callAction(TestAction::make('importPackages')->schemaComponent('onboarding.import.actions'))
+            ->assertHasErrors(['importData.projects']);
+        Livewire::test(GetStarted::class)->set('importData.projects', ['https://github.com/ungranted/private'])
+            ->callAction(TestAction::make('importPackages')->schemaComponent('onboarding.import.actions'))
+            ->assertHasErrors(['importData.projects.0']);
+        $this->assertDatabaseCount('packages', 0);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_inline_import_preserves_multiple_composer_destinations(): void
+    {
+        $this->inlineSource();
+        $other = Repository::factory()->create(['name' => 'Tools']);
+        Livewire::test(GetStarted::class)->assertSchemaComponentVisible('repository_id', 'importForm')
+            ->assertSchemaComponentExists('repository_id', 'importForm', fn (Select $field): bool => isset($field->getOptions()[$other->id]));
     }
 
     public function test_the_last_step_streams_an_installation_and_passes(): void
@@ -497,8 +616,11 @@ class GetStartedTest extends TestCase
         ]);
 
         Livewire::test(GetStarted::class)
-            ->mountAction(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'))
-            ->assertActionDoesNotExist(TestAction::make('refreshAccess')->schemaComponent('access.grant'));
+            ->assertSeeText('Automatic sync stays enabled')
+            ->assertSchemaComponentHidden('create_webhook', 'importForm')
+            ->assertSet('importData.create_webhook', true)
+            ->assertDontSeeHtml('wire:poll')
+            ->assertActionDoesNotExist(TestAction::make('importFromSource')->schemaComponent('onboarding.import.actions'));
     }
 }
 
