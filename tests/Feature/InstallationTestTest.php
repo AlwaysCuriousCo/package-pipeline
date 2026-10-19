@@ -252,6 +252,27 @@ class InstallationTestTest extends TestCase
         $this->assertTokenGone();
     }
 
+    public function test_an_answer_that_leads_away_from_this_registry_never_receives_the_credentials(): void
+    {
+        // Something answering for the registry whose packages.json points
+        // elsewhere: the test refuses to follow with the credentials, which
+        // belong to this host alone — the same rule Composer applies to
+        // http-basic entries.
+        $this->fakeRegistry(['/packages.json' => fn (Request $request) => $request->hasHeader('Authorization')
+            ? Http::response(['packages' => [], 'metadata-url' => 'https://elsewhere.example/p2/%package%.json'])
+            : Http::response(['message' => 'Authentication required.'], 401)]);
+
+        $this->assertFalse($this->install());
+
+        $this->assertStringContainsString('elsewhere.example is not this registry — refusing to send the credentials there', $this->transcript());
+        $this->assertStringContainsString('The answer pointed at another host', $this->transcript());
+        $this->assertStringNotContainsString('Installation test passed', $this->transcript());
+
+        // No request left this registry carrying the token.
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), 'elsewhere.example'));
+        $this->assertTokenGone();
+    }
+
     public function test_an_archive_that_does_not_match_its_shasum_fails(): void
     {
         $this->fakeRegistry(['/dist/acme/widgets/' => Http::response($this->zipBytes().'tampered')]);

@@ -59,6 +59,12 @@ class InstallationTest
     private float $deadline = 0.0;
 
     /**
+     * The host the registry's own address resolves to, which is the only one
+     * the test's credentials may ever be sent to. Set when the run starts.
+     */
+    private string $credentialHost = '';
+
+    /**
      * @var Closure(string, string): void
      */
     private Closure $report;
@@ -87,6 +93,7 @@ class InstallationTest
         $repository = $package->composerRepository;
         $root = rtrim($repository->url(), '/');
         $host = (string) parse_url($root, PHP_URL_HOST);
+        $this->credentialHost = $host;
 
         $new = Token::issueForInstallationTest($user);
 
@@ -364,6 +371,19 @@ class InstallationTest
             return null;
         }
 
+        // Composer scopes http-basic credentials to the one host they were
+        // configured for, and so does the test: an absolute metadata or dist
+        // URL pointing anywhere else means the answer did not come from this
+        // registry, and its token is not sent there.
+        if ($username !== null && ! $this->belongsToCredentialHost($url)) {
+            $this->failedStep = $step;
+            $this->line('  '.(string) parse_url($url, PHP_URL_HOST).' is not this registry — refusing to send the credentials there ✗', 'fail');
+            $this->line('    The answer pointed at another host, so it did not come from this registry.', 'detail');
+            $this->line('Hint: check APP_URL, and that nothing in front of the registry (a proxy, a CDN) is answering with its own content.', 'hint');
+
+            return null;
+        }
+
         $request = $this->request(min($timeout, $remaining));
 
         if ($username !== null && $password !== null) {
@@ -582,6 +602,17 @@ class InstallationTest
         $origin = ($parts['scheme'] ?? 'https').'://'.($parts['host'] ?? '').(isset($parts['port']) ? ':'.$parts['port'] : '');
 
         return $origin.'/'.ltrim($path, '/');
+    }
+
+    /**
+     * Whether a URL the registry's own answer led to is still the registry
+     * itself. A relative template resolved against the root always is; only
+     * an absolute URL can leave it, and every URL the test requests has been
+     * through resolve().
+     */
+    private function belongsToCredentialHost(string $url): bool
+    {
+        return strcasecmp((string) parse_url($url, PHP_URL_HOST), $this->credentialHost) === 0;
     }
 
     private function line(string $text, string $tone): void
