@@ -4,7 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Plan;
 use App\Services\Billing\EntitlementProjector;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -14,9 +14,15 @@ use Illuminate\Foundation\Queue\Queueable;
  * Adding a package to a plan is adding it for everyone already subscribed,
  * and removing one is the reverse — the projector computes both from current
  * state, so this job is nothing but "run it for each affected customer".
- * Unique per plan: two quick saves collapse into one sweep.
+ *
+ * Unique per plan until the sweep starts: saves made before it begins
+ * collapse into one sweep, and a save made while it is running queues exactly
+ * one more. Held for the whole run instead, that second save would be
+ * dropped, and every customer the sweep had already passed would keep the
+ * entitlements of the plan as it was before the save — with nothing queued
+ * to put that right.
  */
-class ReprojectPlanEntitlements implements ShouldBeUnique, ShouldQueue
+class ReprojectPlanEntitlements implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Queueable;
 
