@@ -55,6 +55,11 @@ class ImportFromSourceAction
             ->label($onboarding ? 'Choose packages' : 'Add packages')
             ->icon(Heroicon::OutlinedCloudArrowDown)
             ->color('gray')
+            // Every project chosen becomes a package, so this is package
+            // creation whatever screen the button sits on. The wizard builds
+            // its own action and checks this itself; this one guards every
+            // other mount point — the packages table, a source's page.
+            ->authorize('create', Package::class)
             ->visible(fn (): bool => Source::query()->exists())
             ->modalHeading($onboarding ? 'Choose packages' : 'Add packages from a source')
             ->modalDescription('Each selected project becomes a package, wired up exactly as the create wizard would.')
@@ -477,6 +482,13 @@ class ImportFromSourceAction
     {
         $source = Source::query()->findOrFail($data['source_id']);
         $repository = Repository::query()->findOrFail($data['repository_id']);
+
+        // Importing adds packages to the destination repository, which is a
+        // change to it wherever the dialog was opened from — including the
+        // wizard, which checks the source and package creation itself but
+        // left the destination to the picker.
+        abort_unless(auth()->user()?->can('update', $repository) ?? false, 403);
+
         $registrar = app(WebhookRegistrar::class);
 
         $created = [];

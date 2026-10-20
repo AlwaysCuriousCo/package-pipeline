@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Filament\Resources\Packages\PackageResource;
 use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Jobs\SyncPackageJob;
@@ -14,6 +15,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
 /**
@@ -175,5 +177,43 @@ class ImportFromSourceTest extends TestCase
             ])
             ->assertHasNoActionErrors()
             ->assertRedirect(PackageResource::getUrl('view', ['record' => Package::query()->sole()]));
+    }
+
+    public function test_the_action_needs_permission_to_create_packages(): void
+    {
+        Queue::fake();
+        $user = User::factory()->create();
+        $user->givePermissionTo(['ViewAny:Package']);
+        $this->actingAs($user);
+
+        Livewire::test(ListPackages::class)
+            ->assertActionHidden('importFromSource');
+
+        $this->assertDatabaseCount('packages', 0);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_importing_refuses_a_destination_the_user_may_not_change(): void
+    {
+        Queue::fake();
+        $user = User::factory()->create();
+        $user->givePermissionTo(['ViewAny:Package', 'Create:Package', 'ViewAny:Source', 'View:Source']);
+        $this->actingAs($user);
+
+        try {
+            ImportFromSourceAction::import([
+                'source_id' => $this->source->id,
+                'projects' => ['https://github.com/acme/widgets'],
+                'repository_id' => Repository::default()->id,
+                'create_webhook' => false,
+            ]);
+        } catch (HttpException) {
+            $this->assertDatabaseCount('packages', 0);
+            Queue::assertNothingPushed();
+
+            return;
+        }
+
+        $this->fail('The import should have been refused for a repository the user may not change.');
     }
 }
