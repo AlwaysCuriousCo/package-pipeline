@@ -18,15 +18,23 @@ use App\Models\Source;
 use App\Models\User;
 use App\Services\GitHub\GitHubApp;
 use Filament\Actions\Testing\TestAction;
+use Filament\Notifications\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class SourceResourceTest extends TestCase
 {
     use RefreshDatabase;
+
+    /** @return array<int, array{int}> */
+    public static function repositoryCounts(): array
+    {
+        return [[0], [1], [2]];
+    }
 
     protected function setUp(): void
     {
@@ -59,6 +67,16 @@ class SourceResourceTest extends TestCase
         config()->set('services.github.app.webhook_secret', 'the-app-webhook-secret');
     }
 
+    #[DataProvider('repositoryCounts')]
+    public function test_connection_test_repository_count_grammar(int $count): void
+    {
+        Http::fake(['api.github.com/orgs/acme/repos*' => Http::response(array_fill(0, $count, ['full_name' => 'acme/widgets']))]);
+        $source = Source::factory()->withToken()->create(['account' => 'acme']);
+        Livewire::test(ViewSource::class, ['record' => $source->getKey()])->callAction('test')
+            ->assertNotified(Notification::make()->success()->title('acme is reachable')
+                ->body($count === 1 ? '1 repository is available to this source.' : "{$count} repositories are available to this source."));
+    }
+
     public function test_the_index_offers_connecting_without_creating_a_record_first(): void
     {
         $this->configureGitHubApp();
@@ -69,9 +87,20 @@ class SourceResourceTest extends TestCase
             ->assertSee(route('sources.connect.new'));
     }
 
-    public function test_connecting_is_disabled_when_no_github_app_is_registered(): void
+    public function test_connecting_registers_the_app_first_when_none_is_registered(): void
     {
         config()->set('services.github.app', ['id' => null, 'slug' => null, 'private_key' => null]);
+
+        Livewire::test(ListSources::class)
+            ->assertActionExists('connectGithub')
+            ->assertActionEnabled('connectGithub')
+            ->mountAction('connectGithub')
+            ->assertMountedActionModalSee('a one-time step');
+    }
+
+    public function test_connecting_is_disabled_when_the_environment_names_half_an_app(): void
+    {
+        config()->set('services.github.app', ['id' => '123456', 'slug' => null, 'private_key' => null]);
 
         Livewire::test(ListSources::class)
             ->assertActionExists('connectGithub')

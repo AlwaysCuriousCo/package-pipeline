@@ -13,9 +13,63 @@ than to a person, so access does not disappear when someone leaves.
 
 Once per deployment — a local or staging site needs its own app, for the reason
 in [Connecting the same account from a second
-environment](#connecting-the-same-account-from-a-second-environment) — at
-**Settings → Developer settings → GitHub Apps → New GitHub App** (on the
-organisation that will own it):
+environment](#connecting-the-same-account-from-a-second-environment).
+
+The app is this registry's identity on GitHub, registered once per instance;
+connecting an account (step 3) installs it there, once per account.
+
+On a fresh install there is nothing to do here separately: the first **Connect
+GitHub account** registers the app and carries straight on to installing it. To
+register it on its own, use **Sources → Connect GitHub → Register GitHub App**.
+Either way, choose who owns the app — your own account, or an organisation,
+which is usual because the app then outlives anyone's account, or an
+enterprise — then who can install it, and give it a name, which has to be
+unique across GitHub.
+
+**Who can install it** is GitHub's app visibility. **Only this account** (the
+default, GitHub's private app) can be installed only on the account that owns
+it: right when every repository you serve lives there. **Any account** (a
+public app) can be installed by other accounts and organisations too, each
+still choosing its own repositories; pick it when one registry serves several
+accounts. An enterprise's app is always private, which for an enterprise
+means installable on any organisation inside it and nowhere else, so that
+option is the only one offered. Neither choice makes repositories or the
+registry public, and the visibility can be changed later in the app's settings
+on GitHub. **Continue** takes you to GitHub
+with the app already described: the setup URL, the webhook, the permissions and
+the events below. Confirm it there, and GitHub sends you back with the app's
+ID, private key and webhook secret, which are stored encrypted. The next screen
+is GitHub's install picker, which is [step 3](#3-connect-a-source).
+
+Before anything is stored, the registry asks GitHub which app the key belongs
+to, so a key from the wrong app is refused there rather than failing every sync
+later. **Forget** on the same page removes the stored app; it says first how
+many sources are connected through it, and keeps them: connecting their
+accounts through a new app updates them in place. The app itself stays on
+GitHub until you delete it there.
+
+### For an enterprise
+
+GitHub does not accept app manifests for enterprises, so the enterprise option
+is three numbered steps on the GitHub App page, each ticked off as it is done:
+**Open GitHub** on the enterprise's **New GitHub App** form, with every field
+filled in, and create the app; generate a private key at the bottom of the
+app's settings page; then **Enter App ID and key** and upload the `.pem`. The
+key is read from the upload and never kept as a file. No URL parameter can set
+a webhook secret, so the registry sets one itself through the app's API once
+the key is verified — if that fails, the page says why and **Configure webhook**
+tries again. The next screen is GitHub's install picker, as for any other owner.
+
+### Registering by hand
+
+If the environment already names an app — `GITHUB_APP_ID` or
+`GITHUB_APP_PRIVATE_KEY` is set — that app is used, the page above is read-only,
+and nothing about the deployment changes. That is also the way to use an app
+registered by hand, and the only way on GitHub Enterprise Server, where the
+page's links to github.com do not apply.
+
+To register one by hand, go to **Settings → Developer settings → GitHub Apps →
+New GitHub App** (on the organisation that will own it):
 
 | Field | Value |
 | --- | --- |
@@ -55,7 +109,9 @@ Then **Generate a private key** and download the `.pem`.
 
 ## 2. Configure this app
 
-Two values, both on the app's settings page:
+Only for an app registered by hand; one registered from the panel is already
+configured. Two values, both on the app's settings page, and the webhook's
+secret:
 
 ```dotenv
 GITHUB_APP_ID=123456
@@ -81,14 +137,15 @@ lookup, or if you rename the app and do not want to wait out the cache.
 
 ## 3. Connect a source
 
-In the admin: **Sources → Connect GitHub account**. There is no form — GitHub
-asks which account to install onto and which repositories to share, and the
-source is created from what it hands back: the account, its type, and the
-repository count. Connecting an account that already has a source updates that
-one instead of adding a second.
+In the admin: **Sources → Connect GitHub → Connect an account**. There is no
+form — GitHub asks which account to install onto and which repositories to
+share, and the source is created from what it hands back: the account, its
+type, and the repository count. Connecting an account that already has a source
+updates that one instead of adding a second.
 
-Until the app is registered the button is disabled and says why; **Add
-manually** is the token-based fallback described at the end of this page.
+Until the app is registered, connecting registers it first, as described in
+[step 1](#1-register-the-app); **Add manually** is the token-based fallback
+described at the end of this page.
 
 Connecting also claims any package already pointing at that account, so sources
 can be added after the packages they cover.
@@ -102,17 +159,18 @@ separate uninstall from the organisation's settings.
 
 A GitHub App has exactly one Setup URL, so an app registered against the
 deployed site can only ever hand its callback back to the deployed site. Point
-a local install at the same `GITHUB_APP_ID` and **Connect GitHub account**
+a local install at the same `GITHUB_APP_ID` and **Connect an account**
 appears to work but never finishes: the account already has the app, so GitHub
 skips the install screen and redirects to the Setup URL, which is production.
 The deployed app receives the callback; the local one waits forever.
 
 ### Register a second app (preferred)
 
-Treat each environment as its own deployment and repeat steps 1 and 2 for it —
-e.g. an `Acme Package Pipeline (Local)` app whose Setup URL is
-`http://localhost:8000/sources/github/callback` — then install it on the same
-account and set that app's id and `.pem` in the environment's `.env`. This is
+Treat each environment as its own deployment and repeat step 1 from its own
+panel — e.g. an `Acme Package Pipeline (Local)` app, whose Setup URL is then
+`http://localhost:8000/sources/github/callback` — and install it on the same
+account. (Registered by hand, that app's id and `.pem` go in the environment's
+`.env`.) This is
 the usual way to run a GitHub App in more than one place, and it keeps the two
 installations independent: revoking the local one does not touch production.
 

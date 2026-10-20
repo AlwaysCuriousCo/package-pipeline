@@ -27,6 +27,18 @@
  */
 @import '../../../../vendor/alwayscurious/filament-flux-theme/resources/css/theme.css';
 
+/* The terminal views' palette: installation tests, deployments, diffs. */
+@theme {
+    --color-terminal: #0d1117;
+    --color-terminal-text: #c9d1d9;
+    --color-terminal-bright: #e6edf3;
+    --color-terminal-muted: #8b949e;
+    --color-terminal-ok: #3fb950;
+    --color-terminal-fail: #f85149;
+    --color-terminal-warn: #d29922;
+    --color-terminal-info: #79c0ff;
+}
+
 @source '../../../../app/Filament/**/*';
 @source '../../../../resources/views/filament/**/*';
 /* Blade components the panel's own views render — x-copy-line and friends. */

@@ -49,13 +49,16 @@ Log in at <http://localhost:8000> — the root URL redirects to the admin panel 
 
 ### Add your first package
 
-The fastest way to sync a private repository is a GitHub token. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens) with read-only **Contents** and **Metadata** access to the repositories you care about, and set it in `.env`:
+**Get started** (`/admin/get-started`, in the navigation and linked from the dashboard's **Getting started** card until a package has been installed) is a checklist; its **Repository** item walks through this as one wizard, and every step happens in the admin panel. It opens on the first step the registry has not done yet, so leaving for GitHub and coming back picks up where you were. The same steps are also on their own pages:
 
-```dotenv
-GITHUB_TOKEN=github_pat_...
-```
+1. **Connect GitHub** (also **Sources → Connect GitHub account**). On a fresh install this first registers the registry's own GitHub App: pick who owns it, and GitHub creates it from a manifest and hands its credentials straight back. GitHub then asks which account to install it on and which repositories to share. Later accounts are just that second half. An enterprise-owned app takes three steps instead, laid out on the page — see [docs/github-app.md](docs/github-app.md).
+2. **Choose packages** (also **Packages → Add packages**, a source's own page, or the "Connected" notification). Repositories with a `composer.json` are listed first, and the ones that are packages rather than applications are already ticked. Each becomes a package with its first sync queued.
+3. **First sync.** The wizard waits for the queue worker to build the first versions, and moves on by itself once they land.
+4. **Test installation.** Makes the requests Composer makes, through the registry's public address, and shows each one as it happens — see [Testing an installation](#testing-an-installation). A package's page has the same button, and the `composer config` and `composer require` lines for your own projects, with a **Generate token** button for a private repository.
 
-Then in the admin panel go to **Packages → New package**, paste the repository URL, and follow the wizard — it works out the rest from the repo. Trigger a sync from the package's page (syncs run on the queue, which `composer run dev` is already processing), or from the CLI:
+**Adding more packages later** is **Packages → Add packages** (or **Add packages** on a source's page). If the GitHub App was installed on *only selected repositories*, it first offers **Grant access on GitHub**, which opens the installation's settings in a new tab, and **Done, refresh**, which reads the grant back and ticks the new repository. Importing a single package opens its page, where **Test installation** appears once its first sync lands.
+
+Syncs run on the queue, which `composer run dev` is already processing — under Herd or Valet, start a worker with `php artisan queue:work`. They can also be run from the CLI:
 
 ```bash
 php artisan packages:sync                      # sync everything
@@ -70,13 +73,25 @@ Once a package has synced, its versions, release heatmap, and any sync errors al
 
 A repository that holds several packages — a monorepo — is added once per package, each with its **Subdirectory** filled in. See [docs/monorepos.md](docs/monorepos.md).
 
-`GITHUB_TOKEN` is deliberately a last resort — it's a person's credential with broad reach. For anything beyond a first spin, connect a **source** instead (next section) and clear the global token.
+### Testing an installation
+
+**Test installation**, on a package's page and as the last step of Get started, does what `composer require` would against `APP_URL`, so it exercises everything a consuming project depends on — DNS, TLS, any proxy or CDN in front — rather than what the panel can see from the inside. It fetches `packages.json` once without credentials (a private repository must answer 401) and once with a token made for the run, follows `metadata-url` to the package's metadata, picks the newest stable version (or the one chosen; with only pre-releases, the newest of those, saying which constraint a project needs to require it, such as `:^0.1@alpha`), and downloads its archive, checking the size, the `shasum` and that it opens as a zip. The token is deleted when the run ends, the archive is not counted as a download, and the audit log gets one `installation-test` entry. A failure stops at the step that failed, quotes the response — naming a Cloudflare error code when there is one — and says what to check.
+
+The registry requests its own address while answering the panel, so it needs a server that takes more than one request at a time: PHP-FPM, Octane, or `php artisan serve` with `PHP_CLI_SERVER_WORKERS` set above 1. The transcript streams as the run goes; a proxy that buffers responses shows it all at once when the run ends instead.
 
 ### Connect a GitHub source (the recommended way)
 
-A source is a GitHub organisation or user connected through a **GitHub App**: tokens expire hourly, access is scoped to exactly the repositories chosen at install time, and the credential belongs to the org — it doesn't break when a person leaves. Registering the app is a one-time, ~5 minute job per deployment; the full walkthrough (including the non-obvious permission gotchas) is in **[docs/github-app.md](docs/github-app.md)**.
+A source is a GitHub organisation or user connected through a **GitHub App**: tokens expire hourly, access is scoped to exactly the repositories chosen at install time, and the credential belongs to the org — it doesn't break when a person leaves. The app is registered once per deployment, from the panel as above; [docs/github-app.md](docs/github-app.md) covers the details, registering by hand with `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY`, and the non-obvious permission gotchas. Packages are linked to their source automatically by repository owner.
 
-Once the app is registered and `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` are set, connecting an organisation is one click from **Sources** in the admin panel. Packages are linked to their source automatically by repository owner.
+### Without a GitHub App
+
+A GitHub token also works, for a first spin or where an app cannot be installed. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens) with read-only **Contents** and **Metadata** access to the repositories you care about, set it in `.env`, and add packages with **Packages → New package**:
+
+```dotenv
+GITHUB_TOKEN=github_pat_...
+```
+
+`GITHUB_TOKEN` is deliberately a last resort — it's a person's credential with broad reach. Once a source is connected, clear the global token.
 
 ### Connect a GitLab source
 
@@ -454,7 +469,7 @@ The short version is below. **[docs/deployment.md](docs/deployment.md)** is the 
 
 5. **Add a queue worker** to the environment (Resources → Queue Worker, default queue) and give it a **310-second timeout**, for the reason above. Package syncs triggered from the admin panel are queued jobs — without a worker they sit in the `jobs` table forever.
 6. **Add a scheduler** to the environment (Resources → Scheduler) so the maintenance tasks above actually run. Cloud's scheduler invokes `schedule:run` for you.
-7. **Set the GitHub credentials** in the environment's variables: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` for sources (paste the key with `\n`-escaped newlines), or a `GITHUB_TOKEN` to get started quickly.
+7. **Leave the GitHub App to the panel.** Once you can sign in (below), **Sources → Connect GitHub account** registers it without any variables. `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` (the key with `\n`-escaped newlines) still work for an app registered by hand, or a `GITHUB_TOKEN` to get started quickly.
 
 #### Create your super admin
 

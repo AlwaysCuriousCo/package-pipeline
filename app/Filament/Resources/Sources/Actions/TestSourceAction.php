@@ -38,7 +38,7 @@ class TestSourceAction
                     Notification::make()
                         ->success()
                         ->title("{$account} is reachable")
-                        ->body("{$count} repositories are available to this source.")
+                        ->body(trans_choice('{1} :count repository is available to this source.|[0,*] :count repositories are available to this source.', $count))
                         ->send();
                 } catch (Throwable $exception) {
                     Notification::make()
