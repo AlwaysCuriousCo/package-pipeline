@@ -33,8 +33,7 @@
                 <div class="space-y-3 px-5 py-4">
                     <pre class="overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 text-sm text-zinc-100"><code>{{ $plainToken }}</code></pre>
                     <p class="text-sm text-zinc-600 dark:text-zinc-400">Tell Composer about it, then require your packages as usual:</p>
-                    <pre class="overflow-x-auto rounded-lg bg-zinc-900 px-4 py-3 text-sm text-zinc-100"><code>composer config --global http-basic.{{ parse_url($registryUrl, PHP_URL_HOST) }} token {{ $plainToken }}
-composer config repositories.{{ \Illuminate\Support\Str::slug(config('app.name')) }} composer {{ $registryUrl }}</code></pre>
+                    @include('billing.partials.connect', ['repositories' => $subscription->plan->setupRepositories(), 'token' => $plainToken])
                 </div>
             </section>
         @endif

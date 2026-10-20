@@ -71,6 +71,13 @@
                                     <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ $subscription->tokens()->count() }}/{{ $subscription->plan->token_limit }} used</span>
                                 @endif
                             </form>
+
+                            <details class="mt-3">
+                                <summary class="cursor-pointer text-sm text-zinc-600 dark:text-zinc-400">Connect a project</summary>
+                                <div class="mt-2 space-y-2">
+                                    @include('billing.partials.connect', ['repositories' => $subscription->plan->setupRepositories(), 'token' => '<your token>'])
+                                </div>
+                            </details>
                         @endif
                     </li>
                 @endforeach

@@ -43,7 +43,6 @@ class WelcomeController extends Controller
             'repository' => Repository::default(),
             'subscription' => $subscription,
             'plainToken' => $plainToken,
-            'registryUrl' => rtrim((string) config('app.url'), '/'),
         ]);
     }
 

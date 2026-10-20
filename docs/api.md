@@ -361,7 +361,8 @@ Deletes the package, its versions and its stored archives. Requires
 ### `GET /repositories`, `GET /repositories/{id}`
 
 The Composer repositories this installation serves, with `packages_count` and
-the `url` a consuming project configures.
+the `url` a consuming project configures. A repository given a host of its own
+in the panel also carries `host`, and its `url` is on that host.
 
 Read-only. Creating a repository decides a URL every consuming project has to
 be told about and an access rule for everything inside it — an operator's
