@@ -13,6 +13,7 @@ use Composer\Semver\VersionParser;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Number;
 use Illuminate\Support\Str;
@@ -133,19 +134,31 @@ class InstallationTest
             ])
             ->log('installation-test');
 
+        // The answer every first-run screen reads changed just now; the next
+        // reader gets it from the log, not from the cache's minute.
+        Cache::forget('installation-test.has-passed');
+
         return $passed;
     }
 
     /**
      * Whether any installation test has passed on this registry, which the
      * dashboard's first-run steps count as the last one done.
+     *
+     * The answer rides the activity log, which has no index for a JSON path
+     * and can be long on a busy registry; it is cached for a minute, and a
+     * run clears the cache itself so its own result is seen at once.
      */
     public static function hasPassed(): bool
     {
-        return Activity::query()
-            ->where('event', 'installation-test')
-            ->where('properties->passed', true)
-            ->exists();
+        return Cache::remember(
+            'installation-test.has-passed',
+            now()->addMinute(),
+            fn (): bool => Activity::query()
+                ->where('event', 'installation-test')
+                ->where('properties->passed', true)
+                ->exists(),
+        );
     }
 
     /**
