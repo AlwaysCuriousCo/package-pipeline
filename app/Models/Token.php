@@ -127,17 +127,6 @@ class Token extends Model
     }
 
     /**
-     * The HTTP Basic username this token is configured with.
-     *
-     * Only the password authenticates, so this is free to be whatever reads
-     * best in auth.json — the owner's email, or whatever was set instead.
-     *
-     * Except a colon. HTTP Basic joins the pair as "username:password" and
-     * the server splits at the first colon (RFC 7617 forbids one in the
-     * username), so a deploy token named "user:ci" would send "ci:pp_…" as
-     * its password and never authenticate.
-     */
-    /**
      * A read token for one installation test, made and later deleted without
      * an audit row each time — the test records the one entry that matters,
      * that it ran. Short-lived even if the run never gets to delete it.
@@ -155,6 +144,17 @@ class Token extends Model
         }));
     }
 
+    /**
+     * The HTTP Basic username this token is configured with.
+     *
+     * Only the password authenticates, so this is free to be whatever reads
+     * best in auth.json — the owner's email, or whatever was set instead.
+     *
+     * Except a colon. HTTP Basic joins the pair as "username:password" and
+     * the server splits at the first colon (RFC 7617 forbids one in the
+     * username), so a deploy token named "user:ci" would send "ci:pp_…" as
+     * its password and never authenticate.
+     */
     public function composerUsername(): string
     {
         $principal = $this->tokenable;

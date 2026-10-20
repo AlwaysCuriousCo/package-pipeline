@@ -91,7 +91,7 @@ class GitHubSourceClient implements ReadsComposerManifests, SourceClient
         $responses = Http::pool(fn (Pool $pool): array => array_map(
             fn (Project $project) => $pool->as($project->webUrl)
                 ->baseUrl($this->source->apiUrl())
-                ->timeout(HttpTimeouts::API)
+                ->timeout(HttpTimeouts::MANIFEST)
                 ->connectTimeout(HttpTimeouts::CONNECT)
                 ->withHeaders(['X-GitHub-Api-Version' => '2022-11-28', 'Accept' => 'application/vnd.github.raw+json'])
                 ->withToken($this->source->accessToken())

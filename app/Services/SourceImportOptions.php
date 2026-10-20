@@ -10,4 +10,7 @@ final class SourceImportOptions
 
     /** @var array<string, list<string>> */
     public array $likely = [];
+
+    /** @var array<string, list<string>> */
+    public array $nonPackages = [];
 }

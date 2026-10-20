@@ -77,6 +77,8 @@ class GetStarted extends Page
 
     /**
      * Whether the installation test run on this page passed, once one has run.
+     * Presentation state only — every gate that matters reads the registry —
+     * so it stays writable, as the tests set it to fake a finished run.
      */
     public ?bool $passed = null;
 
@@ -86,21 +88,28 @@ class GetStarted extends Page
     #[Locked]
     public string $testVisit;
 
+    #[Locked]
     public bool $installationRunning = false;
 
+    #[Locked]
     public ?int $installRepository = null;
 
+    #[Locked]
     public ?string $plainTextToken = null;
 
+    #[Locked]
     public ?string $tokenUsername = null;
 
     /** @var array<string, mixed> */
     public array $importData = [];
 
+    #[Locked]
     public int $mountedStep;
 
+    #[Locked]
     public int $syncWaitStartedAt;
 
+    #[Locked]
     public bool $syncWaitExpired = false;
 
     public function mount(): void

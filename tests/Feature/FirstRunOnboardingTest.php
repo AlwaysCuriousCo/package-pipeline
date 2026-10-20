@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Filament\Pages\Dashboard;
+use App\Filament\Pages\GetStarted;
 use App\Filament\Pages\GetStartedChecklist;
 use App\Filament\Resources\Packages\Pages\ListPackages;
 use App\Filament\Widgets\GettingStarted;
@@ -98,6 +99,8 @@ class FirstRunOnboardingTest extends TestCase
 
         $package = Package::factory()->create();
         Download::query()->create(['package_id' => $package->id, 'version' => '1.0.0', 'created_at' => now()]);
+        // The done flag is read once per request; this is the next one.
+        GetStarted::forgetMemoized();
 
         $this->assertFalse(GettingStarted::canView());
     }

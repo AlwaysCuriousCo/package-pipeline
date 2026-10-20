@@ -251,6 +251,20 @@ class ImportFromSourceAction
     /** @return list<string> */
     private static function selectedNonPackages(mixed $sourceId, mixed $selected): array
     {
+        if (! is_int($sourceId) && ! is_string($sourceId)) {
+            return [];
+        }
+
+        // The warning asking about these is asked twice per render — whether
+        // to show it, and what it says — for the same selection.
+        $key = 'source:'.$sourceId.':'.md5(serialize($selected));
+
+        return self::memo()->nonPackages[$key] ??= self::readSelectedNonPackages($sourceId, $selected);
+    }
+
+    /** @return list<string> */
+    private static function readSelectedNonPackages(mixed $sourceId, mixed $selected): array
+    {
         $source = Source::query()->find($sourceId);
         if (! $source instanceof Source) {
             return [];

@@ -32,6 +32,15 @@ final class HttpTimeouts
     public const API = 20;
 
     /**
+     * Reading one composer.json for the repository picker: the smallest
+     * response GitHub gives, asked for a hundred at a time behind a page an
+     * admin has just opened. The API budget would let a hung GitHub hold the
+     * picker open for minutes across that hundred; these either answer
+     * quickly or stop counting against the cap.
+     */
+    public const MANIFEST = 10;
+
+    /**
      * Streaming a repository archive, the one request whose duration is a
      * function of the repository rather than of the provider's health. Sized
      * to fit inside ImportVersion's 300-second job timeout with room left for
