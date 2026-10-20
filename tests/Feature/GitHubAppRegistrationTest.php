@@ -16,6 +16,7 @@ use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubAppManifest;
 use Database\Factories\GitHubAppRegistrationFactory;
 use Filament\Actions\Testing\TestAction;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
@@ -789,5 +790,16 @@ class GitHubAppRegistrationTest extends TestCase
         $this->get(route('filament.admin.resources.github-app.index'))->assertForbidden();
 
         Http::assertNotSent(fn (Request $request): bool => true);
+    }
+
+    public function test_the_table_allows_only_one_registration_even_mid_race(): void
+    {
+        GitHubAppRegistration::factory()->create();
+
+        // The code checks before it creates, but a race passes that check
+        // twice; the row is what stops the second one.
+        $this->expectException(UniqueConstraintViolationException::class);
+
+        GitHubAppRegistration::factory()->create();
     }
 }

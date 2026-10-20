@@ -8,6 +8,7 @@ use App\Models\GitHubAppRegistration;
 use App\Models\Source;
 use App\Support\HttpTimeouts;
 use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
@@ -119,16 +120,22 @@ class GitHubApp
 
         $app = $this->describe($appId, $privateKey);
 
-        return GitHubAppRegistration::query()->create([
-            'app_id' => $appId,
-            'slug' => $app['slug'],
-            'name' => is_string($app['name'] ?? null) ? $app['name'] : $app['slug'],
-            'owner' => $owner,
-            'owner_type' => $ownerType,
-            'html_url' => is_string($app['html_url'] ?? null) ? $app['html_url'] : "https://github.com/apps/{$app['slug']}",
-            'private_key' => $privateKey,
-            'webhook_secret' => filled($webhookSecret) ? $webhookSecret : null,
-        ]);
+        try {
+            return GitHubAppRegistration::query()->create([
+                'app_id' => $appId,
+                'slug' => $app['slug'],
+                'name' => is_string($app['name'] ?? null) ? $app['name'] : $app['slug'],
+                'owner' => $owner,
+                'owner_type' => $ownerType,
+                'html_url' => is_string($app['html_url'] ?? null) ? $app['html_url'] : "https://github.com/apps/{$app['slug']}",
+                'private_key' => $privateKey,
+                'webhook_secret' => filled($webhookSecret) ? $webhookSecret : null,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // Two registrations racing each other: the check above passed for
+            // both, and the table's one-row guarantee stopped the second.
+            throw new RuntimeException('A GitHub App is already configured. Forget it before registering another.');
+        }
     }
 
     /**
