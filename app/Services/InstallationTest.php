@@ -569,7 +569,17 @@ class InstallationTest
             return null;
         }
 
-        $stable = array_values(array_filter($versions, function (array $version): bool {
+        // Branches carry no order to sort by ("dev-main" against what?), so
+        // the pick comes from the tagged releases; a branch is the last
+        // resort, unchanged from where the metadata listed it.
+        $tagged = array_values(array_filter($versions, fn (array $version): bool => ! self::isBranch($version)));
+
+        usort($tagged, fn (array $a, array $b): int => version_compare(
+            (string) ($b['version_normalized'] ?? $b['version']),
+            (string) ($a['version_normalized'] ?? $a['version']),
+        ));
+
+        $stable = array_values(array_filter($tagged, function (array $version): bool {
             try {
                 return VersionParser::parseStability((string) ($version['version'] ?? '')) === 'stable';
             } catch (UnexpectedValueException) {
@@ -577,12 +587,24 @@ class InstallationTest
             }
         }));
 
-        usort($stable, fn (array $a, array $b): int => version_compare(
-            (string) ($b['version_normalized'] ?? $b['version']),
-            (string) ($a['version_normalized'] ?? $a['version']),
-        ));
+        // Newest first: a stable one, else the newest pre-release — the same
+        // pick the install card makes, and what the transcript then says a
+        // project must require.
+        return $stable[0] ?? $tagged[0] ?? $versions[0] ?? null;
+    }
 
-        return $stable[0] ?? $versions[0] ?? null;
+    /**
+     * Whether a metadata entry is a branch rather than a tagged release, as
+     * Composer writes branches into the ~dev file: `dev-main`, or
+     * `1.x-dev`.
+     *
+     * @param  array<string, mixed>  $version
+     */
+    private static function isBranch(array $version): bool
+    {
+        $name = (string) ($version['version'] ?? '');
+
+        return str_starts_with($name, 'dev-') || str_ends_with($name, '-dev');
     }
 
     /**

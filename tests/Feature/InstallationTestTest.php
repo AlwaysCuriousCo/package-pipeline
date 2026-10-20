@@ -218,6 +218,26 @@ class InstallationTestTest extends TestCase
         $this->assertTrue(Semver::satisfies('0.1.0-alpha11', '^0.1@alpha'));
     }
 
+    public function test_the_newest_pre_release_is_picked_whatever_order_the_metadata_lists(): void
+    {
+        // Older first, as nothing promises the metadata lists newest first.
+        // The install card sorts and shows the newest; the test must install
+        // that same version, or the two disagree on the same page.
+        $this->fakeRegistry([
+            '/p2/acme/widgets.json' => Http::response(['minified' => 'composer/2.0', 'packages' => ['acme/widgets' => [
+                ['name' => 'acme/widgets', 'version' => 'v0.1.0-alpha.1', 'version_normalized' => '0.1.0.0-alpha1', 'dist' => ['type' => 'zip', 'url' => self::ROOT.'/dist/acme/widgets/'.str_repeat('e', 40).'.zip']],
+                ['version' => 'v0.2.0-beta.2', 'version_normalized' => '0.2.0.0-beta2', 'dist' => ['type' => 'zip', 'url' => self::ROOT.'/dist/acme/widgets/'.str_repeat('f', 40).'.zip']],
+                ['version' => 'v0.2.0-beta.1', 'version_normalized' => '0.2.0.0-beta1', 'dist' => ['type' => 'zip', 'url' => self::ROOT.'/dist/acme/widgets/'.str_repeat('g', 40).'.zip']],
+            ]]]),
+        ]);
+
+        $this->assertTrue($this->install());
+
+        $this->assertStringContainsString('Picked acme/widgets v0.2.0-beta.2 — no stable release yet, so a project needs `:^0.2@beta` to require it', $this->transcript());
+        $this->assertStringNotContainsString('v0.1.0-alpha.1', $this->transcript());
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/dist/acme/widgets/'.str_repeat('f', 40)));
+    }
+
     public function test_a_stable_pick_needs_no_constraint(): void
     {
         $this->fakeRegistry();
