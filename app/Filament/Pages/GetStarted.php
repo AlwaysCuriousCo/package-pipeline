@@ -14,6 +14,7 @@ use App\Models\Source;
 use App\Models\User;
 use App\Services\InstallationTest;
 use App\Services\InstallationTestStages;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
@@ -143,7 +144,7 @@ class GetStarted extends Page
      */
     public static function complete(): bool
     {
-        return Download::query()->exists() || InstallationTest::hasPassed();
+        return self::memoized('complete', fn (): bool => Download::query()->exists() || InstallationTest::hasPassed());
     }
 
     /**
@@ -152,6 +153,20 @@ class GetStarted extends Page
      * @return list<array{title: string, done: bool}>
      */
     public static function progress(): array
+    {
+        /** @var list<array{title: string, done: bool}> */
+        return self::memoized('progress', fn (): array => self::readProgress());
+    }
+
+    /**
+     * The steps as the registry stands. Every screen that mentions the first
+     * run asks for them — the step the wizard opens on, the navigation badge,
+     * the dashboard's card, the checklist — and each answer costs a query
+     * set, so the request carries one.
+     *
+     * @return list<array{title: string, done: bool}>
+     */
+    private static function readProgress(): array
     {
         $connected = Source::query()->whereNotNull('connected_at')->exists();
         $statuses = self::packageStatuses();
@@ -175,13 +190,47 @@ class GetStarted extends Page
      */
     public static function currentStep(): int
     {
-        foreach (static::progress() as $index => $step) {
+        $steps = static::progress();
+
+        foreach ($steps as $index => $step) {
             if (! $step['done']) {
                 return $index + 1;
             }
         }
 
-        return count(static::progress());
+        return count($steps);
+    }
+
+    /**
+     * Drop the request's memoized answers, for the code that changes the
+     * state they were computed from — an import landing mid-request, say.
+     */
+    public static function forgetMemoized(): void
+    {
+        request()->attributes->remove('get-started.memo');
+    }
+
+    /**
+     * A value computed once per request. Memoized on the request rather than
+     * a static, which would outlive it — a poll or a redirect must read the
+     * registry afresh, and so, in one PHP process, must the next test.
+     *
+     * @template T
+     *
+     * @param  Closure(): T  $compute
+     * @return T
+     */
+    private static function memoized(string $key, Closure $compute): mixed
+    {
+        /** @var array<string, mixed> $values */
+        $values = request()->attributes->get('get-started.memo', []);
+
+        if (! array_key_exists($key, $values)) {
+            $values[$key] = $compute();
+            request()->attributes->set('get-started.memo', $values);
+        }
+
+        return $values[$key];
     }
 
     /**
@@ -508,6 +557,7 @@ class GetStarted extends Page
         abort_unless(in_array(self::packageStatus($package)['state'], ['not a package', 'failed'], true), 403);
         $package->delete();
         session()->put(self::PACKAGES_KEY, array_values(array_diff(session(self::PACKAGES_KEY, []), [$id])));
+        static::forgetMemoized();
         $this->checkSync();
     }
 
@@ -579,6 +629,9 @@ class GetStarted extends Page
                     ...session(self::PACKAGES_KEY, []),
                     ...array_map(fn (Package $package): int => $package->id, $created),
                 ])));
+                // The step this page should be on has just changed; the
+                // request's memoized answer was computed before the import.
+                static::forgetMemoized();
                 if (static::currentStep() > 2) {
                     $this->redirect(static::getUrl());
                 }

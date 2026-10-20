@@ -880,11 +880,15 @@ class GetStartedTest extends TestCase
         $this->assertFalse(GetStarted::shouldRegisterNavigation());
         $this->assertSame('1/4', GetStartedChecklist::getNavigationBadge());
 
+        // The badge is computed once per request; the next question stands in
+        // for the next request, which reads the registry afresh.
         Source::factory()->create();
+        GetStarted::forgetMemoized();
         $this->assertSame('2/4', GetStartedChecklist::getNavigationBadge());
 
         $package = Package::factory()->create();
         Download::query()->create(['package_id' => $package->id, 'version' => '1.0.0', 'created_at' => now()]);
+        GetStarted::forgetMemoized();
 
         $this->assertFalse(GetStartedChecklist::shouldRegisterNavigation());
     }
