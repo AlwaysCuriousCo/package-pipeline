@@ -7,6 +7,7 @@ use App\Models\Concerns\LogsAuditableChanges;
 use Database\Factories\RepositoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -26,8 +27,12 @@ use Illuminate\Support\Str;
  * repositories existed; every other repository is mounted under /r/{path},
  * so one installation can serve independent registries — a public one and an
  * internal one, say — with independent access rules.
+ *
+ * A named repository can also be given a host of its own, at whose root it
+ * answers too — composer.example.com beside packages.example.com/r/example —
+ * so a product's customers configure an address carrying its name.
  */
-#[Fillable(['name', 'path', 'composer_key', 'description', 'public', 'page_enabled', 'page_body', 'page_image', 'page_lists_packages'])]
+#[Fillable(['name', 'path', 'host', 'composer_key', 'description', 'public', 'page_enabled', 'page_body', 'page_image', 'page_lists_packages'])]
 class Repository extends Model
 {
     /** @use HasFactory<RepositoryFactory> */
@@ -47,6 +52,15 @@ class Repository extends Model
     ];
 
     /**
+     * Whether the request in flight reached this repository through its
+     * /r/{path} mount rather than at its own host. Set by
+     * ResolveComposerRepository and by nothing else.
+     *
+     * @see url()
+     */
+    protected bool $addressedByPath = false;
+
+    /**
      * Where a repository is served and whether it is readable without a
      * token — the switch that turns private packages public.
      *
@@ -54,7 +68,7 @@ class Repository extends Model
      */
     protected function auditedAttributes(): array
     {
-        return ['name', 'path', 'public', 'page_enabled', 'page_lists_packages'];
+        return ['name', 'path', 'host', 'public', 'page_enabled', 'page_lists_packages'];
     }
 
     /**
@@ -332,6 +346,78 @@ class Repository extends Model
     }
 
     /**
+     * The registry's own host as configured, lowercase, or null when APP_URL
+     * names none. Lowercase because that is how a request's host is read
+     * (Symfony lowercases it) and how repository hosts are stored, so one
+     * comparison serves every caller — an APP_URL whose host is typed in any
+     * other case would otherwise slip past every check that guards it.
+     */
+    public static function registryHost(): ?string
+    {
+        $host = parse_url((string) config('app.url'), PHP_URL_HOST);
+
+        return is_string($host) ? mb_strtolower($host) : null;
+    }
+
+    /**
+     * The repository whose own host this is, or null — including for the
+     * registry's own host, which belongs to no repository and is answered
+     * without a query.
+     *
+     * The host is matched against stored values and never used for anything
+     * else, so a forged Host header reaches at most a repository its /r/{path}
+     * mount already serves, and every URL is still built from the stored host.
+     */
+    public static function forHost(string $host): ?self
+    {
+        $host = mb_strtolower($host);
+
+        if ($host === '' || $host === static::registryHost()) {
+            return null;
+        }
+
+        return static::query()->where('host', $host)->first();
+    }
+
+    /**
+     * Answer as reached through /r/{path}: every URL built for the rest of
+     * the request stays under the registry's own address.
+     *
+     * A consumer who configured the path mount holds credentials for the
+     * registry's host, and Composer only sends a credential to the host it was
+     * configured for — so the dist URLs it is handed have to stay there too.
+     */
+    public function addressedByPath(): static
+    {
+        $this->addressedByPath = true;
+
+        return $this;
+    }
+
+    /**
+     * Whether this repository's URLs are on its own host.
+     */
+    public function servedAtOwnHost(): bool
+    {
+        return filled($this->host) && ! $this->isDefault() && ! $this->addressedByPath;
+    }
+
+    /**
+     * Stored lowercase, trimmed and without a trailing dot, since forHost()
+     * compares it to a request's host verbatim; the form refuses a scheme,
+     * port or path. Blank is null: the column is unique, and only one row
+     * could hold ''.
+     *
+     * @return Attribute<?string, ?string>
+     */
+    protected function host(): Attribute
+    {
+        return Attribute::make(
+            set: fn (?string $value): ?string => filled($value) ? rtrim(mb_strtolower(trim($value)), '.') : null,
+        );
+    }
+
+    /**
      * Whether this is the default repository, the one answering at the root.
      */
     public function isDefault(): bool
@@ -341,11 +427,12 @@ class Repository extends Model
 
     /**
      * The URL path prefix this repository's Composer endpoints live under:
-     * empty for the default repository, "/r/{path}" for a named one.
+     * empty for the default repository and at a repository's own host,
+     * "/r/{path}" for a named one otherwise.
      */
     public function pathPrefix(): string
     {
-        return $this->isDefault() ? '' : "/r/{$this->path}";
+        return $this->isDefault() || $this->servedAtOwnHost() ? '' : "/r/{$this->path}";
     }
 
     /**
@@ -518,6 +605,12 @@ class Repository extends Model
      * answers 400 to anything that does not match, so an installation whose
      * APP_URL is stale or still the framework's default would serve nothing at
      * all rather than serve dist URLs from a host that at least resolves.
+     *
+     * A repository with a host of its own is the one other base, and it is
+     * stored rather than read off the request for the same reason: the cache
+     * gains at most one more entry per repository, never one per header. It is
+     * the base everywhere except a request that came in through /r/{path} —
+     * see addressedByPath().
      */
     public function url(string $suffix = ''): string
     {
@@ -534,6 +627,12 @@ class Repository extends Model
     private function rootUrl(): string
     {
         $configured = rtrim(trim((string) config('app.url')), '/');
+
+        if ($this->servedAtOwnHost()) {
+            // The registry's own scheme, so a local install on plain http
+            // links its hosts the same way.
+            return (parse_url($configured, PHP_URL_SCHEME) ?: 'https').'://'.$this->host;
+        }
 
         return $configured === '' ? rtrim(url('/'), '/') : $configured;
     }

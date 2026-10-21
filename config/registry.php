@@ -272,6 +272,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Repository Hosts
+    |--------------------------------------------------------------------------
+    |
+    | A repository can answer at a host of its own (composer.example.com).
+    | Whatever fronts the app terminates TLS for it; this app holds no
+    | certificates. `tls_ask` answers GET /tls/ask?domain=… with 200 for a host
+    | some repository uses and 404 for anything else — the check Caddy's
+    | on-demand TLS makes before it requests a certificate, without which
+    | anybody pointing a name at the server could have one issued. Off, the
+    | endpoint is a 404 like any other path. See docs/deployment.md.
+    |
+    */
+
+    'tls_ask' => (bool) env('TLS_ASK_ENABLED', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Public Package Pages
     |--------------------------------------------------------------------------
     |

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\Ecosystem;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
+use App\Filament\Resources\Packages\Schemas\PackageInfolist;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
@@ -12,6 +13,7 @@ use Filament\Actions\Testing\TestAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class PackageInstallCommandsTest extends TestCase
@@ -59,6 +61,51 @@ class PackageInstallCommandsTest extends TestCase
             'repository' => 'pip config set global.extra-index-url '.rtrim(url('/'), '/').'/pypi/simple/',
             'require' => 'pip install widgets',
         ], $package->installCommands());
+    }
+
+    public function test_an_alpha_only_composer_package_opts_into_pre_release_stability(): void
+    {
+        $package = $this->preReleaseOnly('acme/widgets', Ecosystem::Composer);
+
+        $commands = PackageInfolist::installCommands($package);
+
+        $this->assertSame('composer require acme/widgets:^0.1@alpha', $commands['require']);
+        $this->assertNotNull($commands['note']);
+    }
+
+    /** @return array<string, array{Ecosystem, string, string}> */
+    public static function nonComposerEcosystems(): array
+    {
+        return [
+            'npm' => [Ecosystem::Npm, '@acme/ui', 'npm install @acme/ui'],
+            'pip' => [Ecosystem::Pypi, 'widgets', 'pip install widgets'],
+        ];
+    }
+
+    #[DataProvider('nonComposerEcosystems')]
+    public function test_pre_release_stability_never_rewrites_npm_or_pip_commands(Ecosystem $ecosystem, string $name, string $require): void
+    {
+        $package = $this->preReleaseOnly($name, $ecosystem);
+
+        $this->assertSame([
+            'repository' => $package->installCommands()['repository'],
+            'require' => $require,
+            'note' => null,
+        ], PackageInfolist::installCommands($package));
+    }
+
+    private function preReleaseOnly(string $name, Ecosystem $ecosystem): Package
+    {
+        $package = Package::factory()->unreleased()->create(['name' => $name, 'ecosystem' => $ecosystem]);
+
+        $package->versions()->create([
+            'version' => 'v0.1.0-alpha.11',
+            'reference' => str_repeat('a', 40),
+            'is_dev' => false,
+            'metadata' => ['name' => $name, 'version' => 'v0.1.0-alpha.11'],
+        ]);
+
+        return $package;
     }
 
     public function test_an_unreleased_package_prefers_its_default_dev_branch(): void

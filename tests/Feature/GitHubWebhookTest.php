@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\SyncPackageJob;
+use App\Models\GitHubAppRegistration;
 use App\Models\Package;
 use App\Models\Source;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
@@ -355,6 +356,20 @@ class GitHubWebhookTest extends TestCase
         $this->deliver('push', $this->push())->assertServiceUnavailable();
 
         Queue::assertNothingPushed();
+    }
+
+    public function test_a_registered_apps_secret_verifies_deliveries_when_the_environment_has_none(): void
+    {
+        config(['services.github.app.webhook_secret' => null]);
+
+        GitHubAppRegistration::factory()->create(['webhook_secret' => 'the-registered-secret']);
+
+        $this->package();
+
+        $this->deliver('push', $this->push(), secret: 'the-registered-secret')->assertAccepted();
+        $this->deliver('push', $this->push(), secret: self::APP_SECRET)->assertUnauthorized();
+
+        Queue::assertPushed(SyncPackageJob::class, 1);
     }
 
     public function test_a_repository_hook_is_verified_against_that_packages_own_secret(): void

@@ -2,10 +2,15 @@
 
 namespace App\Services\GitHub;
 
+use App\Enums\GitHubAppOwner;
 use App\Enums\WebhookState;
+use App\Models\GitHubAppRegistration;
+use App\Models\Source;
 use App\Support\HttpTimeouts;
 use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\File;
@@ -50,8 +55,182 @@ class GitHubApp
      */
     public function isConfigured(): bool
     {
+        $credentials = $this->credentials();
+
+        return filled($credentials['id']) && filled($credentials['private_key']);
+    }
+
+    /**
+     * Whether the environment names the app. When it does, it is the whole
+     * answer: an app registered from the panel is ignored rather than mixed
+     * in, since an id from one place and a key from the other would only ever
+     * produce a JWT GitHub rejects.
+     *
+     * Either variable counts, so a half-configured environment reports itself
+     * as unconfigured instead of quietly falling back to something else.
+     */
+    public function configuredFromEnvironment(): bool
+    {
         return filled(config('services.github.app.id'))
-            && filled(config('services.github.app.private_key'));
+            || filled(config('services.github.app.private_key'));
+    }
+
+    /**
+     * The app registered from the panel, when the environment does not name
+     * one. Read once per instance: a single page asks several questions of it.
+     */
+    public function registration(): ?GitHubAppRegistration
+    {
+        if ($this->configuredFromEnvironment()) {
+            return null;
+        }
+
+        return once(fn (): ?GitHubAppRegistration => GitHubAppRegistration::current());
+    }
+
+    /**
+     * The secret GitHub signs the app's webhook deliveries with.
+     *
+     * The environment's own secret wins, as it always has, and may be set
+     * without the app itself — the webhook can be configured before or after
+     * the rest. A registered app's secret is only used when the app in use is
+     * that registered one; it was generated for its webhook and nobody else's.
+     */
+    public function webhookSecret(): ?string
+    {
+        if (filled($secret = config('services.github.app.webhook_secret'))) {
+            return (string) $secret;
+        }
+
+        return $this->registration()?->webhook_secret;
+    }
+
+    /**
+     * Store an app registered from the panel, once GitHub confirms the key is
+     * the app's.
+     *
+     * Both registration paths end here: the manifest conversion, whose
+     * credentials came straight from GitHub, and the enterprise form, whose
+     * id and key were brought back by hand. Checking the first is cheap
+     * insurance; checking the second is the point.
+     */
+    public function register(GitHubAppOwner $ownerType, string $owner, string $appId, string $privateKey, ?string $webhookSecret): GitHubAppRegistration
+    {
+        throw_if($this->isConfigured(), new RuntimeException('A GitHub App is already configured. Forget it before registering another.'));
+
+        $app = $this->describe($appId, $privateKey);
+
+        try {
+            return GitHubAppRegistration::query()->create([
+                'app_id' => $appId,
+                'slug' => $app['slug'],
+                'name' => is_string($app['name'] ?? null) ? $app['name'] : $app['slug'],
+                'owner' => $owner,
+                'owner_type' => $ownerType,
+                'html_url' => is_string($app['html_url'] ?? null) ? $app['html_url'] : "https://github.com/apps/{$app['slug']}",
+                'private_key' => $privateKey,
+                'webhook_secret' => filled($webhookSecret) ? $webhookSecret : null,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // Two registrations racing each other: the check above passed for
+            // both, and the table's one-row guarantee stopped the second.
+            throw new RuntimeException('A GitHub App is already configured. Forget it before registering another.');
+        }
+    }
+
+    /**
+     * Give a registered app's webhook a secret of this registry's choosing.
+     *
+     * An enterprise app is created from a prefilled form, and no parameter
+     * can fill in the webhook secret, so rather than have the admin invent
+     * one and paste it, the registry sets it through the app's own API once
+     * the key is verified. The form already switched the webhook on and
+     * pointed it here; this adds the secret, and restates the rest so the
+     * three always agree.
+     */
+    public function configureWebhook(GitHubAppRegistration $registration): void
+    {
+        $secret = Str::random(40);
+
+        try {
+            $this->request()
+                ->withToken($this->jwt(['id' => $registration->app_id, 'private_key' => $registration->private_key]))
+                ->patch('/app/hook/config', [
+                    'url' => $this->webhookUrl(),
+                    'content_type' => 'json',
+                    'secret' => $secret,
+                    'insecure_ssl' => '0',
+                ])
+                ->throw();
+        } catch (RequestException $exception) {
+            throw new RuntimeException($exception->response->status() === 404
+                ? 'The app has no webhook to configure: on GitHub, tick Webhook → Active on the app\'s settings page, then try again. '.GitHubError::describe($exception)
+                : 'GitHub refused the webhook settings. '.GitHubError::describe($exception), previous: $exception);
+        }
+
+        $registration->update(['webhook_secret' => $secret]);
+
+        Cache::forget('github-app.webhook-config.'.$registration->app_id);
+    }
+
+    /**
+     * Forget the app registered from the panel.
+     *
+     * Sources installed through it keep their records and package links, as
+     * a disconnect does, but stop authenticating until the app they were
+     * installed on is configured again. Their cached tokens go now rather
+     * than in an hour, so "forgotten" means it from this request on.
+     */
+    public function forget(): void
+    {
+        $registration = $this->registration();
+
+        if ($registration === null) {
+            return;
+        }
+
+        Source::query()->whereNotNull('installation_id')->pluck('installation_id')
+            ->each(fn (int|string $installationId) => $this->forgetInstallationToken((int) $installationId));
+
+        Cache::forget('github-app.slug.'.$registration->app_id);
+        Cache::forget('github-app.webhook-config.'.$registration->app_id);
+
+        $registration->delete();
+    }
+
+    /**
+     * Ask GitHub which app a key belongs to, before it is stored.
+     *
+     * The same JWT the app signs every other call with, minted from the
+     * candidate credentials rather than the configured ones. A key from
+     * another app fails here with GitHub's own 401 instead of failing every
+     * sync later.
+     *
+     * @return array<string, mixed>
+     */
+    public function describe(string $appId, string $privateKey): array
+    {
+        try {
+            $app = $this->request()
+                ->withToken($this->jwt(['id' => $appId, 'private_key' => $privateKey]))
+                ->get('/app')
+                ->throw()
+                ->json();
+        } catch (RequestException $exception) {
+            throw new RuntimeException($exception->response->status() === 401
+                ? "GitHub did not accept that private key for app {$appId}. ".GitHubError::describe($exception)
+                : "GitHub could not be asked about app {$appId}. ".GitHubError::describe($exception), previous: $exception);
+        }
+
+        // GitHub answers for whichever app signed the JWT, which is the one the
+        // key belongs to. An id that is not the one asked about means the two
+        // were copied from different apps.
+        throw_unless(
+            is_array($app) && (string) ($app['id'] ?? '') === $appId && is_string($app['slug'] ?? null),
+            new RuntimeException("That private key does not belong to app {$appId}."),
+        );
+
+        return $app;
     }
 
     /**
@@ -86,7 +265,7 @@ class GitHubApp
      */
     public function webhookState(): WebhookState
     {
-        if (blank(config('services.github.app.webhook_secret'))) {
+        if (blank($this->webhookSecret())) {
             return WebhookState::NoSecret;
         }
 
@@ -144,7 +323,7 @@ class GitHubApp
         // indistinguishable from a cache miss and would put this request back
         // on GitHub for every page that asks.
         $configured = Cache::remember(
-            'github-app.webhook-config.'.config('services.github.app.id'),
+            'github-app.webhook-config.'.$this->credentials()['id'],
             now()->addMinutes(5),
             function (): array|false {
                 $response = $this->request()->withToken($this->jwt())->get('/app/hook/config');
@@ -168,7 +347,7 @@ class GitHubApp
      */
     public function forgetWebhookConfiguration(): void
     {
-        Cache::forget('github-app.webhook-config.'.config('services.github.app.id'));
+        Cache::forget('github-app.webhook-config.'.$this->credentials()['id']);
     }
 
     /**
@@ -219,12 +398,12 @@ class GitHubApp
      */
     private function slug(): string
     {
-        if (filled($configured = config('services.github.app.slug'))) {
-            return $configured;
+        if (filled($known = $this->credentials()['slug'])) {
+            return $known;
         }
 
         return Cache::remember(
-            'github-app.slug.'.config('services.github.app.id'),
+            'github-app.slug.'.$this->credentials()['id'],
             now()->addDay(),
             function (): string {
                 $slug = $this->request()->withToken($this->jwt())->get('/app')->throw()->json('slug');
@@ -314,10 +493,19 @@ class GitHubApp
     /**
      * A short-lived JWT identifying the app itself, which is what GitHub
      * accepts on the `/app/*` endpoints.
+     *
+     * Signed with the configured app unless other credentials are given, which
+     * is how a registration is checked before anything is stored.
+     *
+     * @param  array{id: ?string, private_key: ?string}|null  $credentials
      */
-    private function jwt(): string
+    private function jwt(?array $credentials = null): string
     {
-        $this->ensureConfigured();
+        if ($credentials === null) {
+            $this->ensureConfigured();
+
+            $credentials = $this->credentials();
+        }
 
         $issuedAt = time() - self::JWT_BACKDATE;
 
@@ -326,29 +514,56 @@ class GitHubApp
             $this->base64UrlEncode(json_encode([
                 'iat' => $issuedAt,
                 'exp' => $issuedAt + self::JWT_LIFETIME,
-                'iss' => (string) config('services.github.app.id'),
+                'iss' => (string) $credentials['id'],
             ])),
         ];
 
         $payload = implode('.', $segments);
 
         throw_unless(
-            openssl_sign($payload, $signature, $this->privateKey(), OPENSSL_ALGO_SHA256),
-            new RuntimeException('Unable to sign the GitHub App JWT; check GITHUB_APP_PRIVATE_KEY is a valid RSA private key.'),
+            openssl_sign($payload, $signature, $this->pem((string) $credentials['private_key']), OPENSSL_ALGO_SHA256),
+            new RuntimeException('Unable to sign the GitHub App JWT; check the private key is a valid RSA private key.'),
         );
 
         return $payload.'.'.$this->base64UrlEncode($signature);
     }
 
     /**
+     * The app in use: the environment's when it names one, otherwise the one
+     * registered from the panel, otherwise nothing.
+     *
+     * Every question about the app's identity goes through here, so the two
+     * places it can be configured cannot drift into answering differently.
+     *
+     * @return array{id: ?string, private_key: ?string, slug: ?string}
+     */
+    private function credentials(): array
+    {
+        if ($this->configuredFromEnvironment()) {
+            return [
+                'id' => filled($id = config('services.github.app.id')) ? (string) $id : null,
+                'private_key' => filled($key = config('services.github.app.private_key')) ? (string) $key : null,
+                'slug' => filled($slug = config('services.github.app.slug')) ? (string) $slug : null,
+            ];
+        }
+
+        $registration = $this->registration();
+
+        return [
+            'id' => $registration?->app_id,
+            'private_key' => $registration?->private_key,
+            'slug' => $registration?->slug,
+        ];
+    }
+
+    /**
      * The app's RSA private key, accepted either as a path to the .pem file
      * GitHub generates or as the key itself (whose newlines survive an
-     * environment file only when escaped, so "\n" is restored here).
+     * environment file only when escaped, so "\n" is restored here). A key
+     * registered from the panel is always the latter, with real newlines.
      */
-    private function privateKey(): string
+    private function pem(string $key): string
     {
-        $key = (string) config('services.github.app.private_key');
-
         if (! str_contains($key, 'PRIVATE KEY')) {
             throw_unless(
                 File::exists($key),
@@ -364,7 +579,7 @@ class GitHubApp
     private function ensureConfigured(): void
     {
         throw_unless($this->isConfigured(), new RuntimeException(
-            'No GitHub App is configured. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, '
+            'No GitHub App is configured. Register one under Sources → Connect GitHub → Register GitHub App, set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, '
             .'or give the source its own access token.'
         ));
     }

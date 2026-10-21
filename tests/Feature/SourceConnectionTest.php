@@ -3,17 +3,26 @@
 namespace Tests\Feature;
 
 use App\Enums\SourceProvider;
+use App\Filament\Pages\GetStarted;
+use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class SourceConnectionTest extends TestCase
 {
     use RefreshDatabase;
+
+    /** @return array<int, array{int}> */
+    public static function repositoryCounts(): array
+    {
+        return [[0], [1], [2]];
+    }
 
     protected function setUp(): void
     {
@@ -35,7 +44,7 @@ class SourceConnectionTest extends TestCase
         $this->actingAs(User::factory()->superAdmin()->create());
     }
 
-    private function fakeInstallation(string $account = 'acme'): void
+    private function fakeInstallation(string $account = 'acme', int $count = 4): void
     {
         Http::fake([
             'api.github.com/app/installations/42/access_tokens' => Http::response([
@@ -46,9 +55,28 @@ class SourceConnectionTest extends TestCase
                 'account' => ['login' => $account, 'type' => 'Organization'],
                 'app_slug' => 'acme-pipeline',
                 'repository_selection' => 'selected',
+                'html_url' => "https://github.com/organizations/{$account}/settings/installations/42",
             ]),
-            'api.github.com/installation/repositories*' => Http::response(['total_count' => 4]),
+            'api.github.com/installation/repositories*' => Http::response(['total_count' => $count]),
         ]);
+    }
+
+    #[DataProvider('repositoryCounts')]
+    public function test_callback_repository_count_grammar(int $count): void
+    {
+        $this->fakeInstallation(count: $count);
+        $this->get(route('sources.connect.new'))->assertRedirect();
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect();
+
+        $expected = match ($count) {
+            0 => 'Connected acme, but no repositories',
+            1 => '1 repository is reachable from this source.',
+            default => '2 repositories are reachable from this source.',
+        };
+        $this->assertStringContainsString($expected, $this->notifications());
     }
 
     public function test_connect_redirects_to_the_github_install_screen(): void
@@ -259,6 +287,7 @@ class SourceConnectionTest extends TestCase
         $this->assertSame('acme', $source->account);
         $this->assertSame('Organization', $source->account_type);
         $this->assertSame('selected', $source->metadata['repository_selection']);
+        $this->assertSame('https://github.com/organizations/acme/settings/installations/42', $source->metadata['html_url']);
         $this->assertSame(4, $source->metadata['repository_count']);
         $this->assertTrue($source->isConnected());
     }
@@ -445,5 +474,114 @@ class SourceConnectionTest extends TestCase
         $this->get(route('sources.connect', $source))
             ->assertRedirect()
             ->assertSessionMissing('sources.github.pending');
+    }
+
+    /**
+     * The notifications the next page will show, as one string to search.
+     */
+    private function notifications(): string
+    {
+        return (string) json_encode(session('filament.notifications'));
+    }
+
+    public function test_verifying_picks_up_a_repository_selection_changed_on_github(): void
+    {
+        $source = Source::factory()->create([
+            'installation_id' => 42,
+            'account' => 'acme',
+            'metadata' => ['repository_selection' => 'selected', 'permissions' => ['contents' => 'read']],
+        ]);
+
+        Http::fake([
+            'api.github.com/app/installations/42/access_tokens' => Http::response(['token' => 'ghs_installation', 'expires_at' => now()->addHour()->toIso8601String()]),
+            'api.github.com/app/installations/42' => Http::response([
+                'account' => ['login' => 'acme', 'type' => 'Organization'],
+                'repository_selection' => 'all',
+                'html_url' => 'https://github.com/organizations/acme/settings/installations/42',
+            ]),
+            'api.github.com/installation/repositories*' => Http::response(['total_count' => 9]),
+        ]);
+
+        $this->assertSame(9, $source->verify());
+
+        $source->refresh();
+        $this->assertSame('all', $source->metadata['repository_selection']);
+        $this->assertSame('https://github.com/organizations/acme/settings/installations/42', $source->metadata['html_url']);
+        $this->assertSame(['contents' => 'read'], $source->metadata['permissions']);
+    }
+
+    public function test_an_install_started_in_the_wizard_returns_to_it(): void
+    {
+        $this->fakeInstallation('acme');
+
+        $this->get(route('sources.connect.new', ['onboarding' => 1]));
+
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect(GetStarted::getUrl(['source' => Source::sole()->id]));
+
+        // The wizard's next step is importing, so the notification offers no
+        // import of its own.
+        $this->assertStringContainsString('Connected acme', $this->notifications());
+        $this->assertStringNotContainsString('importPackages', $this->notifications());
+    }
+
+    public function test_an_install_started_anywhere_else_lands_on_its_source_as_before(): void
+    {
+        $this->fakeInstallation('acme');
+
+        $this->get(route('sources.connect.new'));
+
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect(SourceResource::getUrl('view', ['record' => Source::sole()]));
+
+        $this->assertStringContainsString('importPackages', $this->notifications());
+    }
+
+    public function test_a_wizard_registration_left_unfinished_does_not_redirect_a_later_connection(): void
+    {
+        $this->fakeInstallation('acme');
+
+        // Registering from the wizard, abandoned on GitHub before the install.
+        session([GetStarted::RETURN_KEY => true]);
+
+        $this->get(route('sources.connect.new'));
+
+        $this->get(route('sources.github.callback', [
+            'installation_id' => 42,
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect(SourceResource::getUrl('view', ['record' => Source::sole()]));
+    }
+
+    public function test_a_callback_without_a_state_never_returns_to_the_wizard(): void
+    {
+        $this->fakeInstallation('acme');
+
+        $this->get(route('sources.connect.new', ['onboarding' => 1]));
+
+        $this->get(route('sources.github.callback', ['installation_id' => 42]))
+            ->assertRedirect(SourceResource::getUrl('view', ['record' => Source::sole()]));
+    }
+
+    public function test_a_cancelled_install_started_in_the_wizard_returns_to_it(): void
+    {
+        $this->get(route('sources.connect.new', ['onboarding' => 1]));
+
+        $this->get(route('sources.github.callback', [
+            'state' => session('sources.github.pending')['state'],
+        ]))->assertRedirect(GetStarted::getUrl());
+
+        $this->assertStringContainsString('Nothing was installed', $this->notifications());
+    }
+
+    public function test_a_missing_app_is_reported_in_the_wizard_when_it_started_there(): void
+    {
+        config()->set('services.github.app.private_key', null);
+
+        $this->get(route('sources.connect.new', ['onboarding' => 1]))
+            ->assertRedirect(GetStarted::getUrl());
     }
 }

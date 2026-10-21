@@ -2,10 +2,12 @@
 
 namespace App\Filament\Resources\Packages\Schemas;
 
+use App\Enums\Ecosystem;
 use App\Enums\SourceProvider;
 use App\Enums\TokenAbility;
 use App\Enums\WebhookCoverage;
 use App\Filament\Pages\ApiTokens;
+use App\Filament\Pages\GetStarted;
 use App\Filament\Resources\DeployTokens\DeployTokenResource;
 use App\Filament\Resources\Packages\Pages\ViewPackage;
 use App\Filament\Resources\Sources\SourceResource;
@@ -14,6 +16,7 @@ use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Token;
 use App\Services\GitHub\WebhookRegistrar;
+use App\Services\InstallationTest;
 use App\Support\NewToken;
 use Filament\Actions\Action;
 use Filament\Actions\SelectAction;
@@ -207,83 +210,7 @@ class PackageInfolist
                             ->placeholder('None')
                             ->columnSpanFull(),
                     ]),
-                Section::make('Install')
-                    ->key('install')
-                    ->description('Run these in the consuming project. Click a command to copy it.')
-                    ->icon(Heroicon::OutlinedCommandLine)
-                    ->columnSpanFull()
-                    // A package served from several repositories has several
-                    // register lines; the select picks which one, bound to
-                    // ViewPackage::$installRepository (home by default).
-                    ->headerActions([
-                        SelectAction::make('installRepository')
-                            ->label('Repository')
-                            ->options(fn (Package $record): array => $record->repositories->pluck('name', 'id')->all())
-                            ->visible(fn (Package $record): bool => $record->repositories->count() > 1),
-                        // A read token against the signed-in user, so a private
-                        // repository's steps can be followed straight off this
-                        // card. Its plain text lives on the page for this
-                        // request only — the same one-time reveal as ApiTokens.
-                        Action::make('generateToken')
-                            ->label('Generate token')
-                            ->icon(Heroicon::OutlinedKey)
-                            ->modalHeading('Generate a read token')
-                            ->modalDescription('Issued to you, with repository read access only. The token is shown once, right after it is created.')
-                            ->visible(fn (Package $record, ViewPackage $livewire): bool => ! self::installRepository($record, $livewire)->public)
-                            ->schema([
-                                TextInput::make('name')
-                                    ->required()
-                                    ->maxLength(255)
-                                    ->default(fn (Package $record): string => "install: {$record->name}"),
-                                DatePicker::make('expires_at')
-                                    ->label('Expires')
-                                    ->minDate(now()->addDay())
-                                    ->helperText('Leave empty for a token that never expires.'),
-                            ])
-                            ->action(function (array $data, ViewPackage $livewire): void {
-                                $new = Token::issue(
-                                    auth()->user(),
-                                    $data['name'],
-                                    [TokenAbility::RepositoryRead],
-                                    filled($data['expires_at'] ?? null) ? Carbon::parse($data['expires_at'])->endOfDay() : null,
-                                );
-
-                                $livewire->plainTextToken = $new->plainText;
-                                $livewire->tokenUsername = $new->token->composerUsername();
-
-                                Notification::make()
-                                    ->success()
-                                    ->title('Token created')
-                                    ->body('Copy it now — it will not be shown again.')
-                                    ->send();
-                            }),
-                    ])
-                    ->schema([
-                        TextEntry::make('install_repository')
-                            ->label('1. Register this Composer repository (once per project)')
-                            ->state(fn (Package $record, ViewPackage $livewire): string => self::installRepository($record, $livewire)->configureCommand())
-                            ->fontFamily(FontFamily::Mono)
-                            ->copyable()
-                            ->copyMessage('Command copied'),
-                        TextEntry::make('install_auth')
-                            ->label('2. Authenticate (this repository is private)')
-                            ->visible(fn (Package $record, ViewPackage $livewire): bool => ! self::installRepository($record, $livewire)->public)
-                            ->state(fn (ViewPackage $livewire): string => $livewire->plainTextToken === null
-                                ? self::tokenPlaceholder()
-                                : e(NewToken::composerCommandFor($livewire->tokenUsername, $livewire->plainTextToken)))
-                            ->html()
-                            ->fontFamily(fn (ViewPackage $livewire): ?FontFamily => $livewire->plainTextToken === null ? null : FontFamily::Mono)
-                            ->color(fn (ViewPackage $livewire): ?string => $livewire->plainTextToken === null ? 'gray' : null)
-                            ->copyable(fn (ViewPackage $livewire): bool => $livewire->plainTextToken !== null)
-                            ->copyMessage('Command copied')
-                            ->helperText(fn (ViewPackage $livewire): ?string => $livewire->plainTextToken === null ? null : 'Shown once — copy it now.'),
-                        TextEntry::make('install_require')
-                            ->label(fn (Package $record, ViewPackage $livewire): string => (self::installRepository($record, $livewire)->public ? '2' : '3').'. Require the package')
-                            ->state(fn (Package $record): string => $record->installCommands()['require'])
-                            ->fontFamily(FontFamily::Mono)
-                            ->copyable()
-                            ->copyMessage('Command copied'),
-                    ]),
+                self::installSection(),
                 Section::make('Record')
                     ->key('record')
                     ->icon(Heroicon::OutlinedClock)
@@ -301,10 +228,116 @@ class PackageInfolist
             ]);
     }
 
+    /** Reused by the package page and the onboarding finish screen. */
+    public static function installSection(): Section
+    {
+        return Section::make('Install')
+            ->key('install')
+            ->description('Run these in the consuming project. Click a command to copy it.')
+            ->icon(Heroicon::OutlinedCommandLine)
+            ->columnSpanFull()
+            // A package served from several repositories has several
+            // register lines; the select picks which one, bound to
+            // ViewPackage::$installRepository (home by default).
+            ->headerActions([
+                SelectAction::make('installRepository')
+                    ->label('Repository')
+                    ->options(fn (Package $record): array => $record->repositories->pluck('name', 'id')->all())
+                    ->visible(fn (Package $record): bool => $record->repositories->count() > 1),
+                // A read token against the signed-in user, so a private
+                // repository's steps can be followed straight off this
+                // card. Its plain text lives on the page for this
+                // request only — the same one-time reveal as ApiTokens.
+                Action::make('generateToken')
+                    ->label('Generate token')
+                    ->icon(Heroicon::OutlinedKey)
+                    ->modalHeading('Generate a read token')
+                    ->modalDescription('Issued to you, with repository read access only. The token is shown once, right after it is created.')
+                    ->visible(fn (Package $record, ViewPackage|GetStarted $livewire): bool => ! self::installRepository($record, $livewire)->public)
+                    ->schema([
+                        TextInput::make('name')
+                            ->required()
+                            ->maxLength(255)
+                            ->default(fn (Package $record): string => "install: {$record->name}"),
+                        DatePicker::make('expires_at')
+                            ->label('Expires')
+                            ->minDate(now()->addDay())
+                            ->helperText('Leave empty for a token that never expires.'),
+                    ])
+                    ->action(function (array $data, ViewPackage|GetStarted $livewire): void {
+                        $new = Token::issue(
+                            auth()->user(),
+                            $data['name'],
+                            [TokenAbility::RepositoryRead],
+                            filled($data['expires_at'] ?? null) ? Carbon::parse($data['expires_at'])->endOfDay() : null,
+                        );
+
+                        $livewire->plainTextToken = $new->plainText;
+                        $livewire->tokenUsername = $new->token->composerUsername();
+
+                        Notification::make()
+                            ->success()
+                            ->title('Token created')
+                            ->body('Copy it now — it will not be shown again.')
+                            ->send();
+                    }),
+            ])
+            ->schema([
+                TextEntry::make('install_repository')
+                    ->label('1. Register this Composer repository (once per project)')
+                    ->state(fn (Package $record, ViewPackage|GetStarted $livewire): string => self::installRepository($record, $livewire)->configureCommand())
+                    ->fontFamily(FontFamily::Mono)
+                    ->copyable()
+                    ->copyMessage('Command copied'),
+                TextEntry::make('install_auth')
+                    ->label('2. Authenticate (this repository is private)')
+                    ->visible(fn (Package $record, ViewPackage|GetStarted $livewire): bool => ! self::installRepository($record, $livewire)->public)
+                    ->state(fn (Package $record, ViewPackage|GetStarted $livewire): string => $livewire->plainTextToken === null
+                        ? self::tokenPlaceholder()
+                        : e(NewToken::composerCommandFor($livewire->tokenUsername, $livewire->plainTextToken, host: (string) parse_url(self::installRepository($record, $livewire)->url(), PHP_URL_HOST))))
+                    ->html()
+                    ->fontFamily(fn (ViewPackage|GetStarted $livewire): ?FontFamily => $livewire->plainTextToken === null ? null : FontFamily::Mono)
+                    ->color(fn (ViewPackage|GetStarted $livewire): ?string => $livewire->plainTextToken === null ? 'gray' : null)
+                    ->copyable(fn (ViewPackage|GetStarted $livewire): bool => $livewire->plainTextToken !== null)
+                    ->copyableState(fn (Package $record, ViewPackage|GetStarted $livewire): ?string => $livewire->plainTextToken === null ? null : NewToken::composerCommandFor($livewire->tokenUsername, $livewire->plainTextToken, host: (string) parse_url(self::installRepository($record, $livewire)->url(), PHP_URL_HOST)))
+                    ->copyMessage('Command copied')
+                    ->helperText(fn (ViewPackage|GetStarted $livewire): ?string => $livewire->plainTextToken === null ? null : 'Shown once — copy it now.'),
+                TextEntry::make('install_require')
+                    ->label(fn (Package $record, ViewPackage|GetStarted $livewire): string => (self::installRepository($record, $livewire)->public ? '2' : '3').'. Require the package')
+                    ->state(fn (Package $record): string => self::installCommands($record)['require'])
+                    ->fontFamily(FontFamily::Mono)
+                    ->copyable()
+                    ->copyMessage('Command copied')
+                    ->helperText(fn (Package $record): ?string => self::installCommands($record)['note']),
+            ]);
+    }
+
+    /** @return array{repository: string, require: string, note: ?string} */
+    public static function installCommands(Package $record): array
+    {
+        $commands = $record->installCommands();
+        $note = null;
+
+        // Stability flags are Composer's: npm and pip commands pass through untouched.
+        if ($record->ecosystem !== Ecosystem::Composer) {
+            return ['repository' => $commands['repository'], 'require' => $commands['require'], 'note' => null];
+        }
+
+        $versions = $record->versions()->where('is_dev', false)->pluck('version');
+        if ($versions->isNotEmpty() && ! $versions->contains(fn (string $version): bool => InstallationTest::prereleaseConstraint($version) === null)) {
+            $version = $versions->sort(fn (string $a, string $b): int => version_compare(ltrim($a, 'vV'), ltrim($b, 'vV')))->last();
+            $constraint = InstallationTest::prereleaseConstraint($version);
+            $commands['require'] = "composer require {$record->name}:{$constraint}";
+            $note = 'Only pre-release versions are available. This command opts into their stability, such as :^0.1@alpha, so Composer can select them.';
+        }
+
+        return ['repository' => $commands['repository'], 'require' => $commands['require'], 'note' => $note];
+    }
+
     /**
      * The repository the Install card is currently showing steps for.
      */
-    private static function installRepository(Package $record, ViewPackage $livewire): Repository
+    private static function installRepository(Package $record, ViewPackage|GetStarted $livewire): Repository
     {
         return $record->repositories->find($livewire->installRepository) ?? $record->composerRepository;
     }

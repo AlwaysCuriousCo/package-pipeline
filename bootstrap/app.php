@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\MetricsController;
+use App\Http\Controllers\TlsAskController;
+use App\Http\Middleware\ConfineRepositoryHosts;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -37,6 +39,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->middleware('throttle:metrics')
                 ->name('metrics');
 
+            // Caddy's on-demand TLS check; a 404 unless TLS_ASK_ENABLED. On the
+            // page throttle because it is anonymous and costs a lookup.
+            Route::get('/tls/ask', TlsAskController::class)
+                ->middleware('throttle:pages')
+                ->name('tls.ask');
+
             require __DIR__.'/../routes/composer.php';
             require __DIR__.'/../routes/npm.php';
             require __DIR__.'/../routes/pypi.php';
@@ -56,6 +64,16 @@ return Application::configure(basePath: dirname(__DIR__))
         // login route of its own to fall back on. Keep this in sync with the
         // panel's path() in App\Providers\Filament\AdminPanelProvider.
         $middleware->redirectGuestsTo('/admin/login');
+
+        // A repository's own host serves that repository's pages and nothing
+        // else this app has; the panel lists its middleware itself and names
+        // this there too. The protocol routes are outside both groups and are
+        // confined by ResolveComposerRepository instead.
+        //
+        // Prepended, so a route behind `auth` is sent home before it can
+        // redirect a guest to a login page on the wrong host.
+        $middleware->web(prepend: ConfineRepositoryHosts::class);
+        $middleware->api(prepend: ConfineRepositoryHosts::class);
 
         // GitHub posts deliveries with no session and no token; they carry a
         // signature instead, which the webhook controller checks before doing

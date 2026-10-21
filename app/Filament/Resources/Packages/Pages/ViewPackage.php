@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\Packages\Pages;
 
+use App\Filament\Actions\TestInstallationAction;
+use App\Filament\Concerns\RunsInstallationTests;
 use App\Filament\Concerns\SwitchesRecords;
 use App\Filament\Resources\Packages\Actions\CreateWebhookAction;
 use App\Filament\Resources\Packages\Actions\ExportSbomAction;
@@ -16,10 +18,11 @@ use App\Services\GitHub\WebhookRegistrar;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
+use Livewire\Attributes\On;
 
 class ViewPackage extends ViewRecord
 {
-    use SwitchesRecords;
+    use RunsInstallationTests, SwitchesRecords;
 
     protected static string $resource = PackageResource::class;
 
@@ -56,10 +59,18 @@ class ViewPackage extends ViewRecord
         }
     }
 
+    /**
+     * Re-render once the sync widget sees the first versions land, so the
+     * header's version-dependent actions appear without a reload.
+     */
+    #[On('package-synced')]
+    public function refreshAfterSync(): void {}
+
     protected function getHeaderActions(): array
     {
         return [
             SyncPackageAction::make(),
+            TestInstallationAction::make(),
             EditAction::make(),
             ActionGroup::make([
                 RebuildPackageAction::make(),

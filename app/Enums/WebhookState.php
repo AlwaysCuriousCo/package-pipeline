@@ -62,7 +62,7 @@ enum WebhookState: string implements HasColor, HasLabel
                 .'and subscribe it to Push, Branch or tag creation, and Branch or tag deletion. Until then, packages get a webhook on their own repository instead.',
             self::Elsewhere => "The app's webhook posts to {$url}, which is not this registry — another environment is using the same app. "
                 .'Register a separate app for this one, or accept that its packages each carry their own repository webhook.',
-            self::NoSecret => 'Set GITHUB_APP_WEBHOOK_SECRET to the secret on the app\'s webhook. Without it a delivery cannot be told from a forgery, so none are accepted.',
+            self::NoSecret => 'For an app registered from the panel, use Configure webhook on its page (Sources → Connect GitHub → GitHub App); otherwise set GITHUB_APP_WEBHOOK_SECRET to the secret on the app\'s webhook. Without it a delivery cannot be told from a forgery, so none are accepted.',
             self::Unverifiable => 'A secret is set, but GitHub could not confirm the app\'s webhook just now. It is taken at its word until it can be checked again.',
         };
     }

@@ -298,6 +298,9 @@ class Source extends Model
                 'app_slug' => $installation['app_slug'] ?? null,
                 'repository_selection' => $installation['repository_selection'] ?? null,
                 'permissions' => $installation['permissions'] ?? [],
+                // GitHub's own page for this installation, where the
+                // repositories it may read are chosen.
+                'html_url' => $installation['html_url'] ?? null,
             ],
             'connected_at' => now(),
             'connection_error' => null,
@@ -370,6 +373,13 @@ class Source extends Model
         $this->fill([
             'account' => $installation['account']['login'] ?? $this->account,
             'account_type' => $installation['account']['type'] ?? $this->account_type,
+            // Changed on GitHub without telling anyone: "all" or "selected"
+            // repositories, and the page that switches between them.
+            'metadata' => [
+                ...$this->metadata ?? [],
+                'repository_selection' => $installation['repository_selection'] ?? null,
+                'html_url' => $installation['html_url'] ?? null,
+            ],
         ]);
 
         return (int) ($this->get('/installation/repositories', ['per_page' => 1])['total_count'] ?? 0);

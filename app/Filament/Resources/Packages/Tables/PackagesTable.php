@@ -4,15 +4,20 @@ namespace App\Filament\Resources\Packages\Tables;
 
 use App\Enums\Ecosystem;
 use App\Filament\Resources\Packages\Actions\ExportDownloadsAction;
+use App\Filament\Resources\Packages\Actions\ImportFromSourceAction;
 use App\Filament\Resources\Packages\Actions\QueueSyncsBulkAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
+use App\Filament\Resources\Sources\Actions\ConnectGitHubAction;
 use App\Models\Package;
+use App\Models\Source;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
+use Filament\Actions\CreateAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
@@ -25,6 +30,24 @@ class PackagesTable
     {
         return $table
             ->defaultSort('name')
+            // The first visit to an empty registry, so it says how a package
+            // gets here: imported from a connected account, the quick way, or
+            // one at a time by URL — and, before any account is connected,
+            // connecting one.
+            ->emptyStateIcon(Heroicon::OutlinedCube)
+            ->emptyStateHeading('Add your first package')
+            ->emptyStateDescription(fn (): string => Source::query()->exists()
+                ? 'Import several at once from a connected account — the ones with a composer.json are picked out for you — or add one by its repository URL.'
+                : 'Connect the GitHub account your packages live in, then import them from it. Or add one by its repository URL.')
+            ->emptyStateActions([
+                ImportFromSourceAction::make()
+                    ->color('primary'),
+                ConnectGitHubAction::make()
+                    ->visible(fn (): bool => ! Source::query()->exists()),
+                CreateAction::make()
+                    ->label('Add by URL')
+                    ->color('gray'),
+            ])
             // Syncs finish on a worker, so the row that shows their result has
             // to come back for it rather than wait for the next navigation.
             ->poll('30s')

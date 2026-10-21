@@ -269,6 +269,7 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'email_notifications' => 'boolean',
+            'getting_started_dismissed_at' => 'datetime',
             'password' => 'hashed',
         ];
     }

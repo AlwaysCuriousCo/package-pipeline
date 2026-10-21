@@ -19,7 +19,7 @@ class ListSources extends ListRecords
         return [
             // Connecting is the normal way in; the form behind "Add manually"
             // only exists for GitHub Enterprise and access-token sources.
-            ConnectGitHubAction::make(),
+            ConnectGitHubAction::group(),
             CreateAction::make()
                 ->label('Add manually')
                 ->color('gray')
