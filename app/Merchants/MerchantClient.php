@@ -7,6 +7,7 @@ use App\Merchants\Values\CheckoutRequest;
 use App\Merchants\Values\CheckoutSession;
 use App\Merchants\Values\NormalisedEvent;
 use App\Merchants\Values\RemoteInvoice;
+use App\Merchants\Values\RemoteRefund;
 use App\Merchants\Values\RemoteSubscription;
 use App\Models\BillingCustomer;
 use App\Models\Plan;
@@ -106,6 +107,13 @@ interface MerchantClient
      * only a charge). Null when the event is about nobody in particular.
      */
     public function customerExternalId(NormalisedEvent $event): ?string;
+
+    /**
+     * The purchase a refund event reverses, and how much of it. Fetches
+     * what the payload no longer names: a refund can arrive without its
+     * invoice, and a one-time purchase may have no invoice at all.
+     */
+    public function refundFromEvent(NormalisedEvent $event): RemoteRefund;
 
     /**
      * Verify a webhook delivery's signature against the raw body and

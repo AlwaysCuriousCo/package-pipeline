@@ -7,6 +7,7 @@ use App\Merchants\Values\CheckoutRequest;
 use App\Merchants\Values\CheckoutSession;
 use App\Merchants\Values\NormalisedEvent;
 use App\Merchants\Values\RemoteInvoice;
+use App\Merchants\Values\RemoteRefund;
 use App\Merchants\Values\RemoteSubscription;
 use App\Models\BillingCustomer;
 use App\Models\Plan;
@@ -79,6 +80,11 @@ class StubClient implements MerchantClient
     }
 
     public function customerExternalId(NormalisedEvent $event): ?string
+    {
+        throw $this->unsupported();
+    }
+
+    public function refundFromEvent(NormalisedEvent $event): RemoteRefund
     {
         throw $this->unsupported();
     }

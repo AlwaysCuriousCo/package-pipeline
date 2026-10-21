@@ -83,7 +83,8 @@ the customer's own `/billing` page — no card number ever touches this app.
 
 Four events ignore all of it and withdraw access immediately: a **dispute**
 (suspends every subscription of the customer and alerts admins), a **full
-refund**, an **admin suspension**, and — when the plan says `immediate` — a
+refund** (suspends the purchase it reverses, one-time purchases included),
+an **admin suspension**, and — when the plan says `immediate` — a
 cancellation.
 
 ## Version ceilings
