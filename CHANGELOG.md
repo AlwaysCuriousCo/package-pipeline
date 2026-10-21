@@ -379,6 +379,12 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   `retry_after`, so a long sweep was handed to a second worker while the first
   was still in it. It now stops at 300 seconds like the other long jobs, and
   the `retry_after` test checks every queued job instead of a fixed list.
+- Saving a plan while its re-projection is still running no longer loses that
+  save. The job was unique per plan for its whole run, so a second save made
+  mid-sweep was dropped, and every subscriber the sweep had already passed kept
+  the plan as it was before. The job is now unique only until it starts: saves
+  before a sweep still collapse into one, and a save during it queues exactly
+  one follow-up.
 - Creating a deploy token shows its one-time token. The create form now opens
   in a modal on the token list instead of its own page, so the toast carrying
   the `composer config` command arrives in the same response that issued it
