@@ -29,6 +29,20 @@ class NotificationDataMigrationTest extends TestCase
     }
 
     /**
+     * Rows that are not JSON documents are what the guard exists to find, and
+     * they can only exist in the legacy text column. On MySQL and PostgreSQL
+     * the suite migrates past the conversion, so the column is json and the
+     * database refuses the row before the guard could see it. The guard is
+     * plain PHP and the same on every driver, so SQLite covers it.
+     */
+    private function requireTextColumn(): void
+    {
+        if (DB::connection()->getDriverName() !== 'sqlite') {
+            $this->markTestSkipped('notifications.data is already json here, which refuses the row this test needs.');
+        }
+    }
+
+    /**
      * @return string the id it was inserted under
      */
     private function insertNotification(string $data): string
@@ -66,6 +80,8 @@ class NotificationDataMigrationTest extends TestCase
 
     public function test_a_row_that_is_not_a_document_is_refused_by_id(): void
     {
+        $this->requireTextColumn();
+
         $this->insertNotification(json_encode(['format' => 'filament']));
         $broken = $this->insertNotification('not a document');
 
@@ -82,6 +98,8 @@ class NotificationDataMigrationTest extends TestCase
      */
     public function test_an_empty_row_is_refused(): void
     {
+        $this->requireTextColumn();
+
         $broken = $this->insertNotification('');
 
         $this->expectException(RuntimeException::class);
@@ -96,6 +114,8 @@ class NotificationDataMigrationTest extends TestCase
      */
     public function test_the_message_caps_how_many_rows_it_names(): void
     {
+        $this->requireTextColumn();
+
         for ($row = 0; $row < 25; $row++) {
             $this->insertNotification('not a document');
         }
