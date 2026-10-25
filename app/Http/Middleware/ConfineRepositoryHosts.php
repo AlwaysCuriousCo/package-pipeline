@@ -33,6 +33,12 @@ class ConfineRepositoryHosts
         if ($route !== null && (
             in_array(ResolveComposerRepository::class, $route->gatherMiddleware(), true)
             || in_array($route->getName(), ['sitemap', 'robots'], true)
+            // Livewire's update endpoint, which a Presentation Mode deck
+            // posts to on every slide change. It carries no page of its own:
+            // a component only answers for a snapshot this app signed, and
+            // the panel's components still demand a session this host never
+            // holds.
+            || str_ends_with((string) $route->getName(), 'livewire.update')
         )) {
             return $next($request);
         }

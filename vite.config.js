@@ -46,6 +46,20 @@ export default defineConfig({
                 bunny('Instrument Sans', {
                     weights: [400, 500, 600],
                 }),
+                // Presentation Mode: the Always Curious theme's two families,
+                // and the two SlideWire's own themes and code blocks name.
+                bunny('Sofia Sans Extra Condensed', {
+                    weights: [600, 700, 800],
+                }),
+                bunny('Noto Sans', {
+                    weights: [400, 500, 600],
+                }),
+                bunny('Inter', {
+                    weights: [400, 600, 700],
+                }),
+                bunny('JetBrains Mono', {
+                    weights: [400, 700],
+                }),
             ],
         }),
         tailwindcss(),

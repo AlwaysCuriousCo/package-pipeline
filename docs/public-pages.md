@@ -223,6 +223,110 @@ read by some crawlers as permission to crawl everything.
 > is removed in this release. If your deployment restores it, the file wins and
 > the setting does nothing.
 
+## Presentation Mode
+
+A page can be shown as a slide deck instead, rendered with
+[SlideWire](https://github.com/WendellAdriel/slidewire). Switch on **Show the
+page as a presentation** under **Presentation Mode**, inside the package's
+**Public page** section. It only exists while the page itself is published.
+
+While it is on, the deck replaces the page at the same URL, on every mount and
+on a repository's own host. If there is no deck to show (no file found, nothing
+pasted, no slides in it), visitors get the ordinary page and the panel says why.
+
+### Where the deck comes from
+
+- **A file in the repository**: the path you name, or the first of
+  `PRESENTATION.md`, `presentation.md`, `slides.md`, `SLIDES.md`. It is read at
+  sync time, at the latest release, exactly like a page body. **Refresh page**
+  re-reads it now.
+- **Markdown pasted here**, for a repository without one or a package with no
+  repository.
+
+### Writing a deck
+
+The format is a subset that Marp, Slidev and SlideWire decks share:
+
+```markdown
+---
+marp: true          # a leading frontmatter block is ignored; the panel decides how the deck looks
+---
+
+# Widgets
+
+The fastest widgets in the west.
+
+<!-- Any other HTML comment is a speaker note. -->
+
+---
+transition: fade    # per-slide frontmatter: background and transition only
+---
+
+## Install
+
+![bg](art/hero.png)  <!-- Marp's background image; relative paths come from the repository -->
+```
+
+- Slides are separated by `---` on its own line, after a blank line or a `#`
+  heading, or by SlideWire's `<!-- slide -->`. A `---` directly under a line of
+  text is that line's heading underline, and one inside a code fence is code.
+- Per slide, only a **background image** (`background:` frontmatter, Marp's
+  `<!-- _backgroundImage: url(...) -->`, or `![bg](...)`) and a **transition**
+  are read. Layouts, Vue components and themes are ignored.
+- Raw HTML is removed, not sanitized. Code fences are syntax-highlighted.
+- Speaker notes are never sent to visitors. They appear only in the presenter
+  view.
+
+At most 200 slides and `PAGE_MAX_BODY_KB` of markdown. Every slide's HTML is
+in the deck's Livewire state, which is posted back on each slide change, so a
+smaller deck is a faster one.
+
+### How it looks
+
+Every display option is set in the panel, and frontmatter in the deck never
+overrides them: theme, transition, speed and duration, auto-advance, the
+controls, progress bar and fullscreen button, and an **install slide**. The
+install slide is generated at the end with the install commands, latest release
+and license. On a private package it shows the access notice instead.
+
+The default theme is **Always Curious**, the [brand
+kit](https://brandkit.alwayscurious.app/b/alwayscurious) colours with Sofia
+Sans Extra Condensed and Noto Sans. SlideWire's own seven themes can be chosen
+too. Fonts are bundled from Bunny by the Vite build, never Google. Themes live
+in `config/slidewire.php`.
+
+### Presenting remotely
+
+**Present remotely** on the package's view page starts a session from 30
+minutes to a day long and gives you two links, each with a QR code:
+
+- **Presenter**: a signed link that drives the deck and opens the presenter
+  view (the slide's notes, what comes next, a clock). Treat it as a password.
+- **Audience**: the page URL with the session key. Anyone who opens it follows
+  the presenter.
+
+A package has one session at a time: starting another ends the last.
+**End remote session** stops both links immediately. Starting and ending a
+session are written to the audit log. Viewers poll the cache every two seconds,
+so a registry whose default cache store is the database should set
+`SLIDEWIRE_REMOTE_CACHE_STORE=redis`.
+
+### Search engines
+
+The deck's page carries the same title, description, preview card and
+`SoftwareSourceCode` data as the ordinary page. Every slide is in the first
+HTML response, and a `<noscript>` copy shows the whole deck as one readable
+page. `/p/{vendor}/{package}/slides.txt` serves the deck as plain markdown,
+without notes and with the install slide. It is linked from the page head and
+listed in the sitemap, and it only exists while Presentation Mode is on.
+
+### Nothing on disk
+
+SlideWire normally reads decks from files. Here they are read from the
+database, and the compiled slides are cached for `PAGE_MARKDOWN_CACHE_MINUTES`.
+Nothing is written into the app directory, so a git deploy stays clean and a
+replaced app folder or a new container loses nothing.
+
 ## Configuration
 
 | Variable | Purpose |
@@ -235,6 +339,7 @@ read by some crawlers as permission to crawl everything.
 | `PAGE_MAX_BODY_KB` | Largest body stored or rendered (default `512`). |
 | `PAGE_ASSET_CACHE_MINUTES` | How long an image fetched from a repository is kept (default `1440`). Keyed by ref and path, so a release that changes an image publishes the new one. `0` means one provider request per image per visitor. |
 | `PAGE_MAX_ASSET_KB` | Largest image served or cached (default `4096`). |
+| `SLIDEWIRE_REMOTE_CACHE_STORE` | The cache store Presentation Mode's remote sessions live in. Empty uses the default store. Viewers poll it, so `redis` is worth it where the default is `database`. |
 
 Public pages are rate limited to 120 requests a minute per address.
 
@@ -243,6 +348,7 @@ Public pages are rate limited to 120 requests a minute per address.
 - It never widens Composer access. The repository's `public` flag and the tokens
   granted against it decide what installs; a page can only ever offer less.
 - It never lists a package that does not publish a page.
-- It never renders HTML from a repository.
+- It never renders HTML from a repository, and a deck never shows anyone its
+  speaker notes except through the presenter's signed link.
 - It never serves anything from a repository but an image, and never a page
   body while somebody is waiting for a page.

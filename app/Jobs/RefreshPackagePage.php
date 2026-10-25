@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Package;
 use App\Services\PackagePage;
+use App\Services\PackagePresentation;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -33,12 +34,16 @@ class RefreshPackagePage implements ShouldQueue
 
     public function __construct(public Package $package) {}
 
-    public function handle(PackagePage $pages): void
+    public function handle(PackagePage $pages, PackagePresentation $presentations): void
     {
         // The default branch rather than the release's ref: this runs outside
         // a sync, so there is nothing here that knows which ref described the
         // package, and the provider resolving its own default is the right
         // answer until the next sync replaces it with the release's.
         $pages->refresh($this->package);
+
+        if ($this->package->hasPresentation()) {
+            $presentations->refresh($this->package);
+        }
     }
 }

@@ -2,6 +2,8 @@
 
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
+@source '../../vendor/wendelladriel/slidewire/resources/views/**/*.blade.php';
+@source '../../vendor/wendelladriel/slidewire/src/**/*.php';
 
 @theme {
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
@@ -123,3 +125,35 @@
     .markdown td,
     .markdown hr { border-color: var(--color-zinc-800); }
 }
+
+/*
+ * The Always Curious deck theme — config/slidewire.php puts `ac-deck` on the
+ * deck alongside the theme's colours. Fonts and the few details SlideWire
+ * hard-codes for its own default look; everything else is SlideWire's.
+ *
+ * @see https://brandkit.alwayscurious.app/b/alwayscurious
+ */
+.ac-deck {
+    font-family: 'Noto Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+.ac-deck h1,
+.ac-deck h2,
+.ac-deck h3,
+.ac-deck h4,
+.ac-display {
+    font-family: 'Sofia Sans Extra Condensed', 'Noto Sans', ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.01em;
+}
+
+.ac-deck .slidewire-markdown h1 { font-size: clamp(3rem, 6vw, 5rem); line-height: 1.05; color: #F2FCFD; }
+.ac-deck .slidewire-markdown h2 { font-size: clamp(2.25rem, 4vw, 3.5rem); color: #F2FCFD; }
+.ac-deck .slidewire-markdown h3 { color: #83E0EE; }
+.ac-deck .slidewire-markdown a { color: #83E0EE; text-decoration: underline; text-underline-offset: 3px; }
+.ac-deck .slidewire-markdown img { max-width: 100%; height: auto; border-radius: 0.75rem; }
+.ac-deck .slidewire-markdown blockquote { border-left: 4px solid #6A5382; padding-left: 1rem; color: #E3DDE9; }
+.ac-deck .slidewire-markdown :not(pre) > code { background: rgb(255 255 255 / 8%); padding: 0.1em 0.35em; border-radius: 0.25rem; }
+.ac-deck .slidewire-markdown table { border-collapse: collapse; }
+.ac-deck .slidewire-markdown th,
+.ac-deck .slidewire-markdown td { border: 1px solid rgb(206 206 198 / 25%); padding: 0.4rem 0.75rem; text-align: left; }
+.ac-deck .slidewire-progress-bar { background: linear-gradient(90deg, #0E5C68, #39CEE4); }

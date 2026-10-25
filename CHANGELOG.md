@@ -14,6 +14,20 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Added
 
+- **Presentation Mode.** A public page can be shown as a
+  [SlideWire](https://github.com/WendellAdriel/slidewire) slide deck instead.
+  The markdown comes from `PRESENTATION.md` (or a path you name) in the
+  repository, read at sync time, or is pasted into the panel. Decks use a
+  Marp/Slidev-compatible subset: `---` breaks, speaker notes in comments, raw
+  HTML stripped. The panel sets the theme (the new default is **Always
+  Curious**), transitions, controls and a generated install slide. **Present
+  remotely** hands out a signed presenter link, with notes, next slide and a
+  timer, and an audience link that follows along. For search engines there is
+  a `<noscript>` copy and `/p/{vendor}/{package}/slides.txt` in the sitemap.
+  Nothing is written to disk. Requires `npm run build` for the deck's fonts and
+  styles, and a migration. See
+  [docs/public-pages.md](docs/public-pages.md#presentation-mode).
+  ([#55](https://github.com/AlwaysCuriousCo/package-pipeline/issues/55))
 - **Repository hosts.** A named repository can answer at a host of its own
   (`composer.example.com`), set as **Own host** in the panel: its endpoints and
   pages are served at that host's root, its install commands and page URLs use

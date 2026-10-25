@@ -4,11 +4,13 @@ namespace App\Providers;
 
 use App\Filament\Livewire\EmailNotificationsForm;
 use App\Http\Middleware\AuthenticateComposer;
+use App\Livewire\PackageDeck;
 use App\Notifications\Channels\WebhookChannel;
 use App\Support\ActingCredential;
 use App\Support\EgressPolicy;
 use App\Support\EgressProfile;
 use App\Support\HostResolver;
+use App\Support\Presentation\PackageDeckCompiler;
 use App\Support\SystemHostResolver;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -20,6 +22,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Component;
 use Livewire\Livewire;
+use WendellAdriel\SlideWire\Support\PresentationCompiler;
 
 use function Livewire\on;
 use function Livewire\store;
@@ -45,6 +48,11 @@ class AppServiceProvider extends ServiceProvider
         // One per request, so that the credential a token-authenticated write
         // is attributed to cannot outlive the request that presented it.
         $this->app->scoped(ActingCredential::class);
+
+        // Presentation Mode decks are database rows, not files; this teaches
+        // SlideWire's compiler to read them. Registered after SlideWire's own
+        // provider, so this binding is the one that stands.
+        $this->app->singleton(PresentationCompiler::class, PackageDeckCompiler::class);
 
         $this->carryToastsInTheMessageRatherThanTheSession();
     }
@@ -78,6 +86,9 @@ class AppServiceProvider extends ServiceProvider
         // nothing when the section is not rendered, and making it depend on
         // config would only add a second way for the two halves to disagree.
         Livewire::component('email_notifications_form', EmailNotificationsForm::class);
+
+        // A package page's Presentation Mode deck. @see App\Livewire\PackageDeck
+        Livewire::component('package-deck', PackageDeck::class);
 
         $this->defineRateLimiters();
 

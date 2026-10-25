@@ -166,7 +166,7 @@ class PackagePage
      * silently stops halfway through a sentence reads as a bug in this app
      * rather than as a file that was too long to publish.
      */
-    private function bounded(string $body): string
+    public function bounded(string $body): string
     {
         $limit = max(0, (int) config('registry.pages.max_body_kilobytes')) * 1024;
 

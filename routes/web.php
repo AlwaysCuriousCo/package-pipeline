@@ -51,6 +51,11 @@ $pages = function (): void {
         ->where('package', '[^/]+')
         ->name('package');
 
+    // A Presentation Mode deck as plain text. @see PackagePageController::slides()
+    Route::get('/p/{vendor}/{package}/slides.txt', [PackagePageController::class, 'slides'])
+        ->where('package', '[^/]+')
+        ->name('slides');
+
     // An image from the package's repository, re-served by this registry.
     // Wildcard, because the path is whatever the README wrote — it may be
     // several segments deep — and the controller is where it is confined to

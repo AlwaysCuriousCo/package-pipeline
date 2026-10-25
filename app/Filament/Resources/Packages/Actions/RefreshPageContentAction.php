@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Packages\Actions;
 
 use App\Models\Package;
 use App\Services\PackagePage;
+use App\Services\PackagePresentation;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
@@ -36,8 +37,18 @@ class RefreshPageContentAction
             // would promise work that does not happen.
             ->visible(fn (Package $record): bool => $record->hasPage()
                 && filled($record->repository)
-                && $record->pageBodyCandidates() !== [])
+                && ($record->pageBodyCandidates() !== [] || self::readsDeck($record)))
             ->action(function (Package $record): void {
+                // The deck first and on its own: it is read and reported
+                // whether or not the page body has anything to read.
+                if (self::readsDeck($record)) {
+                    self::refreshDeck($record);
+                }
+
+                if ($record->pageBodyCandidates() === []) {
+                    return;
+                }
+
                 $found = app(PackagePage::class)->refresh($record);
 
                 $record->refresh();
@@ -71,5 +82,41 @@ class RefreshPageContentAction
                     ->body($body)
                     ->send();
             });
+    }
+
+    /**
+     * Whether this package's Presentation Mode deck is read from the
+     * repository at all — a pasted one is not.
+     */
+    private static function readsDeck(Package $record): bool
+    {
+        return $record->hasPresentation() && $record->presentationCandidates() !== [];
+    }
+
+    private static function refreshDeck(Package $record): void
+    {
+        $found = app(PackagePresentation::class)->refresh($record);
+
+        $record->refresh();
+
+        if (! $found) {
+            Notification::make()
+                ->warning()
+                ->title('No presentation found')
+                ->body(sprintf(
+                    'Looked for %s in %s. Visitors see the ordinary page until a deck is found.',
+                    implode(', ', $record->presentationCandidates()),
+                    $record->hasSubdirectory() ? "{$record->subdirectory}/" : 'the repository root',
+                ))
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->success()
+            ->title('Presentation refreshed')
+            ->body("Read {$record->page_presentation_source_path} from the repository.")
+            ->send();
     }
 }

@@ -6,8 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Services\PackagePage;
+use App\Services\PackagePresentation;
 use App\Support\PageSchema;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\View\View;
 
 /**
@@ -25,7 +27,10 @@ use Illuminate\View\View;
  */
 class PackagePageController extends Controller
 {
-    public function __construct(private readonly PackagePage $pages) {}
+    public function __construct(
+        private readonly PackagePage $pages,
+        private readonly PackagePresentation $presentations,
+    ) {}
 
     public function __invoke(Request $request, string $vendor, string $package): View
     {
@@ -33,6 +38,18 @@ class PackagePageController extends Controller
         $repository = $request->attributes->get('composerRepository');
 
         $package = $this->resolve($repository, $vendor, $package);
+
+        // A deck that will not compile — no file found, nothing pasted, no
+        // slides in it — shows the ordinary page rather than an error: the
+        // visitor came for the package, and the panel says what went wrong.
+        if ($package->hasPresentation() && ($deck = $this->presentations->compile($package)) !== null) {
+            return view('pages.presentation', [
+                'package' => $package,
+                'presentation' => PackagePresentation::key($package),
+                'slides' => $deck['slides'],
+                'schema' => PageSchema::package($package),
+            ]);
+        }
 
         return view('pages.package', [
             'repository' => $repository,
@@ -44,6 +61,31 @@ class PackagePageController extends Controller
             'commands' => $package->pageShowsInstall() ? $package->installCommands() : null,
             'sponsors' => $package->pageSponsorPlans(),
             'schema' => PageSchema::package($package),
+        ]);
+    }
+
+    /**
+     * The deck as plain text, for readers that run no JavaScript — search
+     * engines that do not, and the AI crawlers that read text. Only while the
+     * page is in Presentation Mode, so it never outlives the deck it copies.
+     */
+    public function slides(Request $request, string $vendor, string $package): Response
+    {
+        /** @var Repository $repository */
+        $repository = $request->attributes->get('composerRepository');
+
+        $package = $this->resolve($repository, $vendor, $package);
+
+        $transcript = $package->hasPresentation() ? $this->presentations->transcript($package) : null;
+
+        abort_if($transcript === null, 404, 'This package page has no presentation.');
+
+        return response($transcript, 200, [
+            'Content-Type' => 'text/plain; charset=utf-8',
+            // Somebody else's markdown, at this origin: never sniffed into
+            // anything a browser would run.
+            'X-Content-Type-Options' => 'nosniff',
+            'Link' => '<'.$package->pageUrl().'>; rel="canonical"',
         ]);
     }
 
