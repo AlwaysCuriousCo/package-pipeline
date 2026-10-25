@@ -23,7 +23,12 @@ return new class extends Migration
 
             // Where the deck comes from and how it is shown — see
             // Package::presentationOptions() for the keys and their defaults.
-            $table->json('page_presentation_options')->nullable();
+            //
+            // jsonb rather than json: PostgreSQL has no equality operator
+            // for json, and the panel's package pickers `select distinct
+            // packages.*`, which compares every column. MySQL and SQLite
+            // store it as they would json.
+            $table->jsonb('page_presentation_options')->nullable();
 
             // Markdown pasted into the panel, for a repository that has no
             // deck file — or a package that has no repository at all.

@@ -57,6 +57,7 @@ class PresentationModeTest extends TestCase
 
     /**
      * @param  array<string, mixed>  $attributes
+     * @param  array<string, mixed>  $options
      */
     private function package(array $attributes = [], array $options = []): Package
     {
