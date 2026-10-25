@@ -7,6 +7,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use WendellAdriel\SlideWire\Livewire\PresentationDeck;
+use WendellAdriel\SlideWire\Support\RemoteSessionManager;
 
 /**
  * SlideWire's deck, for a package page. Two differences, both about remote
@@ -45,7 +46,12 @@ class PackageDeck extends PresentationDeck
      */
     private function presenter(): ?array
     {
-        if ($this->remoteMode !== 'controller') {
+        // The signature is checked once, at mount; the session is checked on
+        // every render. Without that, a presenter's tab — or anyone replaying
+        // its snapshot — would go on receiving notes after the session was
+        // ended from the panel or ran out.
+        if ($this->remoteMode !== 'controller' || $this->remoteSessionKey === null
+            || app(RemoteSessionManager::class)->get($this->remoteSessionKey)?->presentation !== $this->presentation) {
             return null;
         }
 

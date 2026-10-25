@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Livewire\PackageDeck;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Services\PackagePresentation;
@@ -9,6 +10,7 @@ use App\Support\Presentation\DeckMarkdown;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\URL;
+use ReflectionMethod;
 use Tests\TestCase;
 use WendellAdriel\SlideWire\Support\RemoteSessionManager;
 
@@ -289,5 +291,29 @@ class PresentationModeTest extends TestCase
 
         // A forged signature is an audience member, not a presenter.
         $this->get($signed.'0')->assertOk()->assertDontSee('Presenter view');
+    }
+
+    public function test_a_presenter_stops_receiving_notes_once_the_session_ends(): void
+    {
+        $package = $this->package();
+        $key = PackagePresentation::key($package);
+
+        $session = app(RemoteSessionManager::class)->create($key, '1h');
+
+        // A presenter's deck as it stands after a signed mount — the state a
+        // tab left open, or a replayed snapshot, carries into later requests.
+        $deck = new PackageDeck;
+        $deck->presentation = $key;
+        $deck->remoteMode = 'controller';
+        $deck->remoteSessionKey = $session['key'];
+        $deck->slides = app(PackagePresentation::class)->compile($package)['slides'];
+
+        $presenter = (new ReflectionMethod($deck, 'presenter'))->invoke(...);
+
+        $this->assertSame(['Remember to thank the sponsors.'], $presenter($deck)['notes']);
+
+        app(RemoteSessionManager::class)->delete($session['key']);
+
+        $this->assertNull($presenter($deck));
     }
 }
