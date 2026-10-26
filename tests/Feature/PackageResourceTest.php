@@ -13,6 +13,7 @@ use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -342,6 +343,35 @@ class PackageResourceTest extends TestCase
 
         $this->assertSame('custom', $package->page_presentation_options['source'] ?? null);
         $this->assertSame("# Hello\n", $package->page_presentation_body);
+    }
+
+    public function test_presentation_mode_stays_on_once_its_deck_has_been_read(): void
+    {
+        Http::fake([
+            'api.github.com/repos/acme/widgets/contents/PRESENTATION.md*' => Http::response("# One\n\n---\n\n# Two\n"),
+            'api.github.com/repos/acme/widgets/contents/*' => Http::response('Not Found', 404),
+        ]);
+
+        $package = Package::factory()->create([
+            'name' => 'acme/widgets',
+            'repository' => 'https://github.com/acme/widgets',
+            'page_enabled' => true,
+        ]);
+
+        // The queue runs for real here: switching the deck on dispatches the
+        // job that reads it, and what that job writes is the point.
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->set('data.page_presentation', true)
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $package->refresh();
+
+        $this->assertSame('PRESENTATION.md', $package->page_presentation_source_path);
+        $this->assertTrue($package->page_presentation);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->assertFormSet(['page_presentation' => true]);
     }
 
     public function test_an_admin_can_publish_a_public_page_from_the_edit_form(): void
