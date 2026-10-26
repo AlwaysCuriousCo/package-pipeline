@@ -203,7 +203,17 @@ class PackagePresentation
     {
         $slides = $this->slides($package);
 
-        return $slides === [] ? null : implode("\n\n---\n\n", array_column($slides, 'body'))."\n";
+        if ($slides === []) {
+            return null;
+        }
+
+        // A picture slide has no text to transcribe, and an empty section
+        // between two rulers would read as a mistake. A deck of nothing but
+        // pictures still answers, if with nothing: the page and the sitemap
+        // advertise this URL whenever the deck compiles.
+        $bodies = array_filter(array_column($slides, 'body'), fn (string $body): bool => $body !== '');
+
+        return implode("\n\n---\n\n", $bodies)."\n";
     }
 
     /**
