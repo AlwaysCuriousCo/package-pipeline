@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use App\Providers\Filament\AdminPanelProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Env;
 use Joaopaulolndev\FilamentEditProfile\Pages\EditProfilePage;
 use Tests\TestCase;
 
@@ -30,6 +31,13 @@ class ProfileEmailNotificationsEnabledTest extends TestCase
         putenv('MAIL_ADMIN_NOTIFICATIONS=true');
         $_ENV['MAIL_ADMIN_NOTIFICATIONS'] = 'true';
         $_SERVER['MAIL_ADMIN_NOTIFICATIONS'] = 'true';
+
+        // dotenv's immutable writer only defers to variables it did not load
+        // itself — and once an earlier test's application has read a .env
+        // that sets this one (CI copies .env.example, which does), it counts
+        // as loaded, so the next boot overwrites the value above. A fresh
+        // repository forgets what it loaded; this resets it and nothing else.
+        Env::enablePutenv();
 
         parent::setUp();
     }

@@ -482,6 +482,11 @@ class ComposerRepositoryController extends Controller
         // so a well-behaved client asks about a bounded set. This is still
         // written to survive any list: one query, whatever its length.
         $packages = $requested === [] ? new EloquentCollection : $this->servedPackages($request)
+            // The package's own columns only. servedPackages() is the bare
+            // query under the serving pivot's join, so `*` would carry the
+            // pivot's `id` over the package's — and the advisories below,
+            // eager-loaded by that id, would belong to some other package.
+            ->select('packages.*')
             ->whereIn('name', array_map(mb_strtolower(...), $requested))
             ->with('advisories')
             ->get();

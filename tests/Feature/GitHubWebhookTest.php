@@ -360,7 +360,14 @@ class GitHubWebhookTest extends TestCase
 
     public function test_a_registered_apps_secret_verifies_deliveries_when_the_environment_has_none(): void
     {
-        config(['services.github.app.webhook_secret' => null]);
+        // No app in the environment at all, not just no secret: an app id or
+        // key there means the registration is not the app in use, and a
+        // developer's own .env usually has both.
+        config([
+            'services.github.app.webhook_secret' => null,
+            'services.github.app.id' => null,
+            'services.github.app.private_key' => null,
+        ]);
 
         GitHubAppRegistration::factory()->create(['webhook_secret' => 'the-registered-secret']);
 

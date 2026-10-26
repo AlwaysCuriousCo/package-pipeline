@@ -10,6 +10,7 @@ use App\Models\MerchantEvent;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Receives a merchant's webhooks: verify, record, acknowledge, process later.
@@ -53,13 +54,17 @@ class MerchantWebhookController extends Controller
         }
 
         try {
-            $stored = MerchantEvent::query()->create([
+            // In a transaction of its own — a savepoint, when one is already
+            // open — because PostgreSQL aborts the whole enclosing transaction
+            // on a failed statement: the duplicate below would otherwise leave
+            // whatever runs after it on the same connection unable to query.
+            $stored = DB::transaction(fn (): MerchantEvent => MerchantEvent::query()->create([
                 'merchant' => $provider,
                 'external_id' => $event->externalId,
                 'type' => $event->type,
                 'payload' => $event->payload,
                 'received_at' => now(),
-            ]);
+            ]));
         } catch (UniqueConstraintViolationException) {
             // A redelivery of something already recorded. Acknowledged so
             // the merchant stops retrying; not reprocessed.

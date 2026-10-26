@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Notifications\UnserveablePackageNames;
 use App\Services\Mirror\MirrorService;
 use App\Services\PackageSynchronizer;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -218,6 +219,21 @@ class PackageNameNormalizationTest extends TestCase
         $this->assertSame('Acme/Widgets', $package->fresh()->name);
     }
 
+    /**
+     * Give a row a name that differs from another's only in case — the pair
+     * the normalization migration has to leave alone. Only a case-sensitive
+     * collation lets the pair exist at all: MySQL's default refuses it at the
+     * unique index, so there the migration has nothing to flag.
+     */
+    private function renameAcrossCase(Package $package, string $name): void
+    {
+        try {
+            DB::table('packages')->where('id', $package->id)->update(['name' => $name]);
+        } catch (UniqueConstraintViolationException) {
+            $this->markTestSkipped('This collation is case-insensitive, so the colliding pair cannot exist.');
+        }
+    }
+
     private function migration(): object
     {
         return require database_path('migrations/2026_08_10_150000_normalize_package_names.php');
@@ -253,7 +269,7 @@ class PackageNameNormalizationTest extends TestCase
         $lowercase = Package::factory()->create(['name' => 'acme/widgets']);
         $mixed = Package::factory()->create(['name' => 'acme/widgets-other']);
 
-        DB::table('packages')->where('id', $mixed->id)->update(['name' => 'Acme/Widgets']);
+        $this->renameAcrossCase($mixed, 'Acme/Widgets');
 
         $this->migration()->up();
 
@@ -331,7 +347,7 @@ class PackageNameNormalizationTest extends TestCase
         Package::factory()->create(['name' => 'acme/widgets']);
         $mixed = Package::factory()->create(['name' => 'acme/widgets-other']);
 
-        DB::table('packages')->where('id', $mixed->id)->update(['name' => 'Acme/Widgets']);
+        $this->renameAcrossCase($mixed, 'Acme/Widgets');
 
         $this->migration()->up();
 
