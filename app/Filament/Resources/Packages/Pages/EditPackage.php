@@ -26,6 +26,24 @@ class EditPackage extends EditRecord
     }
 
     /**
+     * Presentation Mode's options, every key present. A package saved before
+     * they existed has none, and the form's toggles hydrate a missing key as
+     * off — which the next save would then store as a decision.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function mutateFormDataBeforeFill(array $data): array
+    {
+        /** @var Package $package */
+        $package = $this->getRecord();
+
+        $data['page_presentation_options'] = $package->presentationOptions();
+
+        return $data;
+    }
+
+    /**
      * Carry the serving repositories and the auto-sync toggle through.
      *
      * Only when it was the thing that changed: every other save — a renamed
