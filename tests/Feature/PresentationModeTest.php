@@ -220,6 +220,17 @@ class PresentationModeTest extends TestCase
         $this->assertStringNotContainsString("---\n\n---", (string) app(PackagePresentation::class)->transcript($package));
     }
 
+    public function test_a_deck_of_only_pictures_still_answers_slides_txt(): void
+    {
+        $this->package(
+            ['page_presentation_body' => "![bg](art/one.png)\n\n---\n\n![bg](art/two.png)\n"],
+            ['install_slide' => false],
+        );
+
+        $this->get('/p/acme/widgets')->assertOk()->assertSee('slidewire-shell', false);
+        $this->get('/p/acme/widgets/slides.txt')->assertOk();
+    }
+
     public function test_slides_txt_only_exists_in_presentation_mode(): void
     {
         $this->package(['page_presentation' => false]);
