@@ -130,12 +130,8 @@ class PackageForm
                     ->statePath('page_presentation_options')
                     ->visible($presenting)
                     ->columns(2)
-                    // A package saved before Presentation Mode existed has
-                    // no options at all; the form starts from the defaults
-                    // the deck itself would use.
-                    ->afterStateHydrated(fn (Group $component, mixed $state) => $component->state(
-                        array_replace(Package::PRESENTATION_DEFAULTS, array_filter((array) $state, fn (mixed $value): bool => $value !== null)),
-                    ))
+                    // Filled with every key by EditPackage, so a package
+                    // saved before these existed starts from the defaults.
                     ->schema([
                         Radio::make('source')
                             ->label('Deck content')
@@ -152,7 +148,7 @@ class PackageForm
                             ->maxLength(255)
                             ->datalist(Package::PRESENTATION_FILES)
                             ->placeholder(Package::PRESENTATION_FILES[0])
-                            ->visible(fn (Get $get): bool => $get('source') !== PresentationSource::Custom->value)
+                            ->visible(fn (Get $get): bool => ! self::pastesDeck($get('source')))
                             ->rules([
                                 fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
                                     if (in_array('..', preg_split('#[\\\\/]+#', trim((string) $value)) ?: [], true)) {
@@ -214,10 +210,18 @@ class PackageForm
                     ->label('Deck markdown')
                     ->rows(16)
                     ->columnSpanFull()
-                    ->visible(fn (Get $get): bool => $presenting($get)
-                        && $get('page_presentation_options.source') === PresentationSource::Custom->value)
+                    ->visible(fn (Get $get): bool => $presenting($get) && self::pastesDeck($get('page_presentation_options.source')))
                     ->helperText('Slides are separated by a line of --- (or <!-- slide -->). Other HTML comments are speaker notes, shown only in the presenter view. Raw HTML is removed.'),
             ]);
+    }
+
+    /**
+     * Whether the deck source is the pasted markdown. The radio holds the
+     * enum case, not its value, so a comparison with the string is never true.
+     */
+    private static function pastesDeck(mixed $source): bool
+    {
+        return ($source instanceof PresentationSource ? $source : PresentationSource::tryFrom((string) $source)) === PresentationSource::Custom;
     }
 
     /**

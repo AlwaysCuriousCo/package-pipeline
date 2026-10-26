@@ -297,6 +297,53 @@ class PackageResourceTest extends TestCase
         $this->get('/admin/packages')->assertRedirect('/admin/login');
     }
 
+    public function test_presentation_mode_settings_are_saved_from_the_edit_form(): void
+    {
+        Queue::fake();
+
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'page_enabled' => true]);
+
+        $form = Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->set('data.page_presentation', true)
+            ->set('data.page_presentation_options.theme', 'neon')
+            ->set('data.page_presentation_options.show_controls', false)
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $package->refresh();
+
+        $this->assertTrue($package->page_presentation);
+        $this->assertSame('neon', $package->page_presentation_options['theme'] ?? null);
+        $this->assertFalse($package->page_presentation_options['show_controls'] ?? null);
+        $this->assertTrue($package->page_presentation_options['show_progress'] ?? null);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->assertFormSet([
+                'page_presentation' => true,
+                'page_presentation_options.theme' => 'neon',
+                'page_presentation_options.show_controls' => false,
+            ]);
+    }
+
+    public function test_pasted_presentation_markdown_is_saved_from_the_edit_form(): void
+    {
+        Queue::fake();
+
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'page_enabled' => true]);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->set('data.page_presentation', true)
+            ->set('data.page_presentation_options.source', 'custom')
+            ->set('data.page_presentation_body', "# Hello\n")
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $package->refresh();
+
+        $this->assertSame('custom', $package->page_presentation_options['source'] ?? null);
+        $this->assertSame("# Hello\n", $package->page_presentation_body);
+    }
+
     public function test_an_admin_can_publish_a_public_page_from_the_edit_form(): void
     {
         Queue::fake();
