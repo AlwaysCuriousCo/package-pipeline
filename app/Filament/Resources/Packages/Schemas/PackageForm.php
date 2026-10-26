@@ -5,11 +5,13 @@ namespace App\Filament\Resources\Packages\Schemas;
 use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
+use App\Enums\PresentationSource;
 use App\Enums\WebhookCoverage;
 use App\Enums\WordPressKind;
 use App\Models\Package;
 use App\Models\Repository;
 use App\Models\Source;
+use App\Services\PackagePresentation;
 use Closure;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Radio;
@@ -17,12 +19,16 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\HtmlString;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Unique;
+use WendellAdriel\SlideWire\Enums\SlideTransition;
+use WendellAdriel\SlideWire\Enums\SlideTransitionSpeed;
 
 /**
  * The flat package form used when editing.
@@ -89,7 +95,178 @@ class PackageForm
                 self::pageBodySource(),
                 self::pageBodyPath(),
                 self::pageBody(),
+                self::presentation(),
             ]);
+    }
+
+    /**
+     * Presentation Mode: the page replaced by a slide deck. A section of its
+     * own inside the page's, because it is a second way of publishing the
+     * same URL and every field in it answers to the one switch.
+     *
+     * @see https://github.com/AlwaysCuriousCo/package-pipeline/issues/55
+     */
+    public static function presentation(): Section
+    {
+        $presenting = fn (Get $get): bool => (bool) $get('page_enabled') && (bool) $get('page_presentation');
+
+        return Section::make('Presentation Mode')
+            ->description('Replace the page with a slide deck, written in markdown — Marp and Slidev decks mostly work as they are.')
+            ->icon(Heroicon::OutlinedPresentationChartBar)
+            ->compact()
+            ->visible(fn (Get $get): bool => (bool) $get('page_enabled'))
+            ->schema([
+                Toggle::make('page_presentation')
+                    ->label('Show the page as a presentation')
+                    ->live()
+                    ->helperText('Visitors see the deck instead of the page. If no deck can be shown, they see the ordinary page.'),
+
+                Placeholder::make('presentation_status')
+                    ->label('Deck')
+                    ->visible($presenting)
+                    ->content(fn (?Package $record): string => self::presentationStatus($record)),
+
+                Group::make()
+                    ->statePath('page_presentation_options')
+                    ->visible($presenting)
+                    ->columns(2)
+                    // A package saved before Presentation Mode existed has
+                    // no options at all; the form starts from the defaults
+                    // the deck itself would use.
+                    ->afterStateHydrated(fn (Group $component, mixed $state) => $component->state(
+                        array_replace(Package::PRESENTATION_DEFAULTS, array_filter((array) $state, fn (mixed $value): bool => $value !== null)),
+                    ))
+                    ->schema([
+                        Radio::make('source')
+                            ->label('Deck content')
+                            ->options(PresentationSource::class)
+                            ->descriptions(collect(PresentationSource::cases())
+                                ->mapWithKeys(fn (PresentationSource $case): array => [$case->value => $case->description()])
+                                ->all())
+                            ->default(PresentationSource::Repository->value)
+                            ->live()
+                            ->columnSpanFull(),
+
+                        TextInput::make('path')
+                            ->label('File')
+                            ->maxLength(255)
+                            ->datalist(Package::PRESENTATION_FILES)
+                            ->placeholder(Package::PRESENTATION_FILES[0])
+                            ->visible(fn (Get $get): bool => $get('source') !== PresentationSource::Custom->value)
+                            ->rules([
+                                fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
+                                    if (in_array('..', preg_split('#[\\\\/]+#', trim((string) $value)) ?: [], true)) {
+                                        $fail('A path cannot climb out of the repository with "..".');
+                                    }
+                                },
+                            ])
+                            ->helperText('Empty looks for '.implode(', ', Package::PRESENTATION_FILES).'. Read again on every sync, at the latest release.')
+                            ->columnSpanFull(),
+
+                        Select::make('theme')
+                            ->options(self::presentationThemes())
+                            ->selectablePlaceholder(false)
+                            ->required(),
+
+                        Select::make('transition')
+                            ->options(array_combine(SlideTransition::values(), array_map(ucfirst(...), SlideTransition::values())))
+                            ->selectablePlaceholder(false)
+                            ->required(),
+
+                        Select::make('transition_speed')
+                            ->label('Transition speed')
+                            ->options(array_combine(SlideTransitionSpeed::values(), array_map(ucfirst(...), SlideTransitionSpeed::values())))
+                            ->selectablePlaceholder(false)
+                            ->required(),
+
+                        TextInput::make('transition_duration')
+                            ->label('Transition duration')
+                            ->numeric()
+                            ->integer()
+                            ->minValue(0)
+                            ->maxValue(5000)
+                            ->suffix('ms')
+                            ->required(),
+
+                        TextInput::make('auto_slide')
+                            ->label('Auto-advance')
+                            ->numeric()
+                            ->integer()
+                            ->minValue(0)
+                            ->maxValue(600000)
+                            ->suffix('ms')
+                            ->helperText('Time on each slide before moving on. 0 leaves it to the reader.')
+                            ->required(),
+
+                        Toggle::make('auto_slide_pause_on_interaction')
+                            ->label('Pause auto-advance when the reader takes over'),
+
+                        Toggle::make('show_controls')->label('Show navigation controls'),
+                        Toggle::make('show_progress')->label('Show the progress bar'),
+                        Toggle::make('show_fullscreen_button')->label('Show the fullscreen button'),
+
+                        Toggle::make('install_slide')
+                            ->label('End with an install slide')
+                            ->helperText('The install commands, latest release and license — what the page would have shown. A private package\'s shows the access notice instead.'),
+                    ]),
+
+                Textarea::make('page_presentation_body')
+                    ->label('Deck markdown')
+                    ->rows(16)
+                    ->columnSpanFull()
+                    ->visible(fn (Get $get): bool => $presenting($get)
+                        && $get('page_presentation_options.source') === PresentationSource::Custom->value)
+                    ->helperText('Slides are separated by a line of --- (or <!-- slide -->). Other HTML comments are speaker notes, shown only in the presenter view. Raw HTML is removed.'),
+            ]);
+    }
+
+    /**
+     * What the deck currently compiles to, said in a sentence — the panel's
+     * answer to "why does the page not show my slides".
+     */
+    private static function presentationStatus(?Package $record): string
+    {
+        if (! $record instanceof Package || ! $record->exists) {
+            return 'Available once the package has been saved.';
+        }
+
+        if (! $record->page_presentation) {
+            return 'Saved switched off: visitors see the ordinary page.';
+        }
+
+        $deck = app(PackagePresentation::class)->compile($record);
+
+        if ($deck !== null) {
+            $from = $record->presentationSource() === PresentationSource::Custom
+                ? 'the markdown below'
+                : (string) $record->page_presentation_source_path;
+
+            return sprintf('%d slides, from %s.', count($deck['slides']), $from);
+        }
+
+        if ($record->presentationSource() === PresentationSource::Custom) {
+            return 'Nothing to show yet: the pasted markdown has no slides. Visitors see the ordinary page.';
+        }
+
+        return $record->page_presentation_synced_at === null
+            ? 'Not read yet: the deck is read on the next sync, or now with Refresh page.'
+            : 'No deck found in the repository: visitors see the ordinary page. Looked for '.implode(', ', $record->presentationCandidates()).'.';
+    }
+
+    /**
+     * Every theme SlideWire is configured with, ours first.
+     *
+     * @return array<string, string>
+     */
+    private static function presentationThemes(): array
+    {
+        $themes = [];
+
+        foreach (array_keys((array) config('slidewire.themes')) as $theme) {
+            $themes[$theme] = $theme === 'always-curious' ? 'Always Curious' : Str::headline($theme);
+        }
+
+        return $themes;
     }
 
     /**

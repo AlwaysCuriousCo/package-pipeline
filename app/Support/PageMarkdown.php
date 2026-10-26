@@ -68,6 +68,9 @@ class PageMarkdown
      *                                     place as $linkBase. Null means the
      *                                     two are the same.
      * @param  string|null  $imageRootBase  the same, for images.
+     * @param  bool  $allowHtml  false strips raw HTML outright instead of
+     *                           sanitizing it — a slide deck's rule, where
+     *                           markup has no layout of the page's to serve.
      */
     public function render(
         string $markdown,
@@ -75,6 +78,7 @@ class PageMarkdown
         ?string $imageBase = null,
         ?string $linkRootBase = null,
         ?string $imageRootBase = null,
+        bool $allowHtml = true,
     ): string {
         $environment = new Environment([
             // Raw HTML passes the parser and is sanitized afterwards, on
@@ -82,7 +86,7 @@ class PageMarkdown
             // `<div>` wrapping half a README — is judged in one piece.
             // `allow_unsafe_links: false` drops javascript:, vbscript: and
             // non-image data: URLs.
-            'html_input' => 'allow',
+            'html_input' => $allowHtml ? 'allow' : 'strip',
             'allow_unsafe_links' => false,
             'max_nesting_level' => self::MAX_NESTING_LEVEL,
             'external_link' => [

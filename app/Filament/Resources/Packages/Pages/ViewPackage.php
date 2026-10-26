@@ -7,6 +7,7 @@ use App\Filament\Concerns\RunsInstallationTests;
 use App\Filament\Concerns\SwitchesRecords;
 use App\Filament\Resources\Packages\Actions\CreateWebhookAction;
 use App\Filament\Resources\Packages\Actions\ExportSbomAction;
+use App\Filament\Resources\Packages\Actions\PresentRemotelyAction;
 use App\Filament\Resources\Packages\Actions\RebuildPackageAction;
 use App\Filament\Resources\Packages\Actions\RefreshPageContentAction;
 use App\Filament\Resources\Packages\Actions\SyncPackageAction;
@@ -75,6 +76,8 @@ class ViewPackage extends ViewRecord
             ActionGroup::make([
                 RebuildPackageAction::make(),
                 RefreshPageContentAction::make(),
+                PresentRemotelyAction::make(),
+                PresentRemotelyAction::makeEnd(),
                 CreateWebhookAction::make(),
                 ExportSbomAction::make(),
             ]),

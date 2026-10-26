@@ -41,6 +41,7 @@ class PackageSynchronizer
         private readonly ArchiveSubtree $subtrees = new ArchiveSubtree,
         private readonly VersionNormalizer $normalizer = new VersionNormalizer,
         private readonly PackagePage $pages = new PackagePage,
+        private readonly PackagePresentation $presentations = new PackagePresentation,
         private readonly WordPressArchive $wordpress = new WordPressArchive,
     ) {}
 
@@ -351,6 +352,11 @@ class PackageSynchronizer
         // thousands of packages with no pages should spend none of them.
         if ($package->page_enabled) {
             $this->pages->refresh($package, $describing?->reference);
+        }
+
+        // The Presentation Mode deck, at the same ref and for the same reason.
+        if ($package->hasPresentation()) {
+            $this->presentations->refresh($package, $describing?->reference);
         }
 
         return $this->outcome($known, $versions->pluck('is_dev', 'version')->all());

@@ -6,6 +6,7 @@ use App\Enums\Ecosystem;
 use App\Enums\PageBadges;
 use App\Enums\PageBodySource;
 use App\Enums\PageDownloads;
+use App\Enums\PresentationSource;
 use App\Enums\SourceProvider;
 use App\Enums\WebhookCoverage;
 use App\Enums\WordPressKind;
@@ -39,7 +40,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image', 'wordpress_kind', 'wordpress_slug'])]
+#[Fillable(['repository_id', 'source_id', 'ecosystem', 'repository', 'subdirectory', 'latest_version', 'name', 'description', 'type', 'token', 'last_synced_at', 'sync_error', 'webhook_enabled', 'abandoned', 'replacement_package', 'page_enabled', 'page_downloads', 'page_badges', 'page_install', 'page_versions', 'page_type', 'page_source', 'page_body_source', 'page_body_path', 'page_body', 'page_image', 'page_presentation', 'page_presentation_options', 'page_presentation_body', 'wordpress_kind', 'wordpress_slug'])]
 class Package extends Model
 {
     /** @use HasFactory<PackageFactory> */
@@ -76,6 +77,7 @@ class Package extends Model
         'page_type' => true,
         'page_source' => false,
         'page_body_source' => PageBodySource::Auto,
+        'page_presentation' => false,
         // The column's default, restated for the same reason: a package built
         // in memory is asked where in its repository it lives — by the wizard
         // reading a composer.json, by the client factories — before it has
@@ -115,6 +117,9 @@ class Package extends Model
             // the switch that publishes the repository URL of a private
             // package to anonymous readers.
             'page_source',
+            // Whether the page is replaced by a slide deck — what a stranger
+            // sees, so a publishing decision like the switch above it.
+            'page_presentation',
             // Whether WordPress sites are offered this package, and under
             // which directory name: a publishing decision like the name.
             'wordpress_kind', 'wordpress_slug',
@@ -144,6 +149,9 @@ class Package extends Model
             'page_badges' => PageBadges::class,
             'page_body_source' => PageBodySource::class,
             'page_source_synced_at' => 'datetime',
+            'page_presentation' => 'boolean',
+            'page_presentation_options' => 'array',
+            'page_presentation_synced_at' => 'datetime',
         ];
     }
 
@@ -242,7 +250,11 @@ class Package extends Model
             // read: syncs keep it current afterwards, and re-reading it every
             // time an admin saves an unrelated field would spend a provider
             // request per edit.
-            if ($package->wasChanged('page_enabled') && $package->page_enabled && $package->page_source_synced_at === null) {
+            //
+            // The same for a deck switched on that has never been read — one
+            // job either way, since it reads both.
+            if (($package->wasChanged('page_enabled') && $package->page_enabled && $package->page_source_synced_at === null)
+                || ($package->wasChanged('page_presentation') && $package->page_presentation && $package->page_presentation_synced_at === null)) {
                 RefreshPackagePage::dispatch($package);
             }
         });
@@ -1625,6 +1637,105 @@ class Package extends Model
             PageBodySource::File => filled($this->page_body_path) ? [(string) $this->page_body_path] : [],
             PageBodySource::Auto => self::PAGE_FILES,
         };
+    }
+
+    /**
+     * The filenames a presentation deck is looked for in when the panel names
+     * none, in order. Case variants for the reason PAGE_FILES has them.
+     *
+     * @var list<string>
+     */
+    public const PRESENTATION_FILES = [
+        'PRESENTATION.md',
+        'presentation.md',
+        'slides.md',
+        'SLIDES.md',
+    ];
+
+    /**
+     * Every key page_presentation_options may hold, with the value a deck
+     * gets when the key is absent. The display keys are SlideWire's own deck
+     * settings, under SlideWire's names, so they pass straight through.
+     *
+     * Not `keyboard` or `touch`: SlideWire 1.5 accepts both and its deck view
+     * reads neither, so a switch for them would be a switch that does nothing.
+     *
+     * @var array<string, mixed>
+     */
+    public const PRESENTATION_DEFAULTS = [
+        'source' => 'repository',
+        'path' => null,
+        'theme' => 'always-curious',
+        'transition' => 'slide',
+        'transition_speed' => 'default',
+        'transition_duration' => 350,
+        // Milliseconds per slide; zero is off.
+        'auto_slide' => 0,
+        'auto_slide_pause_on_interaction' => true,
+        'show_controls' => true,
+        'show_progress' => true,
+        'show_fullscreen_button' => true,
+        // A last slide with the install commands, generated rather than
+        // written: the deck replaces the page that would otherwise print them.
+        'install_slide' => true,
+    ];
+
+    /**
+     * Whether this package's page is shown as a deck. Behind the page switch
+     * rather than beside it: the deck lives at the page's URL and leans on
+     * everything a published page has — the asset route, the host routing,
+     * the page to fall back to.
+     */
+    public function hasPresentation(): bool
+    {
+        return $this->hasPage() && (bool) $this->page_presentation;
+    }
+
+    /**
+     * The deck's options, every key present. Anything stored under a key this
+     * app does not know is dropped rather than passed on.
+     *
+     * @return array<string, mixed>
+     */
+    public function presentationOptions(): array
+    {
+        $stored = array_intersect_key((array) $this->page_presentation_options, self::PRESENTATION_DEFAULTS);
+
+        return array_replace(self::PRESENTATION_DEFAULTS, array_filter($stored, fn (mixed $value): bool => $value !== null));
+    }
+
+    public function presentationSource(): PresentationSource
+    {
+        return PresentationSource::tryFrom((string) $this->presentationOptions()['source']) ?? PresentationSource::Repository;
+    }
+
+    /**
+     * The files a sync should look for: the one the panel names, or the
+     * conventional list — and none for a deck pasted into the panel.
+     *
+     * @return list<string>
+     */
+    public function presentationCandidates(): array
+    {
+        if ($this->presentationSource() === PresentationSource::Custom || blank($this->repository)) {
+            return [];
+        }
+
+        $path = trim((string) $this->presentationOptions()['path']);
+
+        return $path !== '' ? [$path] : self::PRESENTATION_FILES;
+    }
+
+    /**
+     * The deck's markdown as configured, or null when there is none to show.
+     */
+    public function presentationMarkdown(): ?string
+    {
+        $body = $this->presentationSource() === PresentationSource::Custom
+            ? (string) $this->page_presentation_body
+            : (string) $this->page_presentation_source_body;
+
+        return trim($body) === '' ? null : $body;
     }
 
     /**

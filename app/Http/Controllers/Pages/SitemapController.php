@@ -159,6 +159,15 @@ class SitemapController extends Controller
                         // moved.
                         'lastmod' => $package->updated_at?->toAtomString(),
                     ];
+
+                    // A deck's text copy, so it is found without the link in
+                    // the deck's head having to be followed first.
+                    if ($package->hasPresentation() && $package->presentationMarkdown() !== null) {
+                        $urls[] = [
+                            'loc' => $package->servedFrom($repository)->pageUrl().'/slides.txt',
+                            'lastmod' => $package->updated_at?->toAtomString(),
+                        ];
+                    }
                 }
             });
 
