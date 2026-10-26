@@ -401,6 +401,36 @@ class PackageResourceTest extends TestCase
         Queue::assertPushed(RefreshPackagePage::class);
     }
 
+    public function test_page_content_written_in_the_panel_is_saved(): void
+    {
+        Queue::fake();
+
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'page_enabled' => true]);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->set('data.page_body_source', 'custom')
+            ->set('data.page_body', "# Widgets\n")
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame("# Widgets\n", $package->refresh()->page_body);
+    }
+
+    public function test_a_named_page_file_is_saved(): void
+    {
+        Queue::fake();
+
+        $package = Package::factory()->create(['name' => 'acme/widgets', 'page_enabled' => true]);
+
+        Livewire::test(EditPackage::class, ['record' => $package->getRouteKey()])
+            ->set('data.page_body_source', 'file')
+            ->set('data.page_body_path', 'docs/registry.md')
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('docs/registry.md', $package->refresh()->page_body_path);
+    }
+
     public function test_publishing_a_page_is_recorded_in_the_audit_log(): void
     {
         Queue::fake();
