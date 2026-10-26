@@ -413,9 +413,9 @@ class PackageForm
             ->maxLength(255)
             ->datalist(Package::PAGE_FILES)
             ->placeholder('docs/registry.md')
-            ->required(fn (Get $get): bool => $get('page_body_source') === PageBodySource::File->value)
+            ->required(fn (Get $get): bool => self::bodySourceIs($get('page_body_source'), PageBodySource::File))
             ->visible(fn (Get $get): bool => (bool) $get('page_enabled')
-                && $get('page_body_source') === PageBodySource::File->value)
+                && self::bodySourceIs($get('page_body_source'), PageBodySource::File))
             // Refused here rather than at the provider, which would answer a
             // 404 that reads as "the file is missing" for a path that was
             // never going to be asked for.
@@ -481,6 +481,17 @@ class PackageForm
     }
 
     /**
+     * Whether the page content source is the given one. The radio holds the
+     * enum case once a record is loaded, and its value while a choice is
+     * being made, so a comparison with either alone is true only half the
+     * time — and a field hidden by the false half is not saved.
+     */
+    private static function bodySourceIs(mixed $state, PageBodySource $case): bool
+    {
+        return ($state instanceof PageBodySource ? $state : PageBodySource::tryFrom((string) $state)) === $case;
+    }
+
+    /**
      * The body itself, for the one source that is written rather than read.
      */
     public static function pageBody(): Textarea
@@ -490,7 +501,7 @@ class PackageForm
             ->rows(12)
             ->columnSpanFull()
             ->visible(fn (Get $get): bool => (bool) $get('page_enabled')
-                && $get('page_body_source') === PageBodySource::Custom->value)
+                && self::bodySourceIs($get('page_body_source'), PageBodySource::Custom))
             ->helperText('Markdown. Headings, lists, tables, code fences and links; raw HTML is escaped rather than rendered.');
     }
 
