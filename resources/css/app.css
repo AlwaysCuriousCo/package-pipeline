@@ -150,7 +150,7 @@
 .ac-deck .slidewire-markdown h2 { font-size: clamp(2.25rem, 4vw, 3.5rem); color: #F2FCFD; }
 .ac-deck .slidewire-markdown h3 { color: #83E0EE; }
 .ac-deck .slidewire-markdown a { color: #83E0EE; text-decoration: underline; text-underline-offset: 3px; }
-.ac-deck .slidewire-markdown img { max-width: 100%; height: auto; border-radius: 0.75rem; }
+.ac-deck .slidewire-markdown img { max-width: 100%; max-height: 55vh; width: auto; height: auto; border-radius: 0.75rem; box-shadow: 0 1.5rem 3rem rgb(0 0 0 / 35%); }
 .ac-deck .slidewire-markdown blockquote { border-left: 4px solid #6A5382; padding-left: 1rem; color: #E3DDE9; }
 .ac-deck .slidewire-markdown :not(pre) > code { background: rgb(255 255 255 / 8%); padding: 0.1em 0.35em; border-radius: 0.25rem; }
 .ac-deck .slidewire-markdown table { border-collapse: collapse; }

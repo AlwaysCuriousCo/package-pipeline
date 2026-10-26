@@ -97,7 +97,8 @@ class DeckMarkdown
 
         $slides[] = $this->slide($buffer, $meta);
 
-        return array_values(array_filter($slides, fn (array $slide): bool => $slide['body'] !== ''));
+        // A slide that is only a background is a picture slide, not an empty one.
+        return array_values(array_filter($slides, fn (array $slide): bool => $slide['body'] !== '' || isset($slide['meta']['background'])));
     }
 
     /**

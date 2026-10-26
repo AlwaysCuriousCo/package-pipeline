@@ -125,9 +125,17 @@ class PresentationModeTest extends TestCase
 
             ![bg](https://cdn.test/photo.jpg)
             # Four
+
+            ---
+
+            ![bg](screenshot.png)
+
+            <!-- Only a picture. -->
             MD);
 
-        $this->assertCount(4, $slides);
+        $this->assertCount(5, $slides);
+        $this->assertSame(['background' => 'screenshot.png'], $slides[4]['meta']);
+        $this->assertSame('', $slides[4]['body']);
         $this->assertSame(['transition' => 'fade'], $slides[1]['meta']);
         $this->assertSame(['background' => 'art/bg.png'], $slides[2]['meta']);
         $this->assertSame([], $slides[2]['notes']);
@@ -199,6 +207,17 @@ class PresentationModeTest extends TestCase
         $this->assertStringContainsString("\n---\n", $text);
         $this->assertStringContainsString('composer require acme/widgets', $text);
         $this->assertStringNotContainsString('thank the sponsors', $text);
+    }
+
+    public function test_a_picture_slide_is_shown_but_not_transcribed(): void
+    {
+        $package = $this->package(['page_presentation_body' => "# One\n\n---\n\n![bg](art/hero.png)\n\n---\n\n# Three\n"]);
+
+        $deck = app(PackagePresentation::class)->compile($package);
+
+        $this->assertSame($package->pageImageBase().'/art/hero.png', $deck['slides'][1]->meta['background_image']);
+
+        $this->assertStringNotContainsString("---\n\n---", (string) app(PackagePresentation::class)->transcript($package));
     }
 
     public function test_slides_txt_only_exists_in_presentation_mode(): void

@@ -203,7 +203,11 @@ class PackagePresentation
     {
         $slides = $this->slides($package);
 
-        return $slides === [] ? null : implode("\n\n---\n\n", array_column($slides, 'body'))."\n";
+        // A picture slide has no text to transcribe, and an empty section
+        // between two rulers would read as a mistake.
+        $bodies = array_filter(array_column($slides, 'body'), fn (string $body): bool => $body !== '');
+
+        return $bodies === [] ? null : implode("\n\n---\n\n", $bodies)."\n";
     }
 
     /**
