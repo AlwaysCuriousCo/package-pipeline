@@ -562,9 +562,12 @@ class ComposerMetadataCacheTest extends TestCase
 
         $this->get('/packages.json', ['If-Modified-Since' => $modifiedSince])->assertStatus(304);
 
+        // Quoted the way this connection quotes it: backticks on MySQL.
+        $from = 'from '.DB::getQueryGrammar()->wrapTable('packages');
+
         $touched = array_values(array_filter(
             $queries,
-            fn (string $sql): bool => str_contains($sql, 'from "packages"'),
+            fn (string $sql): bool => str_contains($sql, $from),
         ));
 
         $this->assertCount(1, $touched);
