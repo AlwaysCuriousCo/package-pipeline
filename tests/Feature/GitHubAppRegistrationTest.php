@@ -16,6 +16,7 @@ use App\Services\GitHub\GitHubApp;
 use App\Services\GitHub\GitHubAppManifest;
 use Database\Factories\GitHubAppRegistrationFactory;
 use Filament\Actions\Testing\TestAction;
+use Filament\Notifications\NotificationMailbox;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
@@ -102,17 +103,26 @@ class GitHubAppRegistrationTest extends TestCase
         return json_decode(base64_decode(strtr(explode('.', $jwt)[1], '-_', '+/')), true)['iss'];
     }
 
+    /** @var list<array<string, mixed>> */
+    private array $delivered = [];
+
     /**
      * The notifications queued for the next page the admin sees.
+     *
+     * Filament's mailbox hands each one out once, so what has been read is
+     * kept for the rest of the test.
      *
      * @return Collection<int, array<string, mixed>>
      */
     private function notifications(): Collection
     {
-        /** @var list<array<string, mixed>> $queued */
-        $queued = session('filament.notifications', []);
+        $mailbox = app(NotificationMailbox::class);
+        // A Livewire test has no response for Filament to publish them in.
+        $mailbox->flush();
 
-        return collect($queued);
+        array_push($this->delivered, ...$mailbox->pull());
+
+        return collect($this->delivered);
     }
 
     /**
@@ -457,7 +467,7 @@ class GitHubAppRegistrationTest extends TestCase
             ->assertRedirect(GetStarted::getUrl());
 
         // Said where the admin is looking, and kept for the app's own page.
-        $this->assertStringContainsString('Registration could not be verified', (string) json_encode(session('filament.notifications')));
+        $this->assertStringContainsString('Registration could not be verified', (string) json_encode($this->notifications()));
         $this->assertFailedPersistently('Registration could not be verified');
         $this->assertNull(session(GetStarted::RETURN_KEY));
     }
@@ -472,7 +482,7 @@ class GitHubAppRegistrationTest extends TestCase
 
         // Nothing yet: it would only be shown after GitHub's install screen,
         // by when "now choose the account" is out of date.
-        $this->assertEmpty(session('filament.notifications'));
+        $this->assertEmpty($this->notifications());
 
         $this->get(route('sources.connect.new'))
             ->assertRedirectContains('https://github.com/apps/acme-packages/installations/new');

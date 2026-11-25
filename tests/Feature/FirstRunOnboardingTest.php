@@ -190,7 +190,9 @@ class FirstRunOnboardingTest extends TestCase
         Livewire::withQueryParams(['action' => 'importFromSource', 'actionArguments' => ['source' => $source->id]]);
 
         Livewire::test(ListPackages::class)
-            ->assertSeeHtml("mountAction('importFromSource' ,  JSON.parse('{\\u0022source\\u0022:{$source->id}}')")
+            ->assertSet('defaultAction', 'importFromSource')
+            ->assertSet('defaultActionArguments', ['source' => $source->id])
+            ->assertSeeHtml('wire:init="mountDefaultActions"')
             ->mountAction('importFromSource', ['source' => $source->id])
             ->assertActionDataSet(['source_id' => $source->id, 'projects' => ['https://github.com/acme/widgets']]);
     }

@@ -8,6 +8,7 @@ use App\Filament\Resources\Sources\SourceResource;
 use App\Models\Package;
 use App\Models\Source;
 use App\Models\User;
+use Filament\Notifications\NotificationMailbox;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
@@ -476,12 +477,24 @@ class SourceConnectionTest extends TestCase
             ->assertSessionMissing('sources.github.pending');
     }
 
+    /** @var list<array<string, mixed>> */
+    private array $delivered = [];
+
     /**
      * The notifications the next page will show, as one string to search.
+     *
+     * Filament's mailbox hands each one out once, so what has been read is
+     * kept for the rest of the test.
      */
     private function notifications(): string
     {
-        return (string) json_encode(session('filament.notifications'));
+        $mailbox = app(NotificationMailbox::class);
+        // A Livewire test has no response for Filament to publish them in.
+        $mailbox->flush();
+
+        array_push($this->delivered, ...$mailbox->pull());
+
+        return (string) json_encode($this->delivered);
     }
 
     public function test_verifying_picks_up_a_repository_selection_changed_on_github(): void

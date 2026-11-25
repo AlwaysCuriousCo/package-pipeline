@@ -380,6 +380,14 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
 
 ### Fixed
 
+- Toasts no longer turn every panel page into "This page has expired". From
+  Filament 5.10.2 the notification mailbox keeps toasts in the cache and
+  leaves only its id, a string, under `filament.notifications` in the session.
+  The hook that carries toasts in the response sent that id on as a toast; the
+  notifications component rejected it with a `TypeError`, which Livewire
+  answers with a 419. The hook now passes on only notification arrays, so the
+  one-time token toast after creating or rolling a deploy token shows again.
+
 - A full refund withdraws access again on current Stripe API versions. From
   2025-03-31.basil a refunded charge no longer names its invoice, so the
   refund matched nothing and access stayed on; the invoice is now found
@@ -466,6 +474,16 @@ must act on are collected under **Upgrading from 0.9.x** at the end.
   whichever of the two is obsolete.
 
 ### Security
+
+- Dependencies updated to clear every open Composer advisory, within the
+  existing constraints: Filament 5.12, Livewire 4.4.10, Laravel 13.44, and
+  current releases of league/commonmark, league/csv, phpseclib and the Symfony
+  components. Among them are a Laravel `TokenGuard` bypass through non-string
+  credentials (critical), Filament's multi-factor management actions not
+  asking for the password again, and a Livewire `#[Authorize]` bypass.
+  `composer audit` is clean. Livewire 4.4.9 and later also refuse an update
+  whose snapshot names a different route or host than the request, so a panel
+  page left open across the deploy asks for one reload.
 
 - A composer.json name is validated against Composer's grammar before a sync
   adopts it. The sync path had never checked, on the reasoning that the name

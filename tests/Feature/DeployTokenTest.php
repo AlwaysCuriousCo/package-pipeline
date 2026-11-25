@@ -173,13 +173,7 @@ class DeployTokenTest extends TestCase
             ])
             ->assertHasNoFormErrors()
             ->assertNoRedirect()
-            ->assertDispatched(
-                'notificationSent',
-                fn (string $event, array $params): bool => str_contains(
-                    $params['notification']['body'] ?? '',
-                    'composer config http-basic.',
-                ),
-            );
+            ->assertNotified('Token created — copy it now');
 
         $deployToken = DeployToken::query()->where('name', 'production-deploys')->sole();
 
@@ -319,13 +313,7 @@ class DeployTokenTest extends TestCase
 
         Livewire::test(ListDeployTokens::class)
             ->callTableAction('roll', $deployToken)
-            ->assertDispatched(
-                'notificationSent',
-                fn (string $event, array $params): bool => str_contains(
-                    $params['notification']['body'] ?? '',
-                    (string) $deployToken->refresh()->token->token_prefix,
-                ),
-            );
+            ->assertNotified('Token rolled — copy it now');
 
         // Filament's session relay is left running underneath, so a
         // deployment where it does work keeps its second route to the screen.
