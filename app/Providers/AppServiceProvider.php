@@ -164,6 +164,14 @@ class AppServiceProvider extends ServiceProvider
             );
 
             foreach ($notifications as $notification) {
+                // Filament 5.10.2+ keeps toasts in its cache mailbox and leaves
+                // only the mailbox id (a string) under this session key. A
+                // string here is not a toast: dispatching it throws a TypeError
+                // in the notifications component, which Livewire answers 419.
+                if (! is_array($notification)) {
+                    continue;
+                }
+
                 $component->dispatch('notificationSent', notification: $notification);
             }
         });
