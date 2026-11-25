@@ -173,13 +173,7 @@ class DeployTokenTest extends TestCase
             ])
             ->assertHasNoFormErrors()
             ->assertNoRedirect()
-            ->assertDispatched(
-                'notificationSent',
-                fn (string $event, array $params): bool => str_contains(
-                    $params['notification']['body'] ?? '',
-                    'composer config http-basic.',
-                ),
-            );
+            ->assertNotified('Token created — copy it now');
 
         $deployToken = DeployToken::query()->where('name', 'production-deploys')->sole();
 
@@ -281,6 +275,28 @@ class DeployTokenTest extends TestCase
     }
 
     /**
+     * Filament's mailbox leaves only its id, a string, under the session key
+     * the toast hook reads. Sent on as a toast, that string reaches the
+     * notifications component as a TypeError, which Livewire answers with a
+     * 419 and the browser's "This page has expired" dialog on every page.
+     */
+    public function test_a_livewire_request_never_sends_the_mailbox_id_as_a_toast(): void
+    {
+        $this->actingAs(User::factory()->superAdmin()->create());
+
+        $deployToken = DeployToken::factory()->create();
+        $this->issueFor($deployToken);
+
+        Livewire::withHeaders(['X-Livewire' => '1'])
+            ->test(ListDeployTokens::class)
+            ->callTableAction('roll', $deployToken)
+            ->assertNotDispatched(
+                'notificationSent',
+                fn (string $event, array $params): bool => ! is_array($params['notification'] ?? null),
+            );
+    }
+
+    /**
      * Rolling stays on the list page, so its toast is the case Filament
      * delivers by leaving the notification in the session for a second request
      * to collect — the hand-off that does not survive a deployment where those
@@ -297,13 +313,7 @@ class DeployTokenTest extends TestCase
 
         Livewire::test(ListDeployTokens::class)
             ->callTableAction('roll', $deployToken)
-            ->assertDispatched(
-                'notificationSent',
-                fn (string $event, array $params): bool => str_contains(
-                    $params['notification']['body'] ?? '',
-                    (string) $deployToken->refresh()->token->token_prefix,
-                ),
-            );
+            ->assertNotified('Token rolled — copy it now');
 
         // Filament's session relay is left running underneath, so a
         // deployment where it does work keeps its second route to the screen.
