@@ -8,6 +8,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -124,4 +125,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 || $request->is('r/*/security-advisories')
                 || $request->expectsJson(),
         );
+
+        // Thrown when a client sends a Livewire update for a #[Locked]
+        // property — a tampered payload by definition, since Livewire's own
+        // JavaScript never writes to one. In practice it is scanners probing
+        // Filament's areSchemaStateUpdateHooksDisabledForTesting (locked as
+        // the fix for a disclosed vulnerability). Livewire already answers a
+        // bare 419 in production; the rejection working is not an error worth
+        // a report.
+        $exceptions->dontReport(CannotUpdateLockedPropertyException::class);
     })->create();
